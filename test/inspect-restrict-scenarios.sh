@@ -197,6 +197,13 @@ case "$RDNS_OUT" in
     ;;
 esac
 
+# Only a name that is an address backwards counts as a reverse lookup. The verb
+# those are logged under is one the report drops, so appending `.in-addr.arpa`
+# to an exfiltration name must not be a way out of the report.
+echo "=== [Reverse zone, invented name] ==="
+(nslookup SECRET-IN-A-NAME.in-addr.arpa >/dev/null 2>&1 || true)
+echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+
 echo "=== [Address in a URL rule] ==="
 OUT=$($S http://10.200.0.100/pub-by-addr/x)
 check_ok "GET http://10.200.0.100/pub-by-addr/x" "$OUT" "ROOT GET"
