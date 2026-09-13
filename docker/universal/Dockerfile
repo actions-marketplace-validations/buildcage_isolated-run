@@ -67,6 +67,10 @@ RUN apk add --no-cache \
 
 ENV S6_KEEP_ENV=1
 ENV S6_LOGGING=0
+# Stop the container when a service never comes up, instead of running on with a
+# half-started tree and an s6-rc transition that never ends.
+ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=60000
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
 # DNS
 COPY docker/universal/files/dnsmasq.conf /etc/dnsmasq.conf
