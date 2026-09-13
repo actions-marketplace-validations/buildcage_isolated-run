@@ -79853,7 +79853,8 @@ async function main() {
 			ALLOWED_IP_RULES: rules.ipRules.join("\n"),
 			ALLOWED_URL_RULES: urlRules.join("\n"),
 			ALLOWED_TLS_RULES: tlsRules.join("\n"),
-			BUILDCAGE_PROXY_IMAGE_REF: imageRef
+			BUILDCAGE_PROXY_IMAGE_REF: imageRef,
+			EXTERNAL_RESOLVER: ""
 		};
 		await startSandboxProxy({
 			composeFile,
