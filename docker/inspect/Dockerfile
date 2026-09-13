@@ -92,8 +92,8 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
 COPY --from=deps /usr/local/bin/coredns /usr/local/bin/coredns
 
-# CoreDNS answers names a step controls, so it runs as its own unprivileged
-# user; the file capability is what still lets it bind :53 after the drop.
+# CoreDNS answers queries the step controls, so it must not run as root.
+# setcap keeps :53 bindable once it has dropped.
 RUN apk add --no-cache --virtual .setcap libcap-utils && \
     addgroup -S coredns && adduser -S -D -H -G coredns coredns && \
     setcap cap_net_bind_service=+ep /usr/local/bin/coredns && \
