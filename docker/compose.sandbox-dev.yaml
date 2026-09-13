@@ -43,5 +43,5 @@ services:
       - ./dev/build-test-bundle.sh:/usr/local/bin/build-test-bundle.sh:ro
     depends_on:
       proxy:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped

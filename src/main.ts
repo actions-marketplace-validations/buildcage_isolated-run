@@ -8,7 +8,7 @@ import * as core from "@actions/core";
 import { resolveBuildcageImageRef } from "#core/lib/provenance/image-ref.ts";
 import { verifyImageDigestOrThrow, type ResolvedImage } from "#core/lib/provenance/verify-image.ts";
 import type { VerifyImageIdentity } from "#core/lib/provenance/verify-policy.ts";
-import { describeDockerFailure } from "#core/lib/actions/docker-error.ts";
+import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/docker-error.ts";
 import { createAnnotation, type Annotation } from "#core/lib/actions/annotation.ts";
 import { logRules } from "#core/lib/actions/log.ts";
 import { ActionError, errorMessage } from "#core/lib/errors.ts";
@@ -35,7 +35,17 @@ import {
 import { assertScratchBaseNotWritable, isAtOrUnder } from "./lib/sandbox/paths.ts";
 import { generateContainerName, getContainerNetns, ownerToken } from "./lib/container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
-import { buildComposeUpArgs, buildComposeDownArgs } from "#core/lib/docker/args.ts";
+import {
+  buildComposeUpArgs,
+  buildComposeDownArgs,
+  buildComposeLogsArgs,
+} from "#core/lib/docker/args.ts";
+import {
+  buildDockerInspectStateArgs,
+  parseContainerState,
+  describeContainerStartFailure,
+  type ContainerState,
+} from "#core/lib/docker/health.ts";
 import { extractRuncBootstrap } from "./lib/sandbox/runc-bootstrap.ts";
 import { resolveSandboxGid } from "./lib/sandbox/identity.ts";
 import { extractCaCert, writeCaTrustFiles } from "./lib/sandbox/ca-trust.ts";
@@ -65,6 +75,9 @@ export { buildACLRules };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
+
+/** Lines of container log printed when the proxy fails to come up. */
+const LOG_TAIL = 100;
 
 // Gates a local-image override used only by this repo's own CI/dev testing
 // (see the test_sandbox_* jobs in .github/workflows/test-e2e.yml and
@@ -350,6 +363,7 @@ async function withGroup<T>(label: string, fn: () => T | Promise<T>): Promise<T>
 interface StartSandboxProxyOptions {
   composeFile: string;
   projectName: string;
+  containerName: string;
   pullPolicy: string;
   composeEnv: NodeJS.ProcessEnv;
 }
@@ -358,6 +372,7 @@ interface StartSandboxProxyOptions {
 async function startSandboxProxy({
   composeFile,
   projectName,
+  containerName,
   pullPolicy,
   composeEnv,
 }: StartSandboxProxyOptions): Promise<void> {
@@ -368,12 +383,81 @@ async function startSandboxProxy({
         env: composeEnv,
       });
     } catch (e) {
-      throw new SandboxError(
-        describeDockerFailure(e, { operation: "docker compose up" }),
-        "DOCKER_UNAVAILABLE",
-      );
+      throw proxyStartError(e, { composeFile, projectName, containerName, composeEnv });
     }
   });
+}
+
+/** Asks the container itself why `compose up` failed. With no container to
+ *  ask, the failure predates it and is Docker's own. Prints the log without a
+ *  group of its own: the caller is already inside one. */
+function proxyStartError(
+  e: unknown,
+  {
+    composeFile,
+    projectName,
+    containerName,
+    composeEnv,
+  }: Omit<StartSandboxProxyOptions, "pullPolicy">,
+): SandboxError {
+  const state = readProxyState(containerName, composeEnv);
+  if (!state) {
+    return new SandboxError(
+      describeDockerFailure(e, { operation: "docker compose up" }),
+      "DOCKER_UNAVAILABLE",
+    );
+  }
+
+  printProxyLog({ composeFile, projectName, composeEnv });
+  return new SandboxError(
+    describeContainerStartFailure(state, { role: "sandbox proxy", containerName }),
+    "PROXY_NOT_READY",
+  );
+}
+
+function readProxyState(
+  containerName: string,
+  composeEnv: NodeJS.ProcessEnv,
+): ContainerState | null {
+  try {
+    return parseContainerState(
+      execFileSync("docker", buildDockerInspectStateArgs(containerName), {
+        encoding: "utf8",
+        env: composeEnv,
+        // Captured, not inherited: no container is the expected outcome here,
+        // and the daemon's "no such object" would read as the cause.
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+  } catch (e) {
+    reportInspectFailure(e);
+    return null;
+  }
+}
+
+/** Anything other than the expected missing container is worth seeing, even
+ *  though the compose failure is what gets reported. */
+function reportInspectFailure(e: unknown): void {
+  const stderr = ((e && typeof e === "object" ? e : {}) as DockerErrorLike).stderr ?? "";
+  if (stderr.trim() && !/no such object/i.test(stderr)) {
+    console.log(`buildcage: could not read the sandbox proxy container's state: ${stderr.trim()}`);
+  }
+}
+
+/** Best effort: the message that follows still stands without the log. */
+function printProxyLog({
+  composeFile,
+  projectName,
+  composeEnv,
+}: Omit<StartSandboxProxyOptions, "pullPolicy" | "containerName">): void {
+  try {
+    execFileSync("docker", buildComposeLogsArgs({ composeFile, projectName, tail: LOG_TAIL }), {
+      stdio: "inherit",
+      env: composeEnv,
+    });
+  } catch {
+    console.log("The sandbox proxy container's log could not be read.");
+  }
 }
 
 interface StopSandboxProxyOptions {
@@ -791,7 +875,7 @@ async function main(): Promise<void> {
       EXTERNAL_RESOLVER: "",
     };
 
-    await startSandboxProxy({ composeFile, projectName, pullPolicy, composeEnv });
+    await startSandboxProxy({ composeFile, projectName, containerName, pullPolicy, composeEnv });
 
     let exitCode = 1;
     try {

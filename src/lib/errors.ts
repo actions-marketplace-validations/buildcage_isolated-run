@@ -10,6 +10,7 @@ import { ActionError } from "#core/lib/errors.ts";
  *   MISSING_RUN                – required `run` input was empty
  *   INVALID_PROXY_ENGINE       – proxy_engine input isn't a recognized engine
  *   PROXY_NOT_RUNNING          – sandbox proxy container isn't running after `docker compose up`
+ *   PROXY_NOT_READY            – sandbox proxy container started but never became usable
  *   RUNC_EXTRACT_FAILED        – failed to `docker cp` runc/gen-seccomp-profile out of the proxy image
  *   CA_EXTRACT_FAILED          – inspect engine only: failed to `docker cp` the proxy's CA out of the image
  *   OCI_CONFIG_BUILD_FAILED    – failed to run gen-seccomp-profile/runc spec or assemble config.json
@@ -35,6 +36,7 @@ export type SandboxErrorCode =
   | "MISSING_RUN"
   | "INVALID_PROXY_ENGINE"
   | "PROXY_NOT_RUNNING"
+  | "PROXY_NOT_READY"
   | "RUNC_EXTRACT_FAILED"
   | "CA_EXTRACT_FAILED"
   | "OCI_CONFIG_BUILD_FAILED"
