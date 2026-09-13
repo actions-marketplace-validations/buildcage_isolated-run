@@ -20423,7 +20423,24 @@ function buildComposeUpArgs({ composeFile, projectName, pullPolicy }) {
 		pullPolicy,
 		"--no-build",
 		"--wait",
+		"--wait-timeout",
+		"180",
 		"--quiet-pull"
+	];
+}
+/** Build the `docker compose ... logs` argv. Goes through Compose rather than
+*  `docker logs` so it still reads a container that has exited. */
+function buildComposeLogsArgs({ composeFile, projectName, tail }) {
+	return [
+		"compose",
+		"-f",
+		composeFile,
+		"-p",
+		projectName,
+		"logs",
+		"--no-color",
+		"--tail",
+		String(tail)
 	];
 }
 /** Build the `docker compose ... down` argv — see buildComposeUpArgs above. */
@@ -20436,6 +20453,41 @@ function buildComposeDownArgs({ composeFile, projectName }) {
 		projectName,
 		"down"
 	];
+}
+//#endregion
+//#region src/core/lib/docker/health.ts
+function buildDockerInspectStateArgs(containerName) {
+	return [
+		"inspect",
+		"--format",
+		"{{json .State}}",
+		containerName
+	];
+}
+/** Null for anything that isn't a state object: a missing container prints
+*  nothing to stdout. */
+function parseContainerState(inspectOutput) {
+	let raw;
+	try {
+		raw = JSON.parse(inspectOutput);
+	} catch {
+		return null;
+	}
+	if (!raw || typeof raw != "object" || typeof raw.Status != "string") return null;
+	let log = Array.isArray(raw.Health?.Log) ? raw.Health.Log : [], lastOutput = log.length > 0 ? log[log.length - 1]?.Output : void 0;
+	return {
+		status: raw.Status,
+		exitCode: typeof raw.ExitCode == "number" ? raw.ExitCode : null,
+		health: typeof raw.Health?.Status == "string" ? raw.Health.Status : null,
+		lastHealthOutput: typeof lastOutput == "string" && lastOutput.trim() || null
+	};
+}
+function isContainerReady(state) {
+	return state.status === "running" && state.health !== "unhealthy" && state.health !== "starting";
+}
+function describeContainerStartFailure(state, { role, containerName }) {
+	let subject = `Buildcage's ${role} container (${containerName})`, probe = state.lastHealthOutput ? ` Last health check output: ${JSON.stringify(state.lastHealthOutput)}.` : "", evidence = " Its log is printed above.";
+	return state.status === "running" ? isContainerReady(state) ? `${subject} is running, but \`docker compose up\` failed. See the Docker output above.${probe}` : `${subject} started but never became ready.${probe}${evidence}` : `${subject} stopped${state.exitCode === null ? "" : ` with code ${state.exitCode}`} instead of starting up.${probe}${evidence}`;
 }
 //#endregion
 //#region src/lib/sandbox/runc-bootstrap.ts
@@ -79648,7 +79700,7 @@ async function withGroup(label, fn) {
 	}
 }
 /** Starts this step's own throwaway proxy container via `docker compose up`. */
-async function startSandboxProxy({ composeFile, projectName, pullPolicy, composeEnv }) {
+async function startSandboxProxy({ composeFile, projectName, containerName, pullPolicy, composeEnv }) {
 	await withGroup("buildcage: starting sandbox proxy", () => {
 		try {
 			(0, node_child_process.execFileSync)("docker", buildComposeUpArgs({
@@ -79660,9 +79712,64 @@ async function startSandboxProxy({ composeFile, projectName, pullPolicy, compose
 				env: composeEnv
 			});
 		} catch (e) {
-			throw new SandboxError(describeDockerFailure(e, { operation: "docker compose up" }), "DOCKER_UNAVAILABLE");
+			throw proxyStartError(e, {
+				composeFile,
+				projectName,
+				containerName,
+				composeEnv
+			});
 		}
 	});
+}
+/** Asks the container itself why `compose up` failed. With no container to
+*  ask, the failure predates it and is Docker's own. Prints the log without a
+*  group of its own: the caller is already inside one. */
+function proxyStartError(e, { composeFile, projectName, containerName, composeEnv }) {
+	let state = readProxyState(containerName, composeEnv);
+	return state ? (printProxyLog({
+		composeFile,
+		projectName,
+		composeEnv
+	}), new SandboxError(describeContainerStartFailure(state, {
+		role: "sandbox proxy",
+		containerName
+	}), "PROXY_NOT_READY")) : new SandboxError(describeDockerFailure(e, { operation: "docker compose up" }), "DOCKER_UNAVAILABLE");
+}
+function readProxyState(containerName, composeEnv) {
+	try {
+		return parseContainerState((0, node_child_process.execFileSync)("docker", buildDockerInspectStateArgs(containerName), {
+			encoding: "utf8",
+			env: composeEnv,
+			stdio: [
+				"ignore",
+				"pipe",
+				"pipe"
+			]
+		}));
+	} catch (e) {
+		return reportInspectFailure(e), null;
+	}
+}
+/** Anything other than the expected missing container is worth seeing, even
+*  though the compose failure is what gets reported. */
+function reportInspectFailure(e) {
+	let stderr = (e && typeof e == "object" ? e : {}).stderr ?? "";
+	stderr.trim() && !/no such object/i.test(stderr) && console.log(`buildcage: could not read the sandbox proxy container's state: ${stderr.trim()}`);
+}
+/** Best effort: the message that follows still stands without the log. */
+function printProxyLog({ composeFile, projectName, composeEnv }) {
+	try {
+		(0, node_child_process.execFileSync)("docker", buildComposeLogsArgs({
+			composeFile,
+			projectName,
+			tail: 100
+		}), {
+			stdio: "inherit",
+			env: composeEnv
+		});
+	} catch {
+		console.log("The sandbox proxy container's log could not be read.");
+	}
 }
 /** Stops this step's proxy container via `docker compose down`. Reports
 *  failure as a warning rather than throwing — this runs in main()'s
@@ -79859,6 +79966,7 @@ async function main() {
 		await startSandboxProxy({
 			composeFile,
 			projectName,
+			containerName,
 			pullPolicy,
 			composeEnv
 		});

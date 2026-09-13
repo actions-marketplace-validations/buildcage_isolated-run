@@ -20,4 +20,19 @@ services:
       - ALLOWED_URL_RULES=${ALLOWED_URL_RULES:-}
       - ALLOWED_TLS_RULES=${ALLOWED_TLS_RULES:-}
       - EXTERNAL_RESOLVER=${EXTERNAL_RESOLVER:-}
-    restart: unless-stopped
+    # `--wait` would otherwise return on "running" alone. Runs every service's
+    # own s6 check: the resolver starts in parallel with HAProxy, so probing
+    # HAProxy alone would pass while DNS is still coming up. No restart policy
+    # goes with it: a container that stopped itself has to stay stopped for the
+    # wait to see it.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'for check in /etc/s6-overlay/s6-rc.d/*/data/check; do "$$check" || exit 1; done',
+        ]
+      interval: 30s
+      start_interval: 2s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
