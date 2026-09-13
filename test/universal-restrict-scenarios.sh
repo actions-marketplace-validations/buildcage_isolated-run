@@ -148,6 +148,26 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
+# [SSRF - allowlisted name resolving to a runner address]
+# RFC1918 is exempt on purpose, so only the runner's address list refuses it.
+echo "=== [HTTPS - SSRF back to the runner] ==="
+CODE=$($C --max-time 5 https://runner.wildcard.example.com/ 2>/dev/null || echo "000")
+if [ "$CODE" != "200" ]; then
+  echo "  PASS  runner.wildcard.example.com blocked (got $CODE)"
+else
+  echo "  FAIL  runner.wildcard.example.com reached the runner"
+  FAILURES=$((FAILURES + 1))
+fi
+
+echo "=== [HTTP - SSRF back to the runner] ==="
+CODE=$($C --max-time 5 http://runner.wildcard.example.com/ 2>/dev/null || echo "000")
+if [ "$CODE" != "200" ]; then
+  echo "  PASS  runner.wildcard.example.com HTTP blocked (got $CODE)"
+else
+  echo "  FAIL  runner.wildcard.example.com HTTP reached the runner"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # [HTTP keep-alive - allowed then blocked: a second request on a reused
 # HTTP/1.1 keep-alive connection must be judged on its own merits, not
 # inherit the first request's decision. Verified against the report by

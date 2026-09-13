@@ -89,6 +89,18 @@ run_engine() {
     fi
   fi
 
+  echo "--- internal-address guard covers this container's own gateway ---"
+  # Only the container can see this gateway, and no other assertion covers it.
+  # HOST_ADDRESSES is unset here, so the file holds only what init wrote.
+  local own_gw guarded
+  own_gw=$(docker exec "$proxy_name" ip -4 route show default | awk '{print $3}' | head -1)
+  guarded=$(docker exec "$proxy_name" cat /etc/haproxy/rules/host_addrs.lst 2>/dev/null)
+  if [ -n "$own_gw" ] && grep -qx "$own_gw" <<< "$guarded"; then
+    pass "[$engine] $own_gw is in the internal-address guard"
+  else
+    fail "[$engine] ${own_gw:-(no default route)} is missing from the internal-address guard"
+  fi
+
   echo "--- readiness and shutdown ---"
 
   # A readiness check the container's own INPUT rules block never succeeds,

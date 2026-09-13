@@ -16,7 +16,7 @@
 #     GET https://*.wildcard.example.com/public/**
 #     GET ~^https://blocked\.example\.com:9443/public/.*$
 #     GET ~^https://blocked\.example\.com/defaultport/.*$
-#   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 metadata.example.com:443
+#   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 metadata.example.com:443 runner.example.com:443
 #   allowed_http_rules:  allowed.example.com:80
 #   allowed_tls_rules:     tlspass.example.com:443 ~^tlspass\.example\.com:8443$
 #   allowed_ip_rules:    ~^10\.200\.0\.\d+:9080$
@@ -227,6 +227,11 @@ check_status "GET http://10.200.0.100:8080/anything" "$CODE" "403"
 echo "=== [SSRF via allowlisted name resolving inward] ==="
 CODE=$($C --insecure https://metadata.example.com/latest/meta-data)
 check_status "GET metadata.example.com (resolves to 169.254.169.254)" "$CODE" "403"
+
+# RFC1918 is exempt on purpose, so only the runner's address list refuses it.
+echo "=== [SSRF via allowlisted name resolving back to the runner] ==="
+CODE=$($C --insecure https://runner.example.com/)
+check_status "GET runner.example.com (resolves to an address the runner holds)" "$CODE" "403"
 
 echo "=== [Direct address, no ip rule] ==="
 CODE=$($C http://10.200.0.101/)

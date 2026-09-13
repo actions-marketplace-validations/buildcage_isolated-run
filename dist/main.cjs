@@ -19674,6 +19674,27 @@ function checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules 
 	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced — the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
 }
 //#endregion
+//#region src/lib/host-addresses.ts
+/**
+* Every IPv4 address the runner itself holds, refused by the engine as a
+* resolved destination.
+*
+* The guard allows RFC1918 so that a name pointing at an internal mirror keeps
+* working (see INTERNAL_RANGES in core/lib/acl/haproxy-rules.ts). The runner is
+* the one part of RFC1918 that is never a mirror. A published container port
+* answers on every address the runner holds, so the whole list is needed and
+* not just the gateway.
+*
+* Only the runner can see docker0 and the other bridges, which is why this does
+* not run in the container. The compose network's own gateway is missing here
+* and the engine's init script supplies it. Loopback is left to 127.0.0.0/8.
+*/
+function listHostIpv4Addresses({ networkInterfaces: list = node_os.networkInterfaces } = {}) {
+	let found = /* @__PURE__ */ new Set();
+	for (let infos of Object.values(list())) for (let info of infos ?? []) (info.family === "IPv4" || info.family === 4) && (info.internal || found.add(info.address));
+	return [...found].sort();
+}
+//#endregion
 //#region src/lib/sudo-preflight.ts
 const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
 function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
@@ -80006,7 +80027,8 @@ async function main() {
 			ALLOWED_URL_RULES: urlRules.join("\n"),
 			ALLOWED_TLS_RULES: tlsRules.join("\n"),
 			BUILDCAGE_PROXY_IMAGE_REF: imageRef,
-			EXTERNAL_RESOLVER: ""
+			EXTERNAL_RESOLVER: "",
+			HOST_ADDRESSES: listHostIpv4Addresses().join(" ")
 		};
 		await startSandboxProxy({
 			composeFile,

@@ -56,6 +56,25 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
+# [SSRF - the runner itself, blocked in audit too]
+echo "=== [HTTPS - SSRF back to the runner] ==="
+CODE=$($C --max-time 5 https://runner.wildcard.example.com/ 2>/dev/null || echo "000")
+if [ "$CODE" != "200" ]; then
+  echo "  PASS  runner.wildcard.example.com blocked (got $CODE)"
+else
+  echo "  FAIL  runner.wildcard.example.com reached the runner"
+  FAILURES=$((FAILURES + 1))
+fi
+
+echo "=== [HTTP - SSRF back to the runner] ==="
+CODE=$($C --max-time 5 http://runner.wildcard.example.com/ 2>/dev/null || echo "000")
+if [ "$CODE" != "200" ]; then
+  echo "  PASS  runner.wildcard.example.com HTTP blocked (got $CODE)"
+else
+  echo "  FAIL  runner.wildcard.example.com HTTP reached the runner"
+  FAILURES=$((FAILURES + 1))
+fi
+
 echo "=== [HTTPS - dns-failed (NXDOMAIN)] ==="
 CODE=$($C --max-time 5 https://nxdomain.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
