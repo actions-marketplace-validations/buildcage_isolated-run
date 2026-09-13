@@ -70,6 +70,8 @@ assert_summary_contains "| blocked.example.com:443 | HTTPS |" "any domain record
 assert_summary_contains "| 10.200.0.100:80 | IP |" "direct IP recorded as audited (audit passes it through)"
 assert_summary_contains "| internal.wildcard.example.com:443 | HTTPS | internal-address |" "internal-address guard stays active in audit mode"
 assert_summary_contains "| internal.wildcard.example.com:80 | HTTP | internal-address |" "internal-address guard (HTTP) stays active in audit mode"
+assert_summary_contains "| runner.wildcard.example.com:443 | HTTPS | internal-address |" "the runner's own addresses stay guarded in audit mode"
+assert_summary_contains "| runner.wildcard.example.com:80 | HTTP | internal-address |" "the runner's own addresses stay guarded (HTTP) in audit mode"
 assert_summary_contains "| nxdomain.wildcard.example.com:443 | HTTPS | dns-failed |" "unresolvable name still recorded as dns-failed"
 
 rm -rf "$TMPDIR"

@@ -84,6 +84,8 @@ assert_summary_contains "| 10.200.0.100:80 | IP | ip-not-allowed |" "direct IP r
 assert_summary_contains "| nxdomain.wildcard.example.com:443 | HTTPS | dns-failed |" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "| internal.wildcard.example.com:443 | HTTPS | internal-address |" "SSRF via allowlisted name recorded as blocked, reason internal-address"
 assert_summary_contains "| internal.wildcard.example.com:80 | HTTP | internal-address |" "SSRF via allowlisted name (HTTP) recorded as blocked, reason internal-address"
+assert_summary_contains "| runner.wildcard.example.com:443 | HTTPS | internal-address |" "a name resolving to an address the runner holds recorded as blocked, reason internal-address"
+assert_summary_contains "| runner.wildcard.example.com:80 | HTTP | internal-address |" "a name resolving to an address the runner holds (HTTP) recorded as blocked, reason internal-address"
 
 # The Allowed Hosts table never shows a reason column, so a plain substring
 # search for "| blocked.example.com:80 | HTTP |" would also match the start

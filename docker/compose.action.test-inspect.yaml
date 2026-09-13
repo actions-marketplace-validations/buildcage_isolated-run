@@ -27,6 +27,9 @@ services:
       - EXTERNAL_RESOLVER=10.200.0.53
       - TEST_NET_ADDR=10.200.0.2/24
       - TEST_NET_SUBNET=${TEST_NET_SUBNET:-10.210.0.0/24}
+      # What the action computed, plus a fixture address nothing answers on so
+      # the blocked-name scenario has a deterministic target.
+      - HOST_ADDRESSES=${HOST_ADDRESSES:-} 10.200.0.199
       # Test-only: init-inspect-cfg only honours this in an image built with
       # BUILDCAGE_TEST_HOOKS=1 (see docker/inspect/Dockerfile's
       # /opt/buildcage/.test-hooks marker) -- a fixed in-container path,

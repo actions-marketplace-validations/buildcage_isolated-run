@@ -16,6 +16,7 @@ import { buildACLRules, parseRulesOrThrow } from "#core/lib/acl/rules.ts";
 import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
 import { SandboxError } from "./lib/errors.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
+import { listHostIpv4Addresses } from "./lib/host-addresses.ts";
 import { checkPasswordlessSudo } from "./lib/sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./lib/overlayfs-preflight.ts";
 import {
@@ -874,6 +875,9 @@ async function main(): Promise<void> {
       // write $GITHUB_ENV, so a resolver left to the step environment would be a
       // previous step's choice, not the action's.
       EXTERNAL_RESOLVER: "",
+      // Completed engine-side with the compose network's gateway, which does
+      // not exist yet here. See lib/host-addresses.ts.
+      HOST_ADDRESSES: listHostIpv4Addresses().join(" "),
     };
 
     await startSandboxProxy({ composeFile, projectName, containerName, pullPolicy, composeEnv });
