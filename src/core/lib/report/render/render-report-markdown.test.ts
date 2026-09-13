@@ -53,6 +53,25 @@ describe("renderReportMarkdown", () => {
     expect(md).toMatch(/good\.com/);
   });
 
+  it("warns above the tables when the log is not a complete record", () => {
+    const md = renderReportMarkdown(
+      { ...base, passed: [allowedRow], logLooksPlausible: false },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    expect(md).toMatch(/This report is incomplete/);
+    expect(md.indexOf("incomplete") < md.indexOf("Allowed Hosts")).toBe(true);
+  });
+
+  it("has no warning when the log is a complete record", () => {
+    const md = renderReportMarkdown(
+      { ...base, passed: [allowedRow] },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    assertNotMatch(md, /incomplete/);
+  });
+
   it("renders the audit-mode heading and Audited Hosts table, plus a restrict-mode example", () => {
     const md = renderReportMarkdown(
       { ...base, parameters: params({ mode: "audit" }), passed: [allowedRow] },

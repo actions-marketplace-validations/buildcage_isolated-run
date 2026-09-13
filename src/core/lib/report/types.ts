@@ -29,11 +29,10 @@ export interface ReportDataCommon {
    *  universal engine (pre-aggregation log line count). */
   blockedCount: number;
 
-  /** False iff the log looks structurally implausible for a real run (no
-   *  non-buildcage/non-denial content at all) — see haproxy.ts's
-   *  hasNonBuildcageContent.
-   *  Used to fail closed on a suspiciously empty log instead of treating it
-   *  as "nothing was blocked". */
+  /** False iff the log is not a complete record of the run: its beginning is
+   *  gone, or it never carried a trace of a real one (haproxy.ts's
+   *  logHeadIntact). The report fails closed rather than passing off what
+   *  survived as everything. */
   logLooksPlausible: boolean;
 }
 
@@ -51,9 +50,8 @@ export interface InspectReportData extends ReportDataCommon {
   /** Every request, passthrough and refused name, oldest first. */
   timeline: TrafficEvent[];
   /** Seconds since the epoch the proxy itself started, so the report can
-   *  show every event's time relative to it. Undefined exactly when
-   *  logLooksPlausible is false -- there was no startup marker to read it
-   *  from. */
+   *  show every event's time relative to it. Undefined when the proxy log
+   *  carried no startup marker to read it from. */
   startedAt: number | undefined;
 }
 

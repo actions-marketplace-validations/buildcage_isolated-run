@@ -40,10 +40,12 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
-if ! grep -q "blocked connection(s) detected" "$WORKDIR/out.log"; then
-  echo "  PASS  no false-positive 'blocked connection(s) detected' from the plausibility check"
+# Both annotations the head check can produce: the blocked-connection one and
+# the incomplete-log one it is replaced by when the marker is missing.
+if ! grep -Eq "blocked connection\(s\) detected|logs are incomplete" "$WORKDIR/out.log"; then
+  echo "  PASS  no false-positive blocked or incomplete-log annotation from the head check"
 else
-  echo "  FAIL  the plausibility check misfired despite the guaranteed startup marker -- see out.log"
+  echo "  FAIL  the head check misfired despite the guaranteed startup marker -- see out.log"
   FAILURES=$((FAILURES + 1))
 fi
 

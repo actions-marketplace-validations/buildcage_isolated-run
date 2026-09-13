@@ -21285,10 +21285,7 @@ async function* readRotatedLog(docker, containerId, dir) {
 //#endregion
 //#region src/core/lib/report/outcome/blocked-outcome.ts
 function determineBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blockedRows, logLooksPlausible }) {
-	if (!blockedCount) return logLooksPlausible ? {
-		level: "none",
-		shouldFail: !1
-	} : isAudit ? {
+	if (!logLooksPlausible) return isAudit ? {
 		level: "notice",
 		shouldFail: !1
 	} : failOnBlocked ? {
@@ -21296,6 +21293,10 @@ function determineBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blocked
 		shouldFail: !0
 	} : {
 		level: "notice",
+		shouldFail: !1
+	};
+	if (!blockedCount) return {
+		level: "none",
 		shouldFail: !1
 	};
 	if (isAudit) return {
@@ -21325,12 +21326,21 @@ function describeBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blockedR
 		blockedCount,
 		blockedRows,
 		logLooksPlausible
-	}), message = buildBlockedMessage({
+	}), base = buildBlockedMessage({
 		blockedCount,
 		blockedRows,
 		engineLabel,
 		isAudit
 	});
+	if (logLooksPlausible) return {
+		...outcome,
+		message: base
+	};
+	if (isAudit) return {
+		...outcome,
+		message: `${base}, but the logs are incomplete and this is not a full record`
+	};
+	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete;
 	return {
 		...outcome,
 		message
@@ -21496,9 +21506,9 @@ function formatElapsedFixed(elapsedSeconds) {
 * `startedAt` is when the proxy itself started (seconds since the epoch),
 * so every event reads as time elapsed since then rather than an absolute
 * clock reading nobody has a reference point for. Undefined only when the
-* log never showed a startup marker at all (logLooksPlausible false) --
-* that rare case falls back to the old absolute-time rendering rather than
-* inventing a start time it does not have.
+* log never showed a startup marker at all; that rare case falls back to
+* absolute-time rendering rather than inventing a start time it does not
+* have.
 */
 function renderInspectDetails(timeline, startedAt) {
 	let body = renderInspectDetailsBody(timeline, startedAt);
@@ -21669,7 +21679,7 @@ function buildInspectRestrictExample(requests, actionRepo, actionRef, { runComma
 *  buildkitd/vertex logs (see ../types.ts). */
 function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound Traffic Report", runCommand, actionVersion } = {}) {
 	let isAudit = report.parameters.mode === "audit", showExpected = report.parameters.knownBlockedRules.length > 0, heading = isAudit ? "📋 Audited Hosts" : "✅ Allowed Hosts", markdown = `## ${title}${isAudit ? " (audit mode)" : ""}\n\n`;
-	return report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
+	return report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
 		runCommand,
 		actionVersion,
 		allowedIpRules: report.parameters.allowedIpRules,
@@ -21735,25 +21745,22 @@ function createIncrementalAggregator() {
 const logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
 /**
 * Single forward pass over the log: matching lines fold directly into
-* incremental aggregators (never collected into a flat array first), and
-* non-matching, non-blank lines flip hasNonBuildcageContent.
-*
-* A genuine HAProxy process always emits some non-buildcage-format output
-* of its own before any traffic occurs. A log with nothing but
-* forged/replayed decision lines — or nothing at all — lacks that, which is
-* a signal (not a guarantee) of tampering.
+* incremental aggregators (never collected into a flat array first).
 *
 * `isAudit` picks which decision counts as "passed" (AUDIT vs ALLOWED); the
 * other one, if it somehow appears, is dropped rather than aggregated.
 */
 async function scanHaproxyLog(lines, isAudit) {
-	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, hasNonBuildcageContent = !1;
+	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, logHeadIntact;
 	for await (let line of lines) {
 		let m = line.match(logPattern);
 		if (!m) {
-			line.trim() !== "" && (hasNonBuildcageContent = !0);
+			let trimmed = line.trim();
+			if (trimmed === "") continue;
+			logHeadIntact ??= trimmed.startsWith("buildcage haproxy starting");
 			continue;
 		}
+		logHeadIntact ??= !1;
 		let [, decision, ruleType, hostPort, reason] = m, colonIdx = hostPort.lastIndexOf(":"), host, port;
 		colonIdx > 0 ? (host = hostPort.substring(0, colonIdx), port = hostPort.substring(colonIdx + 1)) : (host = hostPort, port = "0");
 		let entry = {
@@ -21768,7 +21775,7 @@ async function scanHaproxyLog(lines, isAudit) {
 		passed: passed.toSortedArray(),
 		blocked: blocked.toSortedArray(),
 		blockedCount,
-		hasNonBuildcageContent
+		logHeadIntact: logHeadIntact ?? !1
 	};
 }
 //#endregion
@@ -21805,14 +21812,14 @@ function targetOf(row) {
 * so no special-case branch is needed.
 */
 async function buildUniversalReportData(lines, parameters) {
-	let { passed, blocked: blockedRawRows, blockedCount, hasNonBuildcageContent } = await scanHaproxyLog(lines, parameters.mode === "audit");
+	let { passed, blocked: blockedRawRows, blockedCount, logHeadIntact } = await scanHaproxyLog(lines, parameters.mode === "audit");
 	return {
 		engine: "universal",
 		parameters,
 		passed,
 		blocked: annotateKnownBlocked(blockedRawRows, parameters.knownBlockedRules),
 		blockedCount,
-		logLooksPlausible: hasNonBuildcageContent
+		logLooksPlausible: logHeadIntact
 	};
 }
 //#endregion
@@ -21881,21 +21888,22 @@ function parseProxyLine(line, isAudit) {
 * accepts a plain array, so callers with the lines already in memory pass one.
 */
 async function scanInspectLog(lines, isAudit = !1) {
-	let events = [], startedAt;
+	let events = [], startedAt, headIntact;
 	for await (let line of lines) {
 		let event = parseProxyLine(line, isAudit);
 		if (event) {
-			events.push(event);
+			headIntact ??= !1, events.push(event);
 			continue;
 		}
-		if (startedAt === void 0) {
-			let match = START.exec(line.trim());
-			match && (startedAt = Number(match[1]) / 1e3);
-		}
+		let trimmed = line.trim();
+		if (trimmed === "") continue;
+		let match = START.exec(trimmed);
+		headIntact ??= match !== null, match && startedAt === void 0 && (startedAt = Number(match[1]) / 1e3);
 	}
 	return {
 		events,
-		startedAt
+		startedAt,
+		headIntact: headIntact ?? !1
 	};
 }
 /**
@@ -21909,11 +21917,17 @@ async function scanInspectLog(lines, isAudit = !1) {
 * The time comes from s6-log rather than from CoreDNS, whose log plugin has no
 * timestamp replacement of its own. CoreDNS lowercases the name it logs, so a
 * name that carried information in its capitalisation is recorded without it.
+*
+* `headIntact` is false when the log doesn't open with the startup marker,
+* meaning its beginning is gone and the earliest refused names with it. Only
+* the marker counts: CoreDNS's `errors` plugin writes mid-run.
 */
 async function scanInspectDnsLog(lines, isAudit = !1) {
-	let seen = /* @__PURE__ */ new Map();
+	let seen = /* @__PURE__ */ new Map(), headIntact;
 	for await (let line of lines) {
-		let match = DNS.exec(line.trim());
+		let trimmed = line.trim();
+		trimmed !== "" && (headIntact ??= trimmed.endsWith("buildcage coredns starting"));
+		let match = DNS.exec(trimmed);
 		if (!match) continue;
 		let parsed = Date.parse(`${match[1].replace(" ", "T")}Z`), time = Number.isNaN(parsed) ? 0 : parsed / 1e3, allowed = match[2] === "allowed", existing = seen.get(match[3]);
 		existing ? existing.allowed ||= allowed : seen.set(match[3], {
@@ -21921,15 +21935,18 @@ async function scanInspectDnsLog(lines, isAudit = !1) {
 			allowed
 		});
 	}
-	return [...seen.entries()].map(([host, { time, allowed }]) => {
-		let event = {
-			time,
-			action: actionFor(!allowed, isAudit),
-			protocol: "dns",
-			host
-		};
-		return allowed || (event.reason = "dns-not-allowed"), event;
-	});
+	return {
+		events: [...seen.entries()].map(([host, { time, allowed }]) => {
+			let event = {
+				time,
+				action: actionFor(!allowed, isAudit),
+				protocol: "dns",
+				host
+			};
+			return allowed || (event.reason = "dns-not-allowed"), event;
+		}),
+		headIntact: headIntact ?? !1
+	};
 }
 //#endregion
 //#region src/core/lib/report/build/inspect.ts
@@ -21962,7 +21979,7 @@ function toHostRow(event) {
 * unlike the explicit engine.
 */
 async function buildInspectReportData(proxyLines, dnsLines, parameters) {
-	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt }, dnsEvents] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [];
+	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [];
 	for (let event of timeline) (event.protocol !== "dns" || event.action === "block") && (isRedundantBlockedDns(event, timeline) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
 	let blocked = annotateKnownBlocked(aggregate(blockedRows), parameters.knownBlockedRules);
 	return {
@@ -21971,7 +21988,7 @@ async function buildInspectReportData(proxyLines, dnsLines, parameters) {
 		passed: aggregate(passedRows),
 		blocked,
 		blockedCount: blockedRows.length,
-		logLooksPlausible: startedAt !== void 0,
+		logLooksPlausible: proxyHeadIntact && dnsHeadIntact,
 		startedAt,
 		timeline
 	};
