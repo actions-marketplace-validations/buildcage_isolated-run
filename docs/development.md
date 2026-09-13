@@ -428,7 +428,14 @@ If you encounter issues, try reproducing the problem locally to get detailed log
    # or drive the action directly, see README.md
    ```
 
-3. **Open an issue** at [github.com/buildcage/isolated-run/issues](https://github.com/buildcage/isolated-run/issues) with:
+3. **The step fails with "never became ready"**: the proxy came up but one of its services never
+   answered its own readiness check. The step prints the container log; locally:
+
+   ```bash
+   docker inspect --format '{{json .State.Health}}' buildcage-proxy
+   ```
+
+4. **Open an issue** at [github.com/buildcage/isolated-run/issues](https://github.com/buildcage/isolated-run/issues) with:
    - The Job Summary report (audit or restrict mode)
    - The relevant `docker compose logs proxy` output
    - Your workflow YAML (with secrets redacted)
