@@ -22,7 +22,11 @@ services:
       - ALLOWED_HTTPS_RULES=${ALLOWED_HTTPS_RULES:-}
       - ALLOWED_HTTP_RULES=${ALLOWED_HTTP_RULES:-}
       - ALLOWED_IP_RULES=${ALLOWED_IP_RULES:-}
-      - EXTERNAL_RESOLVER=${EXTERNAL_RESOLVER:-}
+      # The test-net address of the test-dns fixture in
+      # ../compose.test-universal.yaml. Fixed here rather than inherited:
+      # compose.action.yaml passes no resolver at all, and the action pins the
+      # variable empty.
+      - EXTERNAL_RESOLVER=10.200.0.53
       - TEST_NET_ADDR=10.200.0.2/24
       - TEST_NET_SUBNET=${TEST_NET_SUBNET:-10.210.0.0/24}
     volumes:

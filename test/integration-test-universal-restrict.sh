@@ -40,7 +40,6 @@ GITHUB_STEP_SUMMARY="$SUMMARY_FILE" \
 BUILDCAGE_RUN_DEBUG_SUMMARY_FILE="$SUMMARY_FILE" \
 BUILDCAGE_LOCAL_IMAGE_REF="$BUILDCAGE_LOCAL_IMAGE_REF" \
 BUILDCAGE_TEST_COMPOSE_FILE="$REPO_ROOT/docker/compose.action.test-universal.yaml" \
-EXTERNAL_RESOLVER="10.200.0.53" \
 INPUT_PROXY_ENGINE="universal" \
 INPUT_PROXY_MODE="restrict" \
 INPUT_ALLOWED_HTTPS_RULES="allowed.example.com:443 allowed.example.com:8443 *.wildcard.example.com:443 *.wildcard.example.com:8443" \
