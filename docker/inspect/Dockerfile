@@ -92,6 +92,13 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
 COPY --from=deps /usr/local/bin/coredns /usr/local/bin/coredns
 
+# CoreDNS answers queries the step controls, so it must not run as root.
+# setcap keeps :53 bindable once it has dropped.
+RUN apk add --no-cache --virtual .setcap libcap-utils && \
+    addgroup -S coredns && adduser -S -D -H -G coredns coredns && \
+    setcap cap_net_bind_service=+ep /usr/local/bin/coredns && \
+    apk del .setcap
+
 RUN mkdir -p /etc/haproxy/rules /etc/coredns /var/log/haproxy /var/log/coredns
 
 # Tools (QuickJS scripts, rolldown-bundled by qjs-build above) —
