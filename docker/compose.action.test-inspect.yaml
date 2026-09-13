@@ -23,10 +23,7 @@ services:
       - ALLOWED_IP_RULES=${ALLOWED_IP_RULES:-}
       - ALLOWED_URL_RULES=${ALLOWED_URL_RULES:-}
       - ALLOWED_TLS_RULES=${ALLOWED_TLS_RULES:-}
-      # The test-net address of the test-dns fixture in
-      # ../compose.test-inspect.yaml. Fixed here rather than inherited:
-      # compose.action.yaml passes no resolver at all, and the action pins the
-      # variable empty.
+      # The test-dns fixture's address on test-net (../compose.test-inspect.yaml).
       - EXTERNAL_RESOLVER=10.200.0.53
       - TEST_NET_ADDR=10.200.0.2/24
       - TEST_NET_SUBNET=${TEST_NET_SUBNET:-10.210.0.0/24}
