@@ -20304,6 +20304,17 @@ function defaultExecFile(command, args) {
 		"pipe"
 	] });
 }
+/** The sudo flags that run a command as uid/gid rather than as root. Numeric
+*  (`#1000`) so no passwd/group name is needed for the identity itself, though
+*  sudo does still require the uid to resolve to an account. */
+function asOwner({ uid, gid }) {
+	return [
+		"-u",
+		`#${uid}`,
+		"-g",
+		`#${gid}`
+	];
+}
 /** Every path from (but not including) `ancestor` down to (and including)
 *  `descendant`, shallowest first -- e.g. ("/a", "/a/b/c") -> ["/a/b", "/a/b/c"]. */
 function pathSegmentsBetween(ancestor, descendant) {
@@ -20321,24 +20332,35 @@ function pathSegmentsBetween(ancestor, descendant) {
 * - if it equals the current value of one of KNOWN_FILE_VARS, the runner was
 *   supposed to have already created it -- throw rather than paper over a
 *   broken assumption.
-* - otherwise, walk up to the nearest existing ancestor and use sudo (this
-*   action's isolation setup already requires passwordless sudo -- see
-*   checkPasswordlessSudo) to mkdir -p the missing path, then chown/chmod
-*   every newly-created path segment to match that ancestor's owner/mode.
-*   sudo performs the mkdir mechanically; ownership is never handed to the
-*   runner's own uid unconditionally -- a target under an already-restricted,
-*   non-runner-writable tree (e.g. /etc/test) ends up exactly as restricted
-*   as naming the existing /etc directly would have.
+* - otherwise, walk up to the nearest existing ancestor and `mkdir -p` the
+*   missing path *as that ancestor's owner*, using sudo only to become it
+*   (this action's isolation setup already requires passwordless sudo -- see
+*   checkPasswordlessSudo), with that ancestor's mode. Ownership is never handed
+*   to the runner's own uid unconditionally -- a target under an
+*   already-restricted, non-runner-writable tree (e.g. /etc/test) ends up
+*   exactly as restricted as naming the existing /etc directly would have.
 * Already-existing entries are left completely untouched.
 * Returns every path segment it created, shallowest first, so the caller can
 * hand them to removeCreatedDirsIfEmpty once the step is done.
 * Must run before the scratch dir's `mount --rbind /` snapshot (i.e. before
 * runIsolated()), same timing constraint as the overlay upper/work dirs.
+*
+* Running as the owner rather than as root is what makes this safe against a
+* concurrent step: steps can run in parallel, share the runner's uid, and can
+* write the parent directory, so one could rmdir a just-created empty directory
+* and leave a symlink in its place. `mkdir -p` refuses to follow a name it
+* created itself (it descends with O_NOFOLLOW), and with no chown/chmod left to
+* redirect, the worst a swap can still do is put a directory somewhere that uid
+* could already have created one -- no privilege is lent to it.
 */
 function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.existsSync, stat = defaultStat, execFile = defaultExecFile } = {}) {
 	let knownFileValues = new Set(KNOWN_FILE_VARS.map((name) => env[name]).filter((v) => !!v)), created = [], rollback = () => {
-		for (let p of [...created].reverse()) try {
-			execFile("sudo", ["rmdir", p]);
+		for (let dir of [...created].reverse()) try {
+			execFile("sudo", [
+				...asOwner(dir),
+				"rmdir",
+				dir.path
+			]);
 		} catch {}
 	};
 	for (let path of resolvedPaths) {
@@ -20351,23 +20373,22 @@ function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.e
 			ancestor = parent;
 		}
 		try {
-			let { uid, gid, mode } = stat(ancestor), owner = `${uid}:${gid}`, modeOctal = (mode & 4095).toString(8);
+			let { uid, gid, mode } = stat(ancestor), modeOctal = (mode & 4095).toString(8);
 			execFile("sudo", [
+				...asOwner({
+					uid,
+					gid
+				}),
 				"mkdir",
 				"-p",
-				path
-			]);
-			let segments = pathSegmentsBetween(ancestor, path);
-			for (let segment of segments) execFile("sudo", [
-				"chown",
-				owner,
-				segment
-			]), execFile("sudo", [
-				"chmod",
+				"-m",
 				modeOctal,
-				segment
-			]);
-			created.push(...segments);
+				path
+			]), created.push(...pathSegmentsBetween(ancestor, path).map((segment) => ({
+				path: segment,
+				uid,
+				gid
+			})));
 		} catch (e) {
 			throw rollback(), new WriteThroughTargetUncreatableError(`write_through: ${JSON.stringify(path)} doesn't exist and couldn't be created: ${e instanceof Error ? e.message : String(e)}`);
 		}
@@ -20380,10 +20401,17 @@ function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.e
 * directory the command actually wrote to is non-empty, so the removal fails
 * and the content stays -- which is the whole point of having asked for the
 * path. Failures are therefore expected and ignored.
+* Runs as each directory's own owner, like the mkdir that made it: the isolated
+* command has just been running with these paths writable, so a root rmdir by
+* name here would be a way to remove any empty directory on the host.
 */
 function removeCreatedDirsIfEmpty(created, { execFile = defaultExecFile } = {}) {
-	for (let path of [...created].reverse()) try {
-		execFile("sudo", ["rmdir", path]);
+	for (let dir of [...created].reverse()) try {
+		execFile("sudo", [
+			...asOwner(dir),
+			"rmdir",
+			dir.path
+		]);
 	} catch {}
 }
 //#endregion

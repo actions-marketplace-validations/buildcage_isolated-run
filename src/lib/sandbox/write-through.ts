@@ -130,13 +130,21 @@ export function resolveWriteThroughPaths(
 export class WriteThroughTargetMissingError extends Error {}
 
 /** Thrown by ensureWriteThroughTargetsExist when a missing target couldn't be
- *  created (the sudo mkdir/chown/chmod sequence itself failed). */
+ *  created (the sudo mkdir itself failed). */
 export class WriteThroughTargetUncreatableError extends Error {}
 
 interface StatShape {
   uid: number;
   gid: number;
   mode: number;
+}
+
+/** A directory ensureWriteThroughTargetsExist created, with the identity it
+ *  was created as, so removing it again can run as that identity too. */
+export interface CreatedDir {
+  path: string;
+  uid: number;
+  gid: number;
 }
 
 export interface EnsureWriteThroughTargetsExistOptions {
@@ -152,6 +160,13 @@ function defaultStat(path: string): StatShape {
 
 function defaultExecFile(command: string, args: string[]): void {
   execFileSync(command, args, { stdio: ["ignore", "ignore", "pipe"] });
+}
+
+/** The sudo flags that run a command as uid/gid rather than as root. Numeric
+ *  (`#1000`) so no passwd/group name is needed for the identity itself, though
+ *  sudo does still require the uid to resolve to an account. */
+function asOwner({ uid, gid }: { uid: number; gid: number }): string[] {
+  return ["-u", `#${uid}`, "-g", `#${gid}`];
 }
 
 /** Every path from (but not including) `ancestor` down to (and including)
@@ -173,19 +188,26 @@ function pathSegmentsBetween(ancestor: string, descendant: string): string[] {
  * - if it equals the current value of one of KNOWN_FILE_VARS, the runner was
  *   supposed to have already created it -- throw rather than paper over a
  *   broken assumption.
- * - otherwise, walk up to the nearest existing ancestor and use sudo (this
- *   action's isolation setup already requires passwordless sudo -- see
- *   checkPasswordlessSudo) to mkdir -p the missing path, then chown/chmod
- *   every newly-created path segment to match that ancestor's owner/mode.
- *   sudo performs the mkdir mechanically; ownership is never handed to the
- *   runner's own uid unconditionally -- a target under an already-restricted,
- *   non-runner-writable tree (e.g. /etc/test) ends up exactly as restricted
- *   as naming the existing /etc directly would have.
+ * - otherwise, walk up to the nearest existing ancestor and `mkdir -p` the
+ *   missing path *as that ancestor's owner*, using sudo only to become it
+ *   (this action's isolation setup already requires passwordless sudo -- see
+ *   checkPasswordlessSudo), with that ancestor's mode. Ownership is never handed
+ *   to the runner's own uid unconditionally -- a target under an
+ *   already-restricted, non-runner-writable tree (e.g. /etc/test) ends up
+ *   exactly as restricted as naming the existing /etc directly would have.
  * Already-existing entries are left completely untouched.
  * Returns every path segment it created, shallowest first, so the caller can
  * hand them to removeCreatedDirsIfEmpty once the step is done.
  * Must run before the scratch dir's `mount --rbind /` snapshot (i.e. before
  * runIsolated()), same timing constraint as the overlay upper/work dirs.
+ *
+ * Running as the owner rather than as root is what makes this safe against a
+ * concurrent step: steps can run in parallel, share the runner's uid, and can
+ * write the parent directory, so one could rmdir a just-created empty directory
+ * and leave a symlink in its place. `mkdir -p` refuses to follow a name it
+ * created itself (it descends with O_NOFOLLOW), and with no chown/chmod left to
+ * redirect, the worst a swap can still do is put a directory somewhere that uid
+ * could already have created one -- no privilege is lent to it.
  */
 export function ensureWriteThroughTargetsExist(
   resolvedPaths: string[],
@@ -195,7 +217,7 @@ export function ensureWriteThroughTargetsExist(
     stat = defaultStat,
     execFile = defaultExecFile,
   }: EnsureWriteThroughTargetsExistOptions = {},
-): string[] {
+): CreatedDir[] {
   const knownFileValues = new Set(
     KNOWN_FILE_VARS.map((name) => env[name]).filter((v): v is string => Boolean(v)),
   );
@@ -205,13 +227,13 @@ export function ensureWriteThroughTargetsExist(
   // rolled back before rethrowing so a run that never actually starts
   // doesn't still leave host-owned directories behind from the entries
   // that happened to succeed first.
-  const created: string[] = [];
+  const created: CreatedDir[] = [];
   const rollback = () => {
-    for (const p of [...created].reverse()) {
+    for (const dir of [...created].reverse()) {
       try {
         // `rmdir`, like removeCreatedDirsIfEmpty: only directories are created
         // here, and the step hasn't run yet, so every one of them is empty.
-        execFile("sudo", ["rmdir", p]);
+        execFile("sudo", [...asOwner(dir), "rmdir", dir.path]);
       } catch {
         // Best-effort: the original error is what matters here, not a
         // failed cleanup attempt on top of it.
@@ -245,15 +267,21 @@ export function ensureWriteThroughTargetsExist(
 
     try {
       const { uid, gid, mode } = stat(ancestor);
-      const owner = `${uid}:${gid}`;
+      // One mkdir -p, not one call per segment: only within a single run does
+      // it descend with O_NOFOLLOW, and only names it created itself are
+      // protected that way. Re-entering per segment would hand the names it
+      // already made back to ordinary path resolution.
+      // -m, because being under the ancestor is not on its own what makes the
+      // target reachable: an ancestor that is writable through its group or
+      // world bits rather than its owner (/tmp and /var/tmp are 1777) would
+      // otherwise leave the sandboxed command unable to write the very path it
+      // asked for. With -p, -m applies to the target; anything created above it
+      // on the way gets mkdir's own permissions, which the ancestor still gates.
       const modeOctal = (mode & 0o7777).toString(8);
-      execFile("sudo", ["mkdir", "-p", path]);
-      const segments = pathSegmentsBetween(ancestor, path);
-      for (const segment of segments) {
-        execFile("sudo", ["chown", owner, segment]);
-        execFile("sudo", ["chmod", modeOctal, segment]);
-      }
-      created.push(...segments);
+      execFile("sudo", [...asOwner({ uid, gid }), "mkdir", "-p", "-m", modeOctal, path]);
+      created.push(
+        ...pathSegmentsBetween(ancestor, path).map((segment) => ({ path: segment, uid, gid })),
+      );
     } catch (e) {
       // Neither WriteThroughTargetMissingError nor WriteThroughTargetUncreatableError
       // can originate here -- both are only ever thrown above, outside this
@@ -276,14 +304,17 @@ export function ensureWriteThroughTargetsExist(
  * directory the command actually wrote to is non-empty, so the removal fails
  * and the content stays -- which is the whole point of having asked for the
  * path. Failures are therefore expected and ignored.
+ * Runs as each directory's own owner, like the mkdir that made it: the isolated
+ * command has just been running with these paths writable, so a root rmdir by
+ * name here would be a way to remove any empty directory on the host.
  */
 export function removeCreatedDirsIfEmpty(
-  created: string[],
+  created: CreatedDir[],
   { execFile = defaultExecFile }: { execFile?: (command: string, args: string[]) => void } = {},
 ): void {
-  for (const path of [...created].reverse()) {
+  for (const dir of [...created].reverse()) {
     try {
-      execFile("sudo", ["rmdir", path]);
+      execFile("sudo", [...asOwner(dir), "rmdir", dir.path]);
     } catch {
       // Non-empty (the command wrote something here) or already gone.
     }
