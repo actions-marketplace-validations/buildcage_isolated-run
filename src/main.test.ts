@@ -246,8 +246,19 @@ describe("resolveFilesystemPlan", () => {
       stat: () => ({ uid: 1000, gid: 1000, mode: 0o40755 }),
       execFile: (cmd, args) => execFileCalls.push([cmd, ...args]),
     });
-    expect(execFileCalls[0]).toStrictEqual(["sudo", "mkdir", "-p", "/opt/build-output"]);
-    expect(plan.createdDirs).toStrictEqual(["/opt/build-output"]);
+    expect(execFileCalls[0]).toStrictEqual([
+      "sudo",
+      "-u",
+      "#1000",
+      "-g",
+      "#1000",
+      "mkdir",
+      "-p",
+      "-m",
+      "755",
+      "/opt/build-output",
+    ]);
+    expect(plan.createdDirs).toStrictEqual([{ path: "/opt/build-output", uid: 1000, gid: 1000 }]);
   });
 
   it("skips the guard and creates nothing for the / sentinel", () => {
@@ -338,7 +349,18 @@ describe("resolveFilesystemPlan", () => {
       deviceOf: () => 1,
     });
     expect(plan.writeThroughPaths).toStrictEqual(["/workspace/dist"]);
-    expect(execFileCalls[0]).toStrictEqual(["sudo", "mkdir", "-p", "/workspace/dist"]);
+    expect(execFileCalls[0]).toStrictEqual([
+      "sudo",
+      "-u",
+      "#1000",
+      "-g",
+      "#1000",
+      "mkdir",
+      "-p",
+      "-m",
+      "755",
+      "/workspace/dist",
+    ]);
     // RUNNER_TEMP still folds away under HOME as usual; GITHUB_WORKSPACE
     // keeps its own overlay since it isn't nested under HOME here.
     expect(plan.overlayRoots.map((r) => r.path).sort()).toStrictEqual(

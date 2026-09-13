@@ -31,6 +31,7 @@ import {
   WriteThroughTargetMissingError,
   WriteThroughTargetUncreatableError,
   WRITE_THROUGH_ALL,
+  type CreatedDir,
 } from "./lib/sandbox/write-through.ts";
 import { assertScratchBaseNotWritable, isAtOrUnder } from "./lib/sandbox/paths.ts";
 import { generateContainerName, getContainerNetns, ownerToken } from "./lib/container.ts";
@@ -205,7 +206,7 @@ export interface FilesystemPlan {
   writeThroughPaths: string[];
   /** The directory segments pre-creating those paths actually created, for
    *  removeCreatedDirsIfEmpty to give back once the step is done. */
-  createdDirs: string[];
+  createdDirs: CreatedDir[];
 }
 
 /** Test-only seam onto ensureWriteThroughTargetsExist/determineOverlayRoots's
@@ -308,7 +309,7 @@ export function resolveFilesystemPlan(
     throw new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT");
   }
 
-  let createdDirs: string[];
+  let createdDirs: CreatedDir[];
   try {
     createdDirs = ensureWriteThroughTargetsExist(writeThroughPaths, env, deps);
   } catch (e) {
@@ -953,9 +954,9 @@ async function main(): Promise<void> {
     // typo can throw after they were created. Deliberately not mirrored in
     // post.ts: the only way to hand this list to the post step is GITHUB_STATE,
     // which the sandboxed command can rewrite (see post-state.ts), and that
-    // would turn the cleanup into a way to rmdir any empty directory as root. A
-    // hard kill therefore leaves an empty directory behind, which the next run
-    // reuses.
+    // would turn the cleanup into a way to rmdir any empty directory belonging
+    // to whoever each entry claimed as its owner. A hard kill therefore leaves
+    // an empty directory behind, which the next run reuses.
     try {
       removeCreatedDirsIfEmpty(createdDirs);
     } catch (e) {
