@@ -145,6 +145,11 @@ writes survive a `filesystem_mode: ephemeral` step and which the overlay discard
 > GitHub-hosted `ubuntu-*` runners, but lightweight images such as `ubuntu-slim` (a Docker client
 > with no daemon) are not supported. Creating a `write_through:` path that doesn't exist yet asks a
 > little more of sudoers than this; see [Filesystem access](#filesystem-access).
+>
+> The proxy container is started through Compose and waited on until its health check passes, which
+> needs Docker Engine 25.0 or later and Compose v2.20.2 or later. GitHub-hosted runners are well
+> past both. A self-hosted runner on something older fails while starting the proxy, before the
+> command runs.
 
 ## Inputs
 
