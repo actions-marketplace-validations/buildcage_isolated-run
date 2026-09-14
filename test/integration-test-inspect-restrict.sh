@@ -66,6 +66,8 @@ GET http://10.200.0.100/pub-by-addr/**
 GET https://*.wildcard.example.com/public/**
 GET ~^https://blocked\.example\.com:9443/public/.*$
 GET ~^https://blocked\.example\.com/defaultport/.*$
+GET ~https://ok\.wildcard\.example\.com/regexpub/
+GET ~^https://ok\.wildcard\.example\.com/regexexact$
 # Never requested: this puts the characters haproxy's own config parser
 # folds in front of real haproxy. Unescaped, the '#' would comment the
 # line short and leave the regex as ^/frag(x, and the ' would open a

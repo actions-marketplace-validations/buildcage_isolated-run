@@ -6,6 +6,8 @@
 # Rules under test (set by test/integration-test-universal-restrict.sh):
 #   allowed_https_rules: allowed.example.com:443 allowed.example.com:8443
 #                        *.wildcard.example.com:443 *.wildcard.example.com:8443
+#                        ~ok\.regex\.example\.com:443        (no anchors)
+#                        ~^ports\.regex\.example\.com:(443|8443)$
 #   allowed_http_rules:  allowed.example.com:80 allowed.example.com:8080
 #                        *.wildcard.example.com:80 *.wildcard.example.com:8080
 # ---------------------------------------------------------------------------
@@ -41,6 +43,31 @@ check_status "ALLOWED.example.com HTTP" "$($C http://ALLOWED.example.com/)" "200
 
 echo "=== [HTTPS - allowed - wildcard] ==="
 check_status "sub.wildcard.example.com" "$($C https://sub.wildcard.example.com/)" "200"
+
+echo "=== [HTTPS - regex rule written without anchors] ==="
+check_status "ok.regex.example.com" "$($C https://ok.regex.example.com/)" "200"
+
+echo "=== [HTTPS - regex rule must not match a name merely containing it] ==="
+CODE=$($C --max-time 5 https://not-ok.regex.example.com/ 2>/dev/null || echo "000")
+if [ "$CODE" != "200" ]; then
+  echo "  PASS  not-ok.regex.example.com blocked (got $CODE)"
+else
+  echo "  FAIL  not-ok.regex.example.com reached the origin"
+  FAILURES=$((FAILURES + 1))
+fi
+
+echo "=== [HTTPS - regex rule with a grouped port alternation] ==="
+check_status "ports.regex.example.com:443" "$($C https://ports.regex.example.com/)" "200"
+check_status "ports.regex.example.com:8443" "$($C https://ports.regex.example.com:8443/)" "200"
+
+echo "=== [HTTP - regex rule names https ports only] ==="
+CODE=$($C --max-time 5 http://ports.regex.example.com/ 2>/dev/null || echo "000")
+if [ "$CODE" != "200" ]; then
+  echo "  PASS  ports.regex.example.com:80 blocked (got $CODE)"
+else
+  echo "  FAIL  ports.regex.example.com:80 reached the origin"
+  FAILURES=$((FAILURES + 1))
+fi
 
 echo "=== [HTTPS - blocked - nested subdomain] ==="
 CODE=$($C --max-time 5 https://deep.sub.wildcard.example.com/ 2>/dev/null || echo "000")
