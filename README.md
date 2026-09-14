@@ -477,6 +477,10 @@ request that followed them, and [service-discovery lookups](#service-discovery) 
 that was asked for. `universal` never sees a method or a URL, so this input only does
 anything under `inspect`.
 
+This is also the form to keep where the report is an audit trail rather than something to read: in
+`filesystem_mode: persistent` a later step can add to the Job Summary, but not to an artifact
+already uploaded. See [Known Limitations](./docs/security.md#known-limitations).
+
 | Field         | Always | Notes                                                            |
 | ------------- | ------ | ---------------------------------------------------------------- |
 | `time`        | yes    | ISO 8601 UTC                                                     |

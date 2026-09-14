@@ -640,6 +640,27 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
   level (see [Notes](../README.md#notes)), not the filesystem, so one can reach another's in-flight
   scratch files there. `filesystem_mode: ephemeral` resolves this too, since each invocation gets its own
   overlay.
+
+  What follows from that is where the step goes in the job. The network restriction covers the
+  command this action runs, for as long as it runs; it says nothing about what a step after it does,
+  and in `persistent` mode a later step is something the command can reach. Wrapping every untrusted
+  step in this action is not the way out: a payload left in `$GITHUB_PATH` or `$HOME` runs in the
+  next step before its sandbox does, and this action resolves `sudo` and `docker` through the
+  `$PATH` the runner hands it. Two arrangements hold: make the isolated step the last one in the job
+  that runs anything untrusted, leaving only fixed steps such as an artifact upload after it, or use
+  `filesystem_mode: ephemeral` with `write_through:` narrowed to `$GITHUB_WORKSPACE` and the output
+  files the step really has to produce. Adopting this action for the network restriction alone, with
+  untrusted steps still to come, gets less than it looks like.
+
+- **The report is written outside the sandbox, but the Job Summary it lands in is not**: this
+  action renders its section from the runner host after the sandboxed command has exited, so the
+  command cannot edit its own report, and a name or URL is escaped before it is written into one of
+  its tables. What it can do in `filesystem_mode: persistent` (the default) is append to
+  `$GITHUB_STEP_SUMMARY` beforehand, that file living under `$RUNNER_TEMP`, and leave markdown of
+  its own beside the real report; so can any later step it has taken over by the bullet above.
+  Where the report is meant to be an audit trail rather than something to read, take it from
+  `upload_traffic_artifact: true` instead: the JSON is uploaded when the step ends, and is not a
+  file a later step can append a line to.
 - **A step's own scratch directory is hidden from every sandbox, including its own**: each
   `run:` step stages its OCI bundle and its run script under `/var/tmp/buildcage-<uid>/`, and the
   sandbox's root filesystem is a bind-mount of the host's own `/`, so without further work every
