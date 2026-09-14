@@ -21593,7 +21593,7 @@ function renderHostTable(rows, { showReason = !1, showExpected = !1 } = {}) {
 		title: "Expected",
 		align: "center"
 	}), markdownTable(formats, rows.map((r) => ({
-		host: r.display ?? `${r.host}:${r.port}`,
+		host: r.display ?? (r.port === "-" ? r.host : `${r.host}:${r.port}`),
 		ruleType: r.ruleType,
 		reason: r.reason,
 		count: r.count,
