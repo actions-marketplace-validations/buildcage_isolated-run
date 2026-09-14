@@ -108,8 +108,8 @@ assert_summary_contains "| absent.example.com:443 | HTTPS |" "absent.example.com
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "token=SECRET-VALUE" "the refused URL's query string was recorded intact"
-# The marker is the last thing on the log line the report is built from, so
-# finding it proves a URL the size of a signed one was not cut short.
+# The marker is last on the log line the report is built from, so finding it
+# proves nothing was cut.
 assert_summary_contains "end=TAIL-MARKER -> not-allowed" "the ~1.3KB refused URL was recorded whole"
 assert_summary_contains "TLS tlspass.example.com:443" "the TLS passthrough is in the timeline, never decrypted"
 assert_summary_contains "DNS secret-in-a-name.attacker.example -> dns-not-allowed" "the DNS-only exfiltration attempt was refused and recorded"

