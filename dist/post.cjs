@@ -466,10 +466,24 @@ function parseMountinfo(mountinfoContent) {
 	return mountinfoContent.split("\n").filter(Boolean).map((line) => {
 		let fields = line.split(" "), dashIndex = fields.indexOf("-");
 		return {
-			mountPoint: fields[4],
-			fsType: fields[dashIndex + 1]
+			mountPoint: unescapeField(fields[4]),
+			fsType: unescapeField(fields[dashIndex + 1])
 		};
 	});
+}
+/**
+* Undo the octal escapes the kernel writes for the four characters that
+* would otherwise be unreadable in a space-separated table: space (\040),
+* tab (\011), newline (\012) and backslash (\134). A mount point left
+* escaped names a path that does not exist, so runc ignores the
+* readonlyPaths entry built from it and that mount stays writable.
+*
+* One left-to-right pass, which is what keeps a path that really contains a
+* backslash correct: the kernel writes it as \134, so the text following an
+* escape is never rescanned as one.
+*/
+function unescapeField(field) {
+	return (field ?? "").replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
 }
 //#endregion
 //#region src/lib/sandbox/scratch-dir.ts

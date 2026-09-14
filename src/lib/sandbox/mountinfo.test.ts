@@ -23,6 +23,27 @@ describe("parseMountinfo", () => {
     ]);
   });
 
+  it("undoes the octal escapes a path with a space, a tab or a newline arrives in", () => {
+    expect(
+      parseMountinfo(
+        [
+          "6 1 0:6 / /mnt/my\\040disk rw,relatime shared:6 - ext4 /dev/sdc1 rw",
+          "7 1 0:7 / /mnt/tab\\011here rw,relatime shared:7 - ext4 /dev/sdd1 rw",
+          "8 1 0:8 / /mnt/new\\012line rw,relatime shared:8 - ext4 /dev/sde1 rw",
+        ].join("\n"),
+      ).map(({ mountPoint }) => mountPoint),
+    ).toStrictEqual(["/mnt/my disk", "/mnt/tab\there", "/mnt/new\nline"]);
+  });
+
+  it("leaves a path that really contains a backslash alone, rather than rescanning it", () => {
+    // The kernel writes a literal backslash as \134, so "\134040" is the
+    // four characters \, 0, 4, 0 -- not an escaped space.
+    expect(
+      parseMountinfo("9 1 0:9 / /mnt/\\134040 rw,relatime shared:9 - ext4 /dev/sdf1 rw")[0]
+        .mountPoint,
+    ).toStrictEqual("/mnt/\\040");
+  });
+
   it("ignores trailing/blank lines", () => {
     expect(parseMountinfo(`${SAMPLE_MOUNTINFO}\n\n`).length).toStrictEqual(5);
   });
