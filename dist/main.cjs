@@ -21541,15 +21541,36 @@ function buildRestrictExample(auditedRows, actionRepo, actionRef, { runCommand, 
 }
 //#endregion
 //#region src/core/lib/log/traffic-event.ts
+/** Index a timeline once. The check below runs for every lookup, and rescanning
+*  the whole timeline for each would be quadratic. */
+function connectedHosts(timeline) {
+	let connected = {
+		any: /* @__PURE__ */ new Set(),
+		blocked: /* @__PURE__ */ new Set()
+	};
+	for (let event of timeline) {
+		if (event.protocol === "dns") continue;
+		let host = event.host.toLowerCase();
+		connected.any.add(host), event.action === "block" && connected.blocked.add(host);
+	}
+	return connected;
+}
 /**
-* A blocked DNS-only lookup is worth keeping on its own -- it is the sole
-* trace of a name the build never actually connected to -- but once the same
-* host also shows up as a blocked request elsewhere in the timeline, the DNS
-* line says nothing that request does not already say, and only doubles the
-* row.
+* A lookup is the sole trace of a name the build never connected to, and worth
+* keeping for that. Once a connection to the same name also appears, it says
+* nothing that connection does not and only doubles the row.
+*
+* A refused lookup takes a refused connection to cover it. An allowed request
+* for a name the resolver refused would mean the two disagreed about that host,
+* which is worth a reader seeing rather than collapsing away.
+*
+* A discovery lookup is never redundant: it asks about `_service._proto.<host>`,
+* which nothing connects to, and its query type is the point of the row.
 */
-function isRedundantBlockedDns(event, timeline) {
-	return event.protocol !== "dns" || event.action !== "block" ? !1 : timeline.some((e) => e !== event && e.protocol !== "dns" && e.host === event.host && e.action === "block");
+function isRedundantDns(event, connected) {
+	if (event.protocol !== "dns" || event.action === "discovery") return !1;
+	let host = event.host.toLowerCase();
+	return event.action === "block" ? connected.blocked.has(host) : connected.any.has(host);
 }
 //#endregion
 //#region src/core/lib/report/elapsed-time.ts
@@ -21586,10 +21607,10 @@ function formatElapsedFixed(elapsedSeconds) {
 //#region src/core/lib/report/render/inspect-details.ts
 /**
 * Render the communication detail as a collapsed markdown section, or "" if
-* empty. One timeline, allowed and refused interleaved. Name lookups that only
-* resolved are dropped (the request that followed already shows the name); a
-* refused name is kept only while it is its own sole trace, and dropped once
-* a refused request for the same name shows up too.
+* empty. One timeline, allowed and refused interleaved. A name lookup is kept
+* only while it is its own sole trace, and dropped once a connection to the
+* same name shows up too. A discovery lookup is always its own sole trace --
+* nothing connects to `_service._proto.<host>` -- so it always shows.
 *
 * `startedAt` is when the proxy itself started (seconds since the epoch),
 * so every event reads as time elapsed since then rather than an absolute
@@ -21610,19 +21631,24 @@ function renderInspectDetails(timeline, startedAt) {
 * Job Summary.
 */
 function renderInspectDetailsBody(timeline, startedAt) {
-	let shown = timeline.filter((e) => (e.protocol !== "dns" || e.action === "block") && !isRedundantBlockedDns(e, timeline));
+	let connected = connectedHosts(timeline), shown = timeline.filter((e) => !isRedundantDns(e, connected));
 	return shown.length === 0 ? "" : shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n";
 }
+const MARK = {
+	block: "🚫",
+	discovery: "ℹ️"
+};
 function renderEvent(event, startedAt) {
-	return `${event.action === "block" ? "🚫" : "✅"} ${formatTime(event.time, startedAt)}: ${subject(event)} -> ${outcome(event)}`;
+	return `${MARK[event.action] ?? "✅"} ${formatTime(event.time, startedAt)}: ${subject(event)} -> ${outcome(event)}`;
 }
 /** What was asked for, in the most specific form available. */
 function subject(event) {
-	return event.protocol === "dns" ? `DNS ${event.host}` : event.url === void 0 ? `${event.protocol.toUpperCase()} ${event.host}:${event.port}` : `${event.method} ${event.url}`;
+	return event.queryType === void 0 ? event.protocol === "dns" ? `DNS ${event.host}` : event.url === void 0 ? `${event.protocol.toUpperCase()} ${event.host}:${event.port}` : `${event.method} ${event.url}` : `DNS ${event.queryType} ${event.host}`;
 }
 /** What came of it: a refusal names its reason, anything else its result. */
 function outcome(event) {
 	if (event.action === "block") return event.reason ?? "blocked";
+	if (event.action === "discovery") return `no data (${event.queryType} is never served)`;
 	let parts = [];
 	return event.status !== void 0 && parts.push(String(event.status)), event.bytes !== void 0 && parts.push(`(${formatBytes(event.bytes)})`), parts.length > 0 ? parts.join(" ") : "resolved";
 }
@@ -21913,7 +21939,12 @@ async function buildUniversalReportData(lines, parameters) {
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, START = /^buildcage haproxy starting (\d+)$/;
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = /^buildcage haproxy starting (\d+)$/;
+/** The resolver log's timestamp, in seconds since the epoch. */
+function timeOf(stamp) {
+	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
+	return Number.isNaN(parsed) ? 0 : parsed / 1e3;
+}
 /**
 * Whether buildcage ended the exchange, rather than an origin answering.
 *
@@ -22004,6 +22035,10 @@ async function scanInspectLog(lines, isAudit = !1) {
 * reached for, not how many times a resolver was consulted. An allowed answer
 * is decisive, so an AAAA refusal cannot mask an A that resolved.
 *
+* A discovery lookup is kept per name and type: the same name asked as SRV and
+* as TXT are two different things. A refused service name is kept per name
+* like any other refusal, carrying the first type it was asked as.
+*
 * The time comes from s6-log rather than from CoreDNS, whose log plugin has no
 * timestamp replacement of its own. CoreDNS lowercases the name it logs, so a
 * name that carried information in its capitalisation is recorded without it.
@@ -22013,28 +22048,62 @@ async function scanInspectLog(lines, isAudit = !1) {
 * the marker counts: CoreDNS's `errors` plugin writes mid-run.
 */
 async function scanInspectDnsLog(lines, isAudit = !1) {
-	let seen = /* @__PURE__ */ new Map(), headIntact;
+	let seen = /* @__PURE__ */ new Map(), discovery = /* @__PURE__ */ new Map(), service = /* @__PURE__ */ new Map(), headIntact;
 	for await (let line of lines) {
 		let trimmed = line.trim();
 		trimmed !== "" && (headIntact ??= trimmed.endsWith("buildcage coredns starting"));
 		let match = DNS.exec(trimmed);
-		if (!match) continue;
-		let parsed = Date.parse(`${match[1].replace(" ", "T")}Z`), time = Number.isNaN(parsed) ? 0 : parsed / 1e3, allowed = match[2] === "allowed", existing = seen.get(match[3]);
-		existing ? existing.allowed ||= allowed : seen.set(match[3], {
-			time,
-			allowed
-		});
-	}
-	return {
-		events: [...seen.entries()].map(([host, { time, allowed }]) => {
-			let event = {
+		if (match) {
+			let time = timeOf(match[1]), allowed = match[2] === "allowed", existing = seen.get(match[3]);
+			existing ? existing.allowed ||= allowed : seen.set(match[3], {
 				time,
-				action: actionFor(!allowed, isAudit),
-				protocol: "dns",
-				host
-			};
-			return allowed || (event.reason = "dns-not-allowed"), event;
-		}),
+				allowed
+			});
+			continue;
+		}
+		let lookup = DNS_DISCOVERY.exec(trimmed);
+		if (lookup) {
+			let key = `${lookup[2]}\t${lookup[3]}`;
+			discovery.has(key) || discovery.set(key, {
+				time: timeOf(lookup[1]),
+				host: lookup[2],
+				queryType: lookup[3]
+			});
+			continue;
+		}
+		let refused = DNS_SERVICE_DENIED.exec(trimmed);
+		refused && (service.has(refused[2]) || service.set(refused[2], {
+			time: timeOf(refused[1]),
+			host: refused[2],
+			queryType: refused[3]
+		}));
+	}
+	let events = [...seen.entries()].map(([host, { time, allowed }]) => {
+		let event = {
+			time,
+			action: actionFor(!allowed, isAudit),
+			protocol: "dns",
+			host
+		};
+		return allowed || (event.reason = "dns-not-allowed"), event;
+	});
+	for (let { time, host, queryType } of discovery.values()) events.push({
+		time,
+		action: "discovery",
+		protocol: "dns",
+		host,
+		queryType
+	});
+	for (let { time, host, queryType } of service.values()) events.push({
+		time,
+		action: actionFor(!0, isAudit),
+		protocol: "dns",
+		host,
+		queryType,
+		reason: "dns-service-not-allowed"
+	});
+	return {
+		events,
 		headIntact: headIntact ?? !1
 	};
 }
@@ -22069,8 +22138,8 @@ function toHostRow(event) {
 * unlike the explicit engine.
 */
 async function buildInspectReportData(proxyLines, dnsLines, parameters) {
-	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [];
-	for (let event of timeline) (event.protocol !== "dns" || event.action === "block") && (isRedundantBlockedDns(event, timeline) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
+	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [], connected = connectedHosts(timeline);
+	for (let event of timeline) event.action !== "discovery" && (isRedundantDns(event, connected) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
 	let blocked = annotateKnownBlocked(aggregate(blockedRows), parameters.knownBlockedRules);
 	return {
 		engine: "inspect",
@@ -22201,10 +22270,11 @@ function applyOutcomeAnnotation(annotation, { level, message, shouldFail }) {
 /**
 * Build the records for one run, oldest first.
 *
-* Includes name lookups that merely resolved, unlike the summary: the volume is
-* cheap for a machine reader, and a name resolved but never connected to is how
-* a too-wide rule being probed shows up. A field is absent when it does not
-* apply, never zero, so filter on `action`, not `status`.
+* Includes every name lookup, the summary's tables only those with no request
+* behind them: the volume is cheap for a machine reader, and which names were
+* asked about is not always derivable from what was then connected to. A field
+* is absent when it does not apply, never zero, so filter on `action`, not
+* `status`.
 */
 function buildTrafficRecords(events, startedAt) {
 	return [...events].sort((a, b) => a.time - b.time).map((e) => {
@@ -22214,7 +22284,7 @@ function buildTrafficRecords(events, startedAt) {
 			protocol: e.protocol,
 			host: e.host
 		};
-		return startedAt !== void 0 && (record.elapsed = formatElapsedFixed(e.time - startedAt)), e.port !== void 0 && (record.port = e.port), e.method !== void 0 && (record.method = e.method), e.url !== void 0 && (record.url = e.url), e.status !== void 0 && (record.status = e.status), e.bytes !== void 0 && (record.bytes = e.bytes), e.reason !== void 0 && (record.reason = e.reason), e.destination !== void 0 && (record.destination = e.destination), record;
+		return startedAt !== void 0 && (record.elapsed = formatElapsedFixed(e.time - startedAt)), e.port !== void 0 && (record.port = e.port), e.queryType !== void 0 && (record.queryType = e.queryType), e.method !== void 0 && (record.method = e.method), e.url !== void 0 && (record.url = e.url), e.status !== void 0 && (record.status = e.status), e.bytes !== void 0 && (record.bytes = e.bytes), e.reason !== void 0 && (record.reason = e.reason), e.destination !== void 0 && (record.destination = e.destination), record;
 	});
 }
 /** Write the same records to a file, indented, for this action to upload as
