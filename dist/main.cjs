@@ -21829,9 +21829,9 @@ function targetOf(row) {
 //#endregion
 //#region src/core/lib/report/build/universal.ts
 /**
-* Pure — no I/O; the caller (src/lib/report.ts) fetches lines/parameters
-* itself. An empty input naturally yields passed:[]/blocked:[]/blockedCount:0,
-* so no special-case branch is needed.
+* Pure — no I/O; the caller fetches the lines and the parameters itself. An
+* empty input naturally yields passed:[]/blocked:[]/blockedCount:0, so no
+* special-case branch is needed.
 */
 async function buildUniversalReportData(lines, parameters) {
 	let { passed, blocked: blockedRawRows, blockedCount, logHeadIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
