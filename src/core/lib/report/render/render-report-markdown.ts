@@ -1,4 +1,5 @@
 import { renderHostTable } from "./host-table.ts";
+import { foldExpectedBlockedRows } from "./fold-expected-blocked.ts";
 import { buildRestrictExample } from "./build-example.ts";
 import { renderInspectDetails } from "./inspect-details.ts";
 import { buildInspectRestrictExample } from "./inspect-example.ts";
@@ -60,9 +61,13 @@ export function renderReportMarkdown(
   }
   if (report.blocked.length > 0) {
     if (report.passed.length > 0) markdown += "\n";
+    // A folded row names its rule rather than its hosts, so it needs the
+    // Communication details universal has no section for.
+    const blocked =
+      report.engine === "universal" ? report.blocked : foldExpectedBlockedRows(report.blocked);
     markdown +=
       "### 🚫 Blocked Hosts\n\n" +
-      renderHostTable(report.blocked, { showReason: true, showExpected }) +
+      renderHostTable(blocked, { showReason: true, showExpected }) +
       "\n";
   }
   if (report.passed.length === 0 && report.blocked.length === 0) {

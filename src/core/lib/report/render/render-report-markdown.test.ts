@@ -25,6 +25,27 @@ const blockedRow = {
   expected: false,
 };
 
+const expectedRows = [
+  {
+    host: "a.sury.org",
+    port: "443",
+    ruleType: "HTTPS",
+    reason: "https-not-allowed",
+    count: 1,
+    expected: true,
+    expectedBy: "*.sury.org:*",
+  },
+  {
+    host: "b.sury.org",
+    port: "443",
+    ruleType: "HTTPS",
+    reason: "https-not-allowed",
+    count: 1,
+    expected: true,
+    expectedBy: "*.sury.org:*",
+  },
+];
+
 // test-shim's Assert interface has no doesNotMatch.
 function assertNotMatch(value: string, pattern: RegExp): void {
   expect(pattern.test(value)).toBe(false);
@@ -166,6 +187,21 @@ describe("renderReportMarkdown", () => {
     );
     assertNotMatch(md, /Expected/);
   });
+
+  it("keeps each matched row, having no Communication details to name its host in", () => {
+    const md = renderReportMarkdown(
+      {
+        ...base,
+        parameters: params({ knownBlockedRules: ["*.sury.org:*"] }),
+        blocked: expectedRows,
+      },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    expect(md).toMatch(/\| a\.sury\.org:443 \|/);
+    expect(md).toMatch(/\| b\.sury\.org:443 \|/);
+    assertNotMatch(md, /hosts\)/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -215,6 +251,23 @@ describe("renderReportMarkdown — inspect", () => {
     expect(md).toMatch(/allowed_url_rules: \|/);
     expect(md).toMatch(/GET https:\/\/good\.com\/pkg/);
     expect(md).toMatch(/run: \|\n\s+npm install/);
+  });
+
+  it("folds known_blocked_rules matches into one row naming the rule", () => {
+    const md = renderReportMarkdown(
+      {
+        ...base,
+        parameters: params({ knownBlockedRules: ["*.sury.org:*"] }),
+        blocked: [blockedRow, ...expectedRows],
+      },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    expect(md).toMatch(
+      /\| \\\*\.sury\.org:\\\* \(2 hosts\) \| HTTPS \| https-not-allowed \| 2 \| ✅ \|/,
+    );
+    assertNotMatch(md, /a\.sury\.org/);
+    expect(md).toMatch(/\| bad\.com:80 \|/);
   });
 });
 
