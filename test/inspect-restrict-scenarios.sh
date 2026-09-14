@@ -16,6 +16,8 @@
 #     GET https://*.wildcard.example.com/public/**
 #     GET ~^https://blocked\.example\.com:9443/public/.*$
 #     GET ~^https://blocked\.example\.com/defaultport/.*$
+#     GET ~https://ok\.wildcard\.example\.com/regexpub/        (no anchors)
+#     GET ~^https://ok\.wildcard\.example\.com/regexexact$
 #   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 metadata.example.com:443 runner.example.com:443
 #   allowed_http_rules:  allowed.example.com:80
 #   allowed_tls_rules:     tlspass.example.com:443 ~^tlspass\.example\.com:8443$
@@ -126,6 +128,22 @@ check_ok "GET blocked.example.com/defaultport/pkg.tgz" "$OUT" "ROOT GET"
 echo "=== [Regex URL rule - portless rule does not also grant a non-default port] ==="
 CODE=$($C https://blocked.example.com:9443/defaultport/pkg.tgz)
 check_status "GET blocked.example.com:9443/defaultport/pkg.tgz" "$CODE" "403"
+
+echo "=== [Regex URL rule - host anchored, path left open] ==="
+OUT=$($S https://ok.wildcard.example.com/regexpub/deep/pkg.tgz)
+check_ok "GET ok.wildcard.example.com/regexpub/deep/pkg.tgz" "$OUT" "ROOT GET"
+
+echo "=== [Regex URL rule - neighbouring host refused] ==="
+CODE=$($C https://not-ok.wildcard.example.com/regexpub/pkg.tgz)
+check_status "GET not-ok.wildcard.example.com/regexpub/pkg.tgz" "$CODE" "403"
+
+echo "=== [Regex URL rule - author's trailing anchor honoured] ==="
+OUT=$($S https://ok.wildcard.example.com/regexexact)
+check_ok "GET ok.wildcard.example.com/regexexact" "$OUT" "ROOT GET"
+
+echo "=== [Regex URL rule - longer path not covered by the anchored rule] ==="
+CODE=$($C https://ok.wildcard.example.com/regexexactly)
+check_status "GET ok.wildcard.example.com/regexexactly" "$CODE" "403"
 
 echo "=== [Host rule] ==="
 OUT=$($S -X DELETE https://sub.wildcard.example.com/anything/at/all)
