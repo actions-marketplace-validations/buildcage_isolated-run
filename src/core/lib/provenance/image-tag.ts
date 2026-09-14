@@ -1,13 +1,17 @@
+/** The engine that publishes the plain version tag. */
+export const DEFAULT_ENGINE = "universal";
+
+export function engineTagSuffix(proxyEngine: string): string {
+  if (proxyEngine === DEFAULT_ENGINE || proxyEngine === "") return "";
+  return `-${proxyEngine}`;
+}
+
 /**
- * Convert an action ref into the base Docker image tag, then append the
- * proxy engine suffix for a non-default engine. The `universal` engine
- * (default; formerly named `transparent` — see resolveProxyEngine's
- * ENGINE_ALIASES, which normalizes that alias away before this ever runs)
- * publishes the plain version tag (e.g. `1.0.0`), matching the
- * pre-multi-engine tagging scheme; `inspect` publishes under its own
- * suffix (e.g. `1.0.0-inspect`). Both share the same Sigstore verification
- * identity (same workflow, same git ref) — only the published Docker tag
- * differs, so this does not affect verify-policy.ts's buildVerifyOptions.
+ * Convert an action ref into the Docker image tag to resolve (e.g. `1.0.0`,
+ * `1.0.0-inspect`, `sha-<sha>-inspect`).
+ *
+ * The suffix is not part of the Sigstore identity; engine-label.ts is what
+ * binds the resolved image to the requested engine.
  */
 export function imageTagFromRef(
   actionRef: string | undefined,
@@ -24,6 +28,5 @@ export function imageTagFromRef(
     base = actionRef;
   }
 
-  if (proxyEngine !== "universal" && proxyEngine !== "") return `${base}-${proxyEngine}`;
-  return base;
+  return `${base}${engineTagSuffix(proxyEngine)}`;
 }
