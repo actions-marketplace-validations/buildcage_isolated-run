@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { resolveSandboxEnv, buildEnvBlob, writeEnvLoader } from "./env-loader.ts";
+import {
+  resolveSandboxEnv,
+  buildEnvBlob,
+  writeEnvLoader,
+  ACTION_INPUT_ENV_KEYS,
+} from "./env-loader.ts";
 import { withScratchDir } from "./scratch-dir.ts";
 import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
 
@@ -72,9 +79,32 @@ describe("resolveSandboxEnv", () => {
     expect(resolved).toStrictEqual({ INPUTS_OF_THE_STEPS_OWN: "kept, the prefix is INPUT_" });
   });
 
+  it("keeps an INPUT_-shaped variable the workflow set itself", () => {
+    const resolved = resolveSandboxEnv({ INPUT_DIR: "build", INPUT_FILE: "out.tar" });
+    expect(resolved).toStrictEqual({ INPUT_DIR: "build", INPUT_FILE: "out.tar" });
+  });
+
   it("drops keys a shell cannot export", () => {
     const resolved = resolveSandboxEnv({ "BASH_FUNC_x%%": "() { :; }", "1BAD": "x", OK: "y" });
     expect(resolved).toStrictEqual({ OK: "y" });
+  });
+});
+
+describe("ACTION_INPUT_ENV_KEYS", () => {
+  // Withholding by name only works while the name list is the whole of
+  // action.yml: an input added there and forgotten here would reach the
+  // sandbox as an environment variable.
+  it("covers every input action.yml declares", () => {
+    const actionYml = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../../action.yml"),
+      "utf8",
+    );
+    const inputs = actionYml.slice(actionYml.indexOf("\ninputs:"), actionYml.indexOf("\noutputs:"));
+    const declared = [...inputs.matchAll(/^ {2}([a-z_]+):$/gm)].map(
+      (m) => `INPUT_${m[1].toUpperCase()}`,
+    );
+    expect(declared.length).toBeGreaterThan(0);
+    expect([...ACTION_INPUT_ENV_KEYS].sort()).toStrictEqual(declared.sort());
   });
 });
 

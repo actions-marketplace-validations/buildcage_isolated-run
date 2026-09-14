@@ -21270,9 +21270,26 @@ const ENV_BLOB_TERMINATOR = "__BUILDCAGE_ENV_END__", ENV_KEY = /^[A-Za-z_][A-Za-
 	"ACTIONS_RESULTS_URL",
 	"ACTIONS_CACHE_SERVICE_V2",
 	"ACTIONS_CACHE_MODE"
-]);
+]), ACTION_INPUT_ENV_KEYS = new Set([
+	"run",
+	"proxy_mode",
+	"proxy_engine",
+	"allowed_https_rules",
+	"allowed_http_rules",
+	"allowed_ip_rules",
+	"allowed_url_rules",
+	"allowed_tls_rules",
+	"upload_traffic_artifact",
+	"traffic_artifact_retention_days",
+	"fail_on_blocked",
+	"known_blocked_rules",
+	"write_through",
+	"writable",
+	"filesystem_mode",
+	"label"
+].map((input) => `INPUT_${input.toUpperCase()}`));
 function isRunnerOnly(key) {
-	return RUNNER_ONLY_ENV_KEYS.has(key) || key.startsWith("INPUT_");
+	return RUNNER_ONLY_ENV_KEYS.has(key) || ACTION_INPUT_ENV_KEYS.has(key);
 }
 /** The step's own environment, minus what the runner added for this action
 *  alone, plus (inspect engine only) the CA-trust variables it left unset.
