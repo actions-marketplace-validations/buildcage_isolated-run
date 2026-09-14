@@ -449,6 +449,15 @@ and no port (folded like any other row when a `known_blocked_rules` rule matches
 wider than the step needs shows up. A name that was connected to has no such row: the request is
 already there.
 
+### An incomplete log
+
+The report refuses to pass a log that doesn't begin where a real proxy run would, so a step whose
+earliest traffic is missing fails in restrict mode however `known_blocked_rules` is set: what
+survived says nothing about what was dropped. Either something removed those entries, or the step
+outgrew the 100 MB of log the proxy keeps, which takes a few hundred thousand requests. Splitting a
+step that large stays under it, and `audit` mode reports the same condition without failing, so it
+can be used to see how much traffic a step really makes.
+
 ### Blocked service names
 
 A row whose reason is `dns-service-not-allowed` is a

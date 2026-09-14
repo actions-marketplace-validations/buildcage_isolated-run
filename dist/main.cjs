@@ -21538,7 +21538,7 @@ function describeBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blockedR
 		...outcome,
 		message: `${base}, but the logs are incomplete and this is not a full record`
 	};
-	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete;
+	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = `${blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete}. Their earliest entries are gone: either something removed them, or the run made enough requests to outgrow the 100 MB of log kept. Splitting a run that large across steps stays under it.`;
 	return {
 		...outcome,
 		message
@@ -21954,7 +21954,7 @@ function buildInspectRestrictExample(requests, actionRepo, actionRef, { runComma
 *  buildkitd/vertex logs (see ../types.ts). */
 function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound Traffic Report", runCommand, actionVersion } = {}) {
 	let isAudit = report.parameters.mode === "audit", showExpected = report.parameters.knownBlockedRules.length > 0, heading = isAudit ? "📋 Audited Hosts" : "✅ Allowed Hosts", markdown = `## ${title}${isAudit ? " (audit mode)" : ""}\n\n`;
-	if (report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
+	if (report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n> Its earliest log entries are gone: either something removed them, or the run outgrew the\n> 100 MB of log kept.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
 		runCommand,
 		actionVersion,
 		allowedIpRules: report.parameters.allowedIpRules,
