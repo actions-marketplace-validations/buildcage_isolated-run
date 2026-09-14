@@ -21544,8 +21544,10 @@ const ALIGN_MARKERS = {
 * angle brackets do the same to what the cell means, turning a host into a link
 * or raw HTML.
 *
-* Emphasis markers (`*`, `_`) are deliberately not escaped. They change nothing
-* but weight, and `_` is what the universal engine substitutes for every
+* `*` is escaped because a cell can carry a rule pattern, where `**.example.com:*`
+* would otherwise render as a lone `*` and an emphasized remainder, reading as a
+* different pattern than the one written. `_` is left alone: it emphasizes
+* nothing mid-word, and it is what the universal engine substitutes for every
 * character a host may not carry, so escaping it would bury the one row a
 * reviewer reads closely in backslashes.
 *
@@ -21553,7 +21555,7 @@ const ALIGN_MARKERS = {
 * collapses to a space instead.
 */
 function escapeCell(value) {
-	return value === void 0 ? "" : String(value).replace(/[\\`[\]<>|]/g, "\\$&").replace(/\r?\n/g, " ");
+	return value === void 0 ? "" : String(value).replace(/[\\`[\]<>|*]/g, "\\$&").replace(/\r?\n/g, " ");
 }
 /**
 * Render a generic GitHub-flavored markdown table.
@@ -21591,12 +21593,61 @@ function renderHostTable(rows, { showReason = !1, showExpected = !1 } = {}) {
 		title: "Expected",
 		align: "center"
 	}), markdownTable(formats, rows.map((r) => ({
-		host: `${r.host}:${r.port}`,
+		host: r.display ?? `${r.host}:${r.port}`,
 		ruleType: r.ruleType,
 		reason: r.reason,
 		count: r.count,
 		expected: r.expected ? "✅" : ""
 	})));
+}
+//#endregion
+//#region src/core/lib/report/render/fold-expected-blocked.ts
+/**
+* Collapse the blocked rows a known_blocked_rules rule matched into one row per
+* rule, below the rows nothing matched. A rule covering noisy traffic then
+* costs the table one line however many hosts it names, and the rows a reader
+* has to act on come first.
+*
+* Only for engines whose report lists the individual requests as well, since a
+* folded row names its rule rather than its hosts (see
+* render-report-markdown.ts).
+*/
+function foldExpectedBlockedRows(rows) {
+	let unmatched = [], groups = /* @__PURE__ */ new Map();
+	for (let row of rows) {
+		if (!row.expected || row.expectedBy === void 0) {
+			unmatched.push(row);
+			continue;
+		}
+		let key = `${row.expectedBy}\t${row.ruleType}\t${row.reason ?? ""}`, group = groups.get(key);
+		group ? (group.hosts.add(row.host), group.count += row.count) : groups.set(key, {
+			rule: row.expectedBy,
+			ruleType: row.ruleType,
+			reason: row.reason,
+			hosts: /* @__PURE__ */ new Set([row.host]),
+			count: row.count
+		});
+	}
+	let folded = [...groups.values()].sort(compareGroups).map(toRow);
+	return [...unmatched, ...folded];
+}
+/** Busiest first, ties by rule, as the host tables are ordered elsewhere. */
+function compareGroups(a, b) {
+	return b.count - a.count || (a.rule < b.rule ? -1 : +(a.rule > b.rule));
+}
+/** The row stands for several host:port pairs, so it carries none of its own;
+*  the rule text already says which ports it covers. */
+function toRow(group) {
+	return {
+		host: group.rule,
+		port: "-",
+		ruleType: group.ruleType,
+		reason: group.reason,
+		count: group.count,
+		expected: !0,
+		expectedBy: group.rule,
+		display: `${group.rule} (${group.hosts.size} host${group.hosts.size === 1 ? "" : "s"})`
+	};
 }
 //#endregion
 //#region src/core/lib/report/render/build-example.ts
@@ -21889,7 +21940,7 @@ function buildInspectRestrictExample(requests, actionRepo, actionRef, { runComma
 *  buildkitd/vertex logs (see ../types.ts). */
 function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound Traffic Report", runCommand, actionVersion } = {}) {
 	let isAudit = report.parameters.mode === "audit", showExpected = report.parameters.knownBlockedRules.length > 0, heading = isAudit ? "📋 Audited Hosts" : "✅ Allowed Hosts", markdown = `## ${title}${isAudit ? " (audit mode)" : ""}\n\n`;
-	return report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
+	if (report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
 		runCommand,
 		actionVersion,
 		allowedIpRules: report.parameters.allowedIpRules,
@@ -21897,10 +21948,15 @@ function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound
 	}) : buildRestrictExample(report.passed, actionRepo, actionRef, {
 		runCommand,
 		actionVersion
-	})), report.blocked.length > 0 && (report.passed.length > 0 && (markdown += "\n"), markdown += "### 🚫 Blocked Hosts\n\n" + renderHostTable(report.blocked, {
-		showReason: !0,
-		showExpected
-	}) + "\n"), report.passed.length === 0 && report.blocked.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown;
+	})), report.blocked.length > 0) {
+		report.passed.length > 0 && (markdown += "\n");
+		let blocked = report.engine === "universal" ? report.blocked : foldExpectedBlockedRows(report.blocked);
+		markdown += "### 🚫 Blocked Hosts\n\n" + renderHostTable(blocked, {
+			showReason: !0,
+			showExpected
+		}) + "\n";
+	}
+	return report.passed.length === 0 && report.blocked.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown;
 }
 //#endregion
 //#region src/core/lib/log/aggregate.ts
@@ -21992,19 +22048,33 @@ async function scanHaproxyLog(lines, isAudit) {
 //#endregion
 //#region src/core/lib/report/build/aggregate.ts
 /**
-* Tag each aggregated blocked-hosts row with `expected: boolean` — true iff
-* its `host:port` matches at least one known_blocked_rules pattern.
+* Tag each aggregated blocked-hosts row with whether its `host:port` matches a
+* known_blocked_rules pattern, and with the rule that matched it.
 *
 * knownBlockedRules is as returned by parseAndValidateKnownBlockedRules. A
 * missing port is completed here too, so a value set straight in the
-* environment behaves like one that came through the action's input.
+* environment behaves like one that came through the action's input, and
+* `expectedBy` reports the completed text rather than the shorthand.
 */
 function annotateKnownBlocked(blockedRows, knownBlockedRules) {
-	let matchers = knownBlockedRules.map((rule) => new RegExp(convertRule(completeRulePort(rule))));
-	return blockedRows.map((row) => ({
-		...row,
-		expected: matchers.some((re) => re.test(targetOf(row)))
-	}));
+	let matchers = knownBlockedRules.map((rule) => {
+		let completed = completeRulePort(rule);
+		return {
+			rule: completed,
+			re: new RegExp(convertRule(completed))
+		};
+	});
+	return blockedRows.map((row) => {
+		let matched = matchers.find(({ re }) => re.test(targetOf(row)));
+		return matched ? {
+			...row,
+			expected: !0,
+			expectedBy: matched.rule
+		} : {
+			...row,
+			expected: !1
+		};
+	});
 }
 /**
 * What a known_blocked_rules pattern is tested against, normally `host:port`.
