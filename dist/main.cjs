@@ -21772,13 +21772,13 @@ const logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\
 * other one, if it somehow appears, is dropped rather than aggregated.
 */
 async function scanHaproxyLog(lines, isAudit) {
-	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, logHeadIntact;
+	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, logHeadIntact, unparsed = 0;
 	for await (let line of lines) {
 		let m = line.match(logPattern);
 		if (!m) {
 			let trimmed = line.trim();
 			if (trimmed === "") continue;
-			logHeadIntact ??= trimmed.startsWith("buildcage haproxy starting");
+			logHeadIntact ??= trimmed.startsWith("buildcage haproxy starting"), trimmed.includes("buildcage [") && unparsed++;
 			continue;
 		}
 		logHeadIntact ??= !1;
@@ -21796,7 +21796,8 @@ async function scanHaproxyLog(lines, isAudit) {
 		passed: passed.toSortedArray(),
 		blocked: blocked.toSortedArray(),
 		blockedCount,
-		logHeadIntact: logHeadIntact ?? !1
+		logHeadIntact: logHeadIntact ?? !1,
+		unparsed
 	};
 }
 //#endregion
@@ -21828,24 +21829,24 @@ function targetOf(row) {
 //#endregion
 //#region src/core/lib/report/build/universal.ts
 /**
-* Pure — no I/O; the caller (src/lib/report.ts) fetches lines/parameters
-* itself. An empty input naturally yields passed:[]/blocked:[]/blockedCount:0,
-* so no special-case branch is needed.
+* Pure — no I/O; the caller fetches the lines and the parameters itself. An
+* empty input naturally yields passed:[]/blocked:[]/blockedCount:0, so no
+* special-case branch is needed.
 */
 async function buildUniversalReportData(lines, parameters) {
-	let { passed, blocked: blockedRawRows, blockedCount, logHeadIntact } = await scanHaproxyLog(lines, parameters.mode === "audit");
+	let { passed, blocked: blockedRawRows, blockedCount, logHeadIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
 	return {
 		engine: "universal",
 		parameters,
 		passed,
 		blocked: annotateKnownBlocked(blockedRawRows, parameters.knownBlockedRules),
 		blockedCount,
-		logLooksPlausible: logHeadIntact
+		logLooksPlausible: logHeadIntact && unparsed === 0
 	};
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (\S+) (-?\d+) (\d+) ts=(\S*) dst=(\S+):(\d+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) sni=(\S+) (\d+) ts=(\S*) dst=(\S+):(\d+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, START = /^buildcage haproxy starting (\d+)$/;
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, START = /^buildcage haproxy starting (\d+)$/;
 /**
 * Whether buildcage ended the exchange, rather than an origin answering.
 *
@@ -21875,29 +21876,29 @@ function hostOf(url) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let refused = isRefusal(request[7]), event = {
+		let refused = isRefusal(request[6]), event = {
 			time: Number(request[1]) / 1e3,
 			action: actionFor(refused, isAudit),
 			protocol: request[2],
-			host: hostOf(request[4]),
-			port: Number(request[9]),
+			host: hostOf(request[9]),
+			port: Number(request[8]),
 			method: request[3],
-			url: request[4],
-			destination: `${request[8]}:${request[9]}`
+			url: request[9],
+			destination: `${request[7]}:${request[8]}`
 		};
-		return refused ? event.reason = reasonForStatus(Number(request[5])) : (event.status = Number(request[5]), event.bytes = Number(request[6])), event;
+		return refused ? event.reason = reasonForStatus(Number(request[4])) : (event.status = Number(request[4]), event.bytes = Number(request[5])), event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let refused = isRefusal(pass[5]), sni = pass[3], event = {
+		let refused = isRefusal(pass[4]), sni = pass[7], event = {
 			time: Number(pass[1]) / 1e3,
 			action: actionFor(refused, isAudit),
 			protocol: pass[2],
-			host: sni === "-" ? pass[6] : sni,
-			port: Number(pass[7]),
-			destination: `${pass[6]}:${pass[7]}`
+			host: sni === "-" ? pass[5] : sni,
+			port: Number(pass[6]),
+			destination: `${pass[5]}:${pass[6]}`
 		};
-		return refused ? event.reason = "not-allowed" : event.bytes = Number(pass[4]), event;
+		return refused ? event.reason = "not-allowed" : event.bytes = Number(pass[3]), event;
 	}
 	return null;
 }
@@ -21909,7 +21910,7 @@ function parseProxyLine(line, isAudit) {
 * accepts a plain array, so callers with the lines already in memory pass one.
 */
 async function scanInspectLog(lines, isAudit = !1) {
-	let events = [], startedAt, headIntact;
+	let events = [], startedAt, headIntact, unparsed = 0;
 	for await (let line of lines) {
 		let event = parseProxyLine(line, isAudit);
 		if (event) {
@@ -21919,12 +21920,13 @@ async function scanInspectLog(lines, isAudit = !1) {
 		let trimmed = line.trim();
 		if (trimmed === "") continue;
 		let match = START.exec(trimmed);
-		headIntact ??= match !== null, match && startedAt === void 0 && (startedAt = Number(match[1]) / 1e3);
+		headIntact ??= match !== null, match && startedAt === void 0 && (startedAt = Number(match[1]) / 1e3), trimmed.startsWith("buildcage ") && !trimmed.startsWith("buildcage haproxy starting") && unparsed++;
 	}
 	return {
 		events,
 		startedAt,
-		headIntact: headIntact ?? !1
+		headIntact: headIntact ?? !1,
+		unparsed
 	};
 }
 /**
@@ -22000,7 +22002,7 @@ function toHostRow(event) {
 * unlike the explicit engine.
 */
 async function buildInspectReportData(proxyLines, dnsLines, parameters) {
-	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [];
+	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [];
 	for (let event of timeline) (event.protocol !== "dns" || event.action === "block") && (isRedundantBlockedDns(event, timeline) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
 	let blocked = annotateKnownBlocked(aggregate(blockedRows), parameters.knownBlockedRules);
 	return {
@@ -22009,7 +22011,7 @@ async function buildInspectReportData(proxyLines, dnsLines, parameters) {
 		passed: aggregate(passedRows),
 		blocked,
 		blockedCount: blockedRows.length,
-		logLooksPlausible: proxyHeadIntact && dnsHeadIntact,
+		logLooksPlausible: proxyHeadIntact && dnsHeadIntact && unparsed === 0,
 		startedAt,
 		timeline
 	};
