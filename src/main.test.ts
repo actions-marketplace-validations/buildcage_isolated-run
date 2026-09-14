@@ -483,10 +483,18 @@ describe("readKnownBlockedRules", () => {
     expect(readKnownBlockedRules("")).toStrictEqual([]);
   });
 
+  it("reads a rule that names no port as any port", () => {
+    // A refused name has no port at all, so requiring one here would mean
+    // writing a port that was never involved.
+    expect(readKnownBlockedRules("_mongodb._tcp.c0.example.net")).toStrictEqual([
+      "_mongodb._tcp.c0.example.net:*",
+    ]);
+  });
+
   it("throws InvalidRulesError with code INVALID_RULES for invalid rule syntax", () => {
     expect.assertions(2);
     try {
-      readKnownBlockedRules("no-port-specified");
+      readKnownBlockedRules("a*b.example.com:443");
     } catch (err) {
       expect(err).toBeInstanceOf(InvalidRulesError);
       expect((err as InvalidRulesError).code).toBe("INVALID_RULES");
