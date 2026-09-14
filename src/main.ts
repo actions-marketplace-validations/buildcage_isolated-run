@@ -12,7 +12,11 @@ import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/d
 import { createAnnotation, type Annotation } from "#core/lib/actions/annotation.ts";
 import { logRules } from "#core/lib/actions/log.ts";
 import { ActionError, errorMessage } from "#core/lib/errors.ts";
-import { buildACLRules, parseRulesOrThrow } from "#core/lib/acl/rules.ts";
+import {
+  buildACLRules,
+  parseKnownBlockedRulesOrThrow,
+  parseRulesOrThrow,
+} from "#core/lib/acl/rules.ts";
 import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
 import { SandboxError } from "./lib/errors.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
@@ -111,7 +115,7 @@ async function resolveVerifiedImage({
  * of expected vs. unexpected blocked connections.
  */
 export function readKnownBlockedRules(input: string | undefined): string[] {
-  return parseRulesOrThrow(input);
+  return parseKnownBlockedRulesOrThrow(input);
 }
 
 export interface WriteThroughInputs {

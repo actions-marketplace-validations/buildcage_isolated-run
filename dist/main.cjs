@@ -19442,6 +19442,31 @@ function parseAndValidateRules(rulesInput) {
 	return rules.forEach(convertRule), rules;
 }
 /**
+* `known_blocked_rules` only: give a rule that names no port the `:*` the
+* syntax otherwise requires.
+*
+* Every other rule input is matched against a connection, where the port is
+* part of what is being permitted. This one is matched against a row of the
+* report, and a row for a name the resolver refused has no port at all,
+* nothing having been connected to. Requiring one there means writing a port
+* that was never involved, which is every DNS row.
+*/
+function completeRulePort(rule) {
+	if (!rule.startsWith("~")) return rule.includes(":") ? rule : `${rule}:*`;
+	let regex = rule.slice(1);
+	return splitDomainFromPortPattern(regex).portPattern === null ? `~${endsAnchored(regex) ? regex.slice(0, -1) : regex}:\\d+` : rule;
+}
+/**
+* Split+validate `known_blocked_rules`, completing a missing port first. The
+* completed text is what is returned, so everything downstream sees one shape.
+*
+* @throws {Error} if any rule has invalid wildcard/regex syntax
+*/
+function parseAndValidateKnownBlockedRules(rulesInput) {
+	let rules = splitRuleTokens(rulesInput).map(completeRulePort);
+	return rules.forEach(convertRule), rules;
+}
+/**
 * Convert a single rule (wildcard or `~`-prefixed regex) to a regex string.
 *
 * The `~` case reuses the `inspect` engine's own validator (a port is always
@@ -19493,6 +19518,17 @@ var InvalidRulesError = class extends ActionError {};
 function parseRulesOrThrow(rulesInput) {
 	try {
 		return parseAndValidateRules(rulesInput);
+	} catch (e) {
+		throw new InvalidRulesError(errorMessage(e), "INVALID_RULES");
+	}
+}
+/**
+* Same, for `known_blocked_rules`, whose missing ports are completed rather
+* than rejected; see completeRulePort.
+*/
+function parseKnownBlockedRulesOrThrow(rulesInput) {
+	try {
+		return parseAndValidateKnownBlockedRules(rulesInput);
 	} catch (e) {
 		throw new InvalidRulesError(errorMessage(e), "INVALID_RULES");
 	}
@@ -21899,10 +21935,12 @@ async function scanHaproxyLog(lines, isAudit) {
 * Tag each aggregated blocked-hosts row with `expected: boolean` — true iff
 * its `host:port` matches at least one known_blocked_rules pattern.
 *
-* knownBlockedRules is as returned by parseAndValidateRules.
+* knownBlockedRules is as returned by parseAndValidateKnownBlockedRules. A
+* missing port is completed here too, so a value set straight in the
+* environment behaves like one that came through the action's input.
 */
 function annotateKnownBlocked(blockedRows, knownBlockedRules) {
-	let matchers = knownBlockedRules.map((rule) => new RegExp(convertRule(rule)));
+	let matchers = knownBlockedRules.map((rule) => new RegExp(convertRule(completeRulePort(rule))));
 	return blockedRows.map((row) => ({
 		...row,
 		expected: matchers.some((re) => re.test(targetOf(row)))
@@ -79789,7 +79827,7 @@ async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
 * of expected vs. unexpected blocked connections.
 */
 function readKnownBlockedRules(input) {
-	return parseRulesOrThrow(input);
+	return parseKnownBlockedRulesOrThrow(input);
 }
 /**
 * Pick the effective write_through: input. `writable:` is the same input under
