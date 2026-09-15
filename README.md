@@ -143,7 +143,8 @@ writes survive a `filesystem_mode: ephemeral` step and which the overlay discard
 > This action sets up its isolation directly on the runner host (via `sudo -n`), so it requires a
 > Linux runner with passwordless `sudo` and a working Docker installation. Both are the default on
 > GitHub-hosted `ubuntu-*` runners, but lightweight images such as `ubuntu-slim` (a Docker client
-> with no daemon) are not supported.
+> with no daemon) are not supported. Creating a `write_through:` path that doesn't exist yet asks a
+> little more of sudoers than this; see [Filesystem access](#filesystem-access).
 
 ## Inputs
 
@@ -685,6 +686,15 @@ explicitly.
   own contract is append-only, so this doesn't affect them in practice. If you need a file that
   doesn't exist yet to persist, either have an earlier step create it first, or list its
   (already-existing) parent directory instead.
+
+Creating a missing path as that nearest existing parent's owner rather than as root means the
+`mkdir` runs under `sudo -u '#uid' -g '#gid'`, and sudoers only lets you pick a group the target
+user already belongs to. The `runner:docker` parent on a GitHub-hosted runner qualifies, since
+`runner` is in `docker`; a parent carrying a group its own owner is not in (a setgid directory, say)
+does not, and neither does a self-hosted runner whose sudoers names a single user to run commands
+as. The step then fails with `write_through: <path> doesn't exist and couldn't be created`, carrying
+`sudo`'s own refusal, before your command runs. It never falls back to creating the path as root.
+Entries that already exist are never created and so never reach any of this.
 
 If you `write_through: $GITHUB_OUTPUT`, treat every output it sets the same as any other value from
 untrusted code: never interpolate `${{ steps.<id>.outputs.<name> }}` directly into a later `run:`
