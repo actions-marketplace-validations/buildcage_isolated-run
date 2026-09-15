@@ -36,11 +36,33 @@ const RUNNER_ONLY_ENV_KEYS = new Set([
 // This action's own `with:` inputs, which a `run:` step has none of. INPUT_RUN
 // holds the command verbatim, secrets included where the workflow inlined one,
 // and the script carrying that same text is 0700 while an environment variable
-// is readable from every process in the sandbox.
-const ACTION_INPUT_PREFIX = "INPUT_";
+// is readable from every process in the sandbox. Listed rather than swept by
+// the INPUT_ prefix: a workflow is free to set an `env: INPUT_DIR` of its own,
+// and this action is a JavaScript one, so no other action's inputs reach this
+// process to be missed. env-loader.test.ts holds the list to action.yml.
+export const ACTION_INPUT_ENV_KEYS = new Set(
+  [
+    "run",
+    "proxy_mode",
+    "proxy_engine",
+    "allowed_https_rules",
+    "allowed_http_rules",
+    "allowed_ip_rules",
+    "allowed_url_rules",
+    "allowed_tls_rules",
+    "upload_traffic_artifact",
+    "traffic_artifact_retention_days",
+    "fail_on_blocked",
+    "known_blocked_rules",
+    "write_through",
+    "writable",
+    "filesystem_mode",
+    "label",
+  ].map((input) => `INPUT_${input.toUpperCase()}`),
+);
 
 function isRunnerOnly(key: string): boolean {
-  return RUNNER_ONLY_ENV_KEYS.has(key) || key.startsWith(ACTION_INPUT_PREFIX);
+  return RUNNER_ONLY_ENV_KEYS.has(key) || ACTION_INPUT_ENV_KEYS.has(key);
 }
 
 /** The step's own environment, minus what the runner added for this action
