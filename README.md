@@ -449,19 +449,6 @@ and no port (folded like any other row when a `known_blocked_rules` rule matches
 wider than the step needs shows up. A name that was connected to has no such row: the request is
 already there.
 
-### An incomplete log
-
-The report will not pass a log it cannot vouch for: one that doesn't begin where a real run does, or
-that carries a line announcing itself as the proxy's own yet cannot be read. Either way the step
-fails under `restrict` with `fail_on_blocked` (the default) and is annotated otherwise, however
-`known_blocked_rules` is set, because what survived says nothing about what was dropped.
-
-A log loses its beginning either because something removed those entries or because traffic filled
-the 100 MB the proxy keeps, which takes a few hundred thousand requests. That is far more than a
-step normally makes, so the thing to establish is where it came from. `audit` mode reports the same
-condition without failing, which is how to see the traffic rather than guess at it; each step gets
-its own sandbox and its own budget, so splitting one that busy also keeps each half under it.
-
 ### Blocked service names
 
 A row whose reason is `dns-service-not-allowed` is a

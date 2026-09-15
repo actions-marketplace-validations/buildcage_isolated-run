@@ -21538,7 +21538,7 @@ function describeBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blockedR
 		...outcome,
 		message: `${base}, but the logs are incomplete and this is not a full record`
 	};
-	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = `${blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete}. Either the logs don't begin where a real run does, or one carries a line the report cannot read. A missing beginning was either removed or rotated out by traffic heavy enough to fill the 100 MB of log kept, which takes a few hundred thousand requests. Audit mode reports this without failing, so it can show where that much traffic came from.`;
+	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = `${blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete}. Either the logs don't begin where a real run does, or one carries a line the report cannot read. A missing beginning was either removed or rotated out by traffic heavy enough to fill the 100 MB of log kept, which takes a few hundred thousand requests: the report's own tables still count what survived, per host.`;
 	return {
 		...outcome,
 		message
