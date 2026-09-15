@@ -682,9 +682,10 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
   otherwise supports.
 - **Linux only**: requires a Linux runner with passwordless `sudo` for the isolation setup itself
   (network namespace, veth, iptables) and a working Docker installation (client and daemon) for the
-  sandbox proxy container. Both are the default on GitHub-hosted `ubuntu-*` runners, but not on
-  lightweight images such as `ubuntu-slim`, which ships a Docker client with no daemon. Not
-  supported on Windows or macOS runners.
+  sandbox proxy container, on Docker Engine 25.0 or later with Compose v2.20.2 or later. All are
+  the default on GitHub-hosted `ubuntu-*` runners, but not on lightweight images such as
+  `ubuntu-slim`, which ships a Docker client with no daemon. Not supported on Windows or macOS
+  runners.
 - **Rootful Docker assumed**: the isolation joins the proxy container's network namespace via
   Docker's own `NetworkSettings.SandboxKey` (a path Docker itself bind-mounts on the host for the
   container's lifetime, entered with `nsenter --net=`). This assumes that path is directly reachable
