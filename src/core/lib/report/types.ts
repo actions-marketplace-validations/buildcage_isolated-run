@@ -30,9 +30,11 @@ export interface ReportDataCommon {
   blockedCount: number;
 
   /** False iff the log is not a complete record of the run: its beginning is
-   *  gone, or it never carried a trace of a real one (haproxy.ts's
-   *  logHeadIntact). The report fails closed rather than passing off what
-   *  survived as everything. */
+   *  gone or it never carried a trace of a real one, or a decision line could
+   *  not be read (haproxy.ts's logHeadIntact and unparsed). Anything written
+   *  from this flag has to name both, since it no longer says which applied.
+   *  The report fails closed rather than passing off what survived as
+   *  everything. */
   logLooksPlausible: boolean;
 }
 

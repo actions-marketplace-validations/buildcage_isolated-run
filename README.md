@@ -451,12 +451,15 @@ already there.
 
 ### An incomplete log
 
-The report refuses to pass a log that doesn't begin where a real proxy run would, so a step whose
-earliest traffic is missing fails in restrict mode however `known_blocked_rules` is set: what
-survived says nothing about what was dropped. Either something removed those entries, or the step
-outgrew the 100 MB of log the proxy keeps, which takes a few hundred thousand requests. Splitting a
-step that large stays under it, and `audit` mode reports the same condition without failing, so it
-can be used to see how much traffic a step really makes.
+The report will not pass a log it cannot vouch for: one that doesn't begin where a real run does, or
+that carries a line announcing itself as the proxy's own yet cannot be read. Either way the step
+fails under `restrict` with `fail_on_blocked` (the default) and is annotated otherwise, however
+`known_blocked_rules` is set, because what survived says nothing about what was dropped.
+
+A log loses its beginning either because something removed those entries or because the step outgrew
+the 100 MB the proxy keeps, which takes a few hundred thousand requests. Splitting a step that large
+stays under it. `audit` mode reports the same condition without failing, so it is one way to see how
+much traffic a step really makes.
 
 ### Blocked service names
 
