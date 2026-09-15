@@ -24,6 +24,7 @@ Docker build's `RUN` steps rather than a workflow step, use
 
 ## Contents
 
+- [Requirements](#requirements)
 - [Usage](#usage)
 - [Inputs](#inputs)
 - [Operation modes](#operation-modes)
@@ -35,6 +36,22 @@ Docker build's `RUN` steps rather than a workflow step, use
 - [Filesystem access](#filesystem-access)
 - [Scope](#scope)
 - [Documentation](#documentation)
+
+## Requirements
+
+This action sets up its isolation directly on the runner host (via `sudo -n`), so it needs a Linux
+runner with passwordless `sudo` and a working Docker installation:
+
+- **GitHub-hosted**
+  - `ubuntu-latest`, the versioned `ubuntu-*` images, and their `-arm` variants
+  - Lightweight images such as `ubuntu-slim` are not supported: they ship a Docker client with no
+    daemon
+- **Self-hosted**
+  - Docker Engine 25.0 or later, with Compose v2.20.2 or later
+  - A sudoers policy that lets `sudo` pick the user and group to run as. One naming a single user
+    can't create a missing `write_through:` path; see [Filesystem access](#filesystem-access)
+
+A runner that falls short fails while the proxy starts, before the command runs.
 
 ## Usage
 
@@ -138,13 +155,6 @@ writes survive a `filesystem_mode: ephemeral` step and which the overlay discard
   `allowed_ip_rules` come back exactly as the audit run was configured with them.
 - If something the command runs pins a certificate or carries its own trust store (the JVM is the
   usual case), use `proxy_engine: universal` instead. See [Engines](#engines).
-
-> [!NOTE]
-> This action sets up its isolation directly on the runner host (via `sudo -n`), so it requires a
-> Linux runner with passwordless `sudo` and a working Docker installation. Both are the default on
-> GitHub-hosted `ubuntu-*` runners, but lightweight images such as `ubuntu-slim` (a Docker client
-> with no daemon) are not supported. Creating a `write_through:` path that doesn't exist yet asks a
-> little more of sudoers than this; see [Filesystem access](#filesystem-access).
 
 ## Inputs
 
