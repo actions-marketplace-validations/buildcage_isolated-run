@@ -60,10 +60,14 @@ jobs:
   test_sandbox_audit_mode:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    name: "e2e: test (sandbox, audit mode)"
+    name: "e2e: test (sandbox, audit mode, ${{ matrix.runner }})"
 
     steps:
       - name: Checkout
