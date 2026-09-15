@@ -63,12 +63,20 @@ GHSA-gv9j-4w24-q7vx
 # golang.org/x/crypto/ssh: bugs reachable only by a malicious SSH peer.
 # Unused transitive dependency — CoreDNS never opens an SSH connection.
 CVE-2026-56854
+CVE-2026-56855
+CVE-2026-78662
 
 # golang.org/x/mod: GOPROXY/GOSUMDB sumdb-tile forgery, compromising
 # `go build`/`go mod` supply-chain integrity. Same unused dependency —
 # CoreDNS is a compiled binary that never runs go tooling.
 CVE-2026-56865
 CVE-2026-56864
+
+# google.golang.org/grpc: memory exhaustion via an unauthenticated remote peer.
+# CoreDNS here serves no gRPC endpoint: every Corefile server block is plain
+# UDP/TCP:53 with no scheme prefix, and with no forward plugin there is no
+# gRPC upstream either.
+CVE-2026-84304
 
 # --- library/isolated-run-universal ---
 # OpenSSL: QUIC/CMP/CMS/DTLS/RPK bugs and direct EVP_Cipher() misuse.
