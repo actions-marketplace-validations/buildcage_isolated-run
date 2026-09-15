@@ -456,10 +456,11 @@ that carries a line announcing itself as the proxy's own yet cannot be read. Eit
 fails under `restrict` with `fail_on_blocked` (the default) and is annotated otherwise, however
 `known_blocked_rules` is set, because what survived says nothing about what was dropped.
 
-A log loses its beginning either because something removed those entries or because the step outgrew
-the 100 MB the proxy keeps, which takes a few hundred thousand requests. Splitting a step that large
-stays under it. `audit` mode reports the same condition without failing, so it is one way to see how
-much traffic a step really makes.
+A log loses its beginning either because something removed those entries or because traffic filled
+the 100 MB the proxy keeps, which takes a few hundred thousand requests. That is far more than a
+step normally makes, so the thing to establish is where it came from. `audit` mode reports the same
+condition without failing, which is how to see the traffic rather than guess at it; each step gets
+its own sandbox and its own budget, so splitting one that busy also keeps each half under it.
 
 ### Blocked service names
 

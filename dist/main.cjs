@@ -21538,7 +21538,7 @@ function describeBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blockedR
 		...outcome,
 		message: `${base}, but the logs are incomplete and this is not a full record`
 	};
-	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = `${blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete}. Either the logs don't begin where a real run does, or one carries a line the report cannot read. A missing beginning was removed, or rotated out by a run that outgrew the 100 MB of log kept: splitting a run that large across steps stays under it.`;
+	let incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`, message = `${blockedCount ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)` : incomplete}. Either the logs don't begin where a real run does, or one carries a line the report cannot read. A missing beginning was either removed or rotated out by traffic heavy enough to fill the 100 MB of log kept, which takes a few hundred thousand requests. Audit mode reports this without failing, so it can show where that much traffic came from.`;
 	return {
 		...outcome,
 		message
@@ -21954,7 +21954,7 @@ function buildInspectRestrictExample(requests, actionRepo, actionRef, { runComma
 *  buildkitd/vertex logs (see ../types.ts). */
 function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound Traffic Report", runCommand, actionVersion } = {}) {
 	let isAudit = report.parameters.mode === "audit", showExpected = report.parameters.knownBlockedRules.length > 0, heading = isAudit ? "📋 Audited Hosts" : "✅ Allowed Hosts", markdown = `## ${title}${isAudit ? " (audit mode)" : ""}\n\n`;
-	if (report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n> Either the logs don't begin where a real run does, or one carries a line that cannot be\n> read. A missing beginning was removed, or rotated out by a run that outgrew the 100 MB of\n> log kept.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
+	if (report.logLooksPlausible || (markdown += "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n> Either the logs don't begin where a real run does, or one carries a line that cannot be\n> read. A missing beginning was either removed or rotated out by traffic heavy enough to\n> fill the 100 MB of log kept, which takes a few hundred thousand requests.\n\n"), report.passed.length > 0 && (markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n"), isAudit && (markdown += report.engine === "inspect" ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
 		runCommand,
 		actionVersion,
 		allowedIpRules: report.parameters.allowedIpRules,
