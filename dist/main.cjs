@@ -22138,7 +22138,7 @@ async function buildUniversalReportData(lines, parameters) {
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = /^buildcage haproxy starting (\d+)$/;
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = /^buildcage haproxy starting (\d+)$/;
 /** The resolver log's timestamp, in seconds since the epoch. */
 function timeOf(stamp) {
 	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
@@ -22154,9 +22154,23 @@ function timeOf(stamp) {
 function isRefusal(terminationState) {
 	return terminationState.startsWith("P") || terminationState.startsWith("S");
 }
-/** Refusal reason, matching the universal engine's kebab-case vocabulary. */
-function reasonForStatus(status) {
-	return status === 502 ? "dns-failed" : status === 503 ? "origin-unreachable" : "not-allowed";
+/**
+* Refusal reason, matching the universal engine's kebab-case vocabulary.
+*
+* The config names the refusals only it can tell apart: 502 is both our DNS
+* deny and an origin that gave up, and a passthrough reject has no status at
+* all. Everything else the phase already names, so the field stays `-`.
+*/
+function reasonFor(logged, terminationState) {
+	if (logged !== "-") return logged;
+	switch (terminationState[1]) {
+		case "R": return "not-allowed";
+		case "C": return "origin-unreachable";
+		case "H": return "origin-no-response";
+		case "D":
+		case "L": return "origin-aborted";
+		default: return "not-allowed";
+	}
 }
 function actionFor(refused, isAudit) {
 	return refused ? "block" : isAudit ? "audit" : "allow";
@@ -22177,25 +22191,25 @@ function parseProxyLine(line, isAudit) {
 			time: Number(request[1]) / 1e3,
 			action: actionFor(refused, isAudit),
 			protocol: request[2],
-			host: hostOf(request[9]),
-			port: Number(request[8]),
+			host: hostOf(request[10]),
+			port: Number(request[9]),
 			method: request[3],
-			url: request[9],
-			destination: `${request[7]}:${request[8]}`
+			url: request[10],
+			destination: `${request[8]}:${request[9]}`
 		};
-		return refused ? event.reason = reasonForStatus(Number(request[4])) : (event.status = Number(request[4]), event.bytes = Number(request[5])), event;
+		return refused ? event.reason = reasonFor(request[7], request[6]) : (event.status = Number(request[4]), event.bytes = Number(request[5])), event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let refused = isRefusal(pass[4]), sni = pass[7], event = {
+		let refused = isRefusal(pass[4]), sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
 			action: actionFor(refused, isAudit),
 			protocol: pass[2],
-			host: sni === "-" ? pass[5] : sni,
-			port: Number(pass[6]),
-			destination: `${pass[5]}:${pass[6]}`
+			host: sni === "-" ? pass[6] : sni,
+			port: Number(pass[7]),
+			destination: `${pass[6]}:${pass[7]}`
 		};
-		return refused ? event.reason = "not-allowed" : event.bytes = Number(pass[3]), event;
+		return refused ? event.reason = reasonFor(pass[5], pass[4]) : event.bytes = Number(pass[3]), event;
 	}
 	return null;
 }
