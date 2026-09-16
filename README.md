@@ -446,8 +446,8 @@ several steps' sections apart.
 
 GitHub caps a Job Summary at 1 MiB per step and drops the whole summary rather than truncating it,
 so if the timeline would push the step over that limit, that section alone is cut at a line
-boundary and a note takes its place. The workflow run's own logs carry no such limit and are never
-cut.
+boundary and a note takes its place. The report is written to the Job Summary only, so a cut
+section is recovered from the [traffic artifact](#traffic-artifact) and nowhere else.
 
 Once `known_blocked_rules` is set, the Blocked Hosts table gains an **Expected** column (✅) marking
 the matched rows. Under `inspect` those rows are also folded into one row per rule, named after the

@@ -21801,19 +21801,8 @@ function formatElapsedFixed(elapsedSeconds) {
 * have.
 */
 function renderInspectDetails(timeline, startedAt) {
-	let body = renderInspectDetailsBody(timeline, startedAt);
-	return body ? `\n<details>\n<summary>💬 Communication details</summary>\n\n\`\`\`\n${body}\`\`\`\n\n</details>\n` : "";
-}
-/**
-* The same content with no `<details>`/`<summary>` wrapper and no fenced
-* code block, or "" if there's nothing to show -- for a plain-text
-* destination like the job log, where both would render as literal text
-* rather than the collapsible, syntax-highlighted section they give the
-* Job Summary.
-*/
-function renderInspectDetailsBody(timeline, startedAt) {
 	let connected = connectedHosts(timeline), shown = timeline.filter((e) => !isRedundantDns(e, connected));
-	return shown.length === 0 ? "" : shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n";
+	return shown.length === 0 ? "" : `\n<details>\n<summary>💬 Communication details</summary>\n\n\`\`\`\n${shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n"}\`\`\`\n\n</details>\n`;
 }
 const MARK = {
 	block: "🚫",
