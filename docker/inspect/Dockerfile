@@ -8,6 +8,10 @@ ARG COREDNS_VERSION=1.14.7
 ARG COREDNS_SHA256_AMD64=9a09356438c6d9591cb80011a2a7a52f87fc3a113f6690e41f243f98b98faac9
 ARG COREDNS_SHA256_ARM64=bf26782d19b5340e3e6cb50f1ed6df72f58e4a30932c79d167f0f0a8b1e92e16
 
+# Stated so a base image bump cannot move HAProxy quietly: apk fails rather than
+# installing whatever the new Alpine carries.
+ARG HAPROXY_BRANCH=3.4
+
 # Prepare dependencies — runc's official release binaries are already
 # statically linked (including libseccomp), so no compilation is needed,
 # only a checksum-pinned download, same as docker/universal/Dockerfile.
@@ -75,9 +79,10 @@ LABEL org.opencontainers.image.title="isolated-run-inspect-proxy" \
 # for an SNI, resolves names itself, and normalises a path before matching
 # it. No dnsmasq, no gettext/envsubst: CoreDNS replaces dnsmasq, and
 # gen-configs.js generates haproxy.cfg directly instead of templating it.
+ARG HAPROXY_BRANCH
 RUN apk add --no-cache \
       s6-overlay \
-      haproxy \
+      "haproxy~${HAPROXY_BRANCH}" \
       openssl \
       iptables \
       curl \
