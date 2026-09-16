@@ -107,8 +107,9 @@ Paste that allowlist into the step and switch the mode:
 
 Each rule names the methods it permits, so these let npm install packages without letting it publish
 any: `npm publish` is a `PUT` to the same host, which no rule here covers. Whatever is refused is
-listed under **Blocked Hosts** with the reason, and **Communication details** names the full URL of
-every request, allowed or refused:
+listed under **Blocked Hosts** with the reason, and **Communication details** names the URL of every
+request, allowed or refused, with credential query parameters replaced (see
+[Credentials in a URL](docs/security.md#credentials-in-a-url)):
 
 <img src="assets/report-inspect-restrict-mode.png" alt="Outbound Traffic Report - restrict mode" width="556">
 
@@ -356,7 +357,7 @@ write instead.
 | --------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------- |
 | A rule can say                                | `GET\|HEAD https://registry.npmjs.org/**`                  | `registry.npmjs.org:443`                                |
 | Allow a fetch, refuse a publish, same host    | ✅                                                         | -                                                       |
-| The report shows                              | Every request with its full URL                            | Host and port                                           |
+| The report shows                              | Every request with its URL                                 | Host and port                                           |
 | Domain fronting (allowed SNI, another `Host`) | Refused, the real `Host` is what rules match               | Not visible                                             |
 | The command's TLS                             | Terminated and re-signed with a CA generated for that step | Untouched                                               |
 | Certificate pinning, or the JVM's own store   | -                                                          | ✅                                                      |
@@ -437,9 +438,11 @@ attack resistance.
 
 Every step appends its own section to the Job Summary: the hosts it reached, the ones it was
 refused, and, in `audit`, the allowlist to switch to `restrict` with. Under `inspect` a
-**Communication details** section lists every request in order with its method, full URL, status and
-size, refusals included, so a blocked entry names the exact URL that was attempted rather than a
-bare host. Use [`label`](#inputs) to tell several steps' sections apart.
+**Communication details** section lists every request in order with its method, URL, status and
+size, refusals included, so a blocked entry names the URL that was attempted rather than a bare
+host. A query parameter that names a credential has its value replaced, see
+[Credentials in a URL](docs/security.md#credentials-in-a-url). Use [`label`](#inputs) to tell
+several steps' sections apart.
 
 GitHub caps a Job Summary at 1 MiB per step and drops the whole summary rather than truncating it,
 so if the timeline would push the step over that limit, that section alone is cut at a line
@@ -502,7 +505,7 @@ already uploaded. See [Known Limitations](./docs/security.md#known-limitations).
 | `port`        |        | absent for `dns`, which connects to nothing                      |
 | `queryType`   |        | the record asked for; `discovery` rows and refused service names |
 | `method`      |        | `http` and `https` only                                          |
-| `url`         |        | `http` and `https` only                                          |
+| `url`         |        | `http` and `https` only; verbatim, unlike the summary's          |
 | `status`      |        | only when something answered                                     |
 | `bytes`       |        | absent for a refusal and for `dns`                               |
 | `reason`      |        | only when `action` is `block`                                    |

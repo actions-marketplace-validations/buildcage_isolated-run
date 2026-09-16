@@ -21790,6 +21790,9 @@ function formatElapsedFixed(elapsedSeconds) {
 * same name shows up too. A discovery lookup is always its own sole trace --
 * nothing connects to `_service._proto.<host>` -- so it always shows.
 *
+* A URL keeps its query, except for the parameters named in
+* CREDENTIAL_PARAMS, whose values are replaced.
+*
 * `startedAt` is when the proxy itself started (seconds since the epoch),
 * so every event reads as time elapsed since then rather than an absolute
 * clock reading nobody has a reference point for. Undefined only when the
@@ -21819,9 +21822,58 @@ const MARK = {
 function renderEvent(event, startedAt) {
 	return `${MARK[event.action] ?? "✅"} ${formatTime(event.time, startedAt)}: ${subject(event)} -> ${outcome(event)}`;
 }
+/**
+* Query parameters whose value is a credential often enough that printing it
+* is the greater risk: a presigned URL's signature or an API key reaches
+* everyone who can read the run, and GitHub masks only values registered as
+* workflow secrets.
+*
+* Matched on the name alone, case-insensitively, so a parameter this does not
+* name keeps its value. That covers most of what a refused request was trying
+* to send, but not an exfiltration payload the sender happened to call `code`
+* or `key`; the traffic artifact and the proxy's own log keep every value
+* verbatim, and are where a suspected payload is read.
+*/
+const CREDENTIAL_PARAMS = /* @__PURE__ */ new Set([
+	"access_token",
+	"api_key",
+	"apikey",
+	"auth",
+	"client_secret",
+	"code",
+	"id_token",
+	"key",
+	"password",
+	"private_token",
+	"refresh_token",
+	"secret",
+	"sig",
+	"signature",
+	"token",
+	"x-amz-security-token",
+	"x-amz-signature",
+	"x-goog-signature"
+]);
+/**
+* The URL with those values replaced and everything else left alone, so the
+* host, the path and the parameter names still read as they were sent. An
+* empty value stays empty rather than becoming `***`, which would claim a
+* secret that was never there.
+*/
+function redactCredentialQuery(url) {
+	let start = url.indexOf("?");
+	if (start === -1) return url;
+	let hash = url.indexOf("#", start), end = hash === -1 ? url.length : hash, query = url.slice(start + 1, end).split("&").map((param) => {
+		let eq = param.indexOf("=");
+		if (eq === -1 || eq === param.length - 1) return param;
+		let name = param.slice(0, eq);
+		return CREDENTIAL_PARAMS.has(name.toLowerCase()) ? `${name}=***` : param;
+	}).join("&");
+	return url.slice(0, start + 1) + query + url.slice(end);
+}
 /** What was asked for, in the most specific form available. */
 function subject(event) {
-	return event.queryType === void 0 ? event.protocol === "dns" ? `DNS ${event.host}` : event.url === void 0 ? `${event.protocol.toUpperCase()} ${event.host}:${event.port}` : `${event.method} ${event.url}` : `DNS ${event.queryType} ${event.host}`;
+	return event.queryType === void 0 ? event.protocol === "dns" ? `DNS ${event.host}` : event.url === void 0 ? `${event.protocol.toUpperCase()} ${event.host}:${event.port}` : `${event.method} ${redactCredentialQuery(event.url)}` : `DNS ${event.queryType} ${event.host}`;
 }
 /** What came of it: a refusal names its reason, anything else its result. */
 function outcome(event) {
