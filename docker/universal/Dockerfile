@@ -3,6 +3,10 @@ ARG RUNC_VERSION=v1.5.1
 ARG RUNC_SHA256_AMD64=177df879d50c913eb205e898d5c1c05a18f574053c0ce5524c471208eaf06f6f
 ARG RUNC_SHA256_ARM64=ca70e7dbd6616ca782a59b5d3ac86909123fdaa9fa3f89dcf29051c70eee7ce9
 
+# Stated so a base image bump cannot move HAProxy quietly: apk fails rather than
+# installing whatever the new Alpine carries.
+ARG HAPROXY_BRANCH=3.4
+
 # Prepare dependencies — runc's official release binaries are already
 # statically linked (including libseccomp), so no compilation is needed,
 # only a checksum-pinned download (see docs/development.md).
@@ -55,9 +59,10 @@ LABEL org.opencontainers.image.title="isolated-run-proxy" \
       org.opencontainers.image.licenses="MIT AND GPL-2.0-or-later AND Apache-2.0" \
       org.opencontainers.image.source="https://github.com/buildcage/isolated-run"
 
+ARG HAPROXY_BRANCH
 RUN apk add --no-cache \
       s6-overlay \
-      haproxy \
+      "haproxy~${HAPROXY_BRANCH}" \
       dnsmasq \
       iptables \
       iproute2 \
