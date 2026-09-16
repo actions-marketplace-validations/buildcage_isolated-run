@@ -779,6 +779,11 @@ signature is stored as a **Sigstore Bundle v0.3** attached to the image via the 
 API in GHCR. The bundle holds the signature, a Fulcio leaf certificate embedding the workflow
 identity, and a Rekor transparency log entry.
 
+Between building and signing, the workflow runs the image it just pushed: on both architectures and
+for each engine, the action starts that exact digest and checks that an allowed host is reachable,
+that one outside the rules is not, and that the report names both. An image that fails there is
+never signed, and an unsigned image is one the action refuses.
+
 **Verification (at action startup, `main` phase):** the action verifies the image entirely
 in-process using `@sigstore/verify`, `@sigstore/tuf` and `@sigstore/bundle`. No external binary
 (cosign, for instance) is downloaded or required. The flow:
@@ -856,6 +861,13 @@ commit without requiring an independent rebuild.
 ### Verification Limitations
 
 Verification establishes where the image came from. Here is what it leaves uncovered.
+
+- **The run before signing is a smoke test, not the test suite.** It proves the released image
+  starts and enforces on a single allowed and a single refused host, per engine and per
+  architecture. The scenario coverage in `test/` runs against an image built from the branch, and
+  the parts of it that need the fixture origin cannot run against a released image at all: trusting
+  that origin's self-signed certificate takes a `BUILDCAGE_TEST_HOOKS` build, which a released image
+  is not.
 
 - **A signature says who built the image, not what the code does.** It attests that this
   repository's release workflow built it from the pinned commit, and a release published by someone

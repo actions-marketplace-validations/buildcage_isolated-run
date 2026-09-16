@@ -86,9 +86,9 @@ const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
 const LOG_TAIL = 100;
 
 // Gates a local-image override used only by this repo's own CI/dev testing
-// (see the test_sandbox_* jobs in .github/workflows/test-e2e.yml and
-// test_sandbox in test-integration.yml), never by a consumer of a published
-// action.
+// (the test_sandbox_* jobs in .github/workflows/test-e2e.yml, test_sandbox in
+// test-integration.yml, and verify-image in docker-publish.yml, where the image
+// is not signed yet), never by a consumer of a published action.
 const LOCAL_IMAGE_OVERRIDE_ENABLED = process.env.BUILDCAGE_BUILD_TEST_HOOKS === "1";
 
 /**
