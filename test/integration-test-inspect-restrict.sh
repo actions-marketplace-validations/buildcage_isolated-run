@@ -110,7 +110,14 @@ assert_summary_contains "| absent.example.com:443 | HTTPS |" "absent.example.com
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "https://v6only.example.com/ -> dns-failed" "allowlisted name with AAAA records only recorded as dns-failed"
-assert_summary_contains "token=SECRET-VALUE" "the refused URL's query string was recorded intact"
+assert_summary_contains "exfil?token=*** -> not-allowed" "the refused URL's credential parameter was replaced"
+# The summary is as readable as the run; the traffic artifact is where the
+# value itself survives.
+if grep -qF "token=SECRET-VALUE" <<< "$SUMMARY"; then
+  fail "a credential parameter's value reached the report"
+else
+  pass "a credential parameter's value was replaced"
+fi
 # The marker is last on the log line the report is built from, so finding it
 # proves nothing was cut.
 assert_summary_contains "end=TAIL-MARKER -> not-allowed" "the ~1.3KB refused URL was recorded whole"
