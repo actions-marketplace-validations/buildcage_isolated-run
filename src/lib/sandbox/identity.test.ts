@@ -1,5 +1,14 @@
-import { describe, it, expect } from "vitest";
-import { writeFileSync } from "node:fs";
+import { describe, it, expect, vi } from "vitest";
+
+// Both host probes are mocked: statSync so a test never depends on who owns a
+// file on the machine running it (a scratch file is wheel-owned on macOS and
+// runner-owned on Linux), and readFileSync so the default /etc/group path can
+// be exercised without the real one deciding the outcome.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, statSync: vi.fn(actual.statSync), readFileSync: vi.fn(actual.readFileSync) };
+});
+import { writeFileSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveSandboxGid } from "./identity.ts";
@@ -41,11 +50,8 @@ describe("resolveSandboxGid", () => {
       // A non-standard name, so the substitution can only be explained by
       // socket ownership and not by the name list.
       writeFileSync(groupFile, "not-a-known-name:x:1234:\nnogroup:x:65534:\n");
-      const result = resolveSandboxGid(
-        1234,
-        {},
-        { groupFile, runtimeSocketPaths: ["/run/fake.sock"], gidOf: () => 1234 },
-      );
+      vi.mocked(statSync).mockReturnValue({ gid: 1234 } as ReturnType<typeof statSync>);
+      const result = resolveSandboxGid(1234, {}, { groupFile, runtimeSocketPaths: ["/fake.sock"] });
       expect(result).toStrictEqual({ gid: 65534, substitutedFrom: 1234 });
     });
   });
@@ -54,17 +60,7 @@ describe("resolveSandboxGid", () => {
     withScratchDir((dir) => {
       const groupFile = join(dir, "group");
       writeFileSync(groupFile, "runner:x:1000:\n");
-      const result = resolveSandboxGid(
-        1000,
-        {},
-        {
-          groupFile,
-          runtimeSocketPaths: ["/run/gone.sock"],
-          gidOf: () => {
-            throw new Error("ENOENT");
-          },
-        },
-      );
+      const result = resolveSandboxGid(1000, {}, { groupFile, runtimeSocketPaths: ["/gone.sock"] });
       expect(result).toStrictEqual({ gid: 1000 });
     });
   });
@@ -104,6 +100,21 @@ describe("resolveSandboxGid", () => {
         /UNSAFE_PRIMARY_GID|privileged/,
       );
     });
+  });
+
+  it("reads /etc/group and the standard socket paths when given neither", () => {
+    vi.mocked(readFileSync).mockClear().mockReturnValue("docker:x:999:\nnogroup:x:65534:\n");
+    vi.mocked(statSync)
+      .mockClear()
+      .mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+
+    const result = resolveSandboxGid(999, {});
+
+    expect(result).toStrictEqual({ gid: 65534, substitutedFrom: 999 });
+    expect(vi.mocked(readFileSync).mock.calls[0][0]).toBe("/etc/group");
+    expect(vi.mocked(statSync).mock.calls.map(([p]) => p)).toContain("/var/run/docker.sock");
   });
 
   it("falls back to the runtime-socket check alone when the group file can't be read", () => {
