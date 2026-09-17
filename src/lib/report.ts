@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 
 import type { Annotation } from "#core/lib/actions/annotation.ts";
 import { writeStepSummary } from "#core/lib/actions/write-step-summary.ts";
-import { createDocker } from "#core/lib/docker/client.ts";
+import { createDocker, type Docker } from "#core/lib/docker/client.ts";
 import { readRotatedLog } from "#core/lib/docker/rotated-log.ts";
 import { describeBlockedOutcome } from "#core/lib/report/outcome/blocked-outcome.ts";
 import { renderReportMarkdown } from "#core/lib/report/render/render-report-markdown.ts";
@@ -59,9 +59,14 @@ export function fetchReport(
 export function readActionVersion(
   containerName: string,
   proxyEngine: ProxyEngine,
+  docker?: Docker,
 ): string | undefined {
+  // Untested by design: the default behind the seam, which only builds the
+  // client the tested caller would otherwise hand in.
+  /* v8 ignore next */
+  const client = docker ?? createDocker();
   try {
-    const label = createDocker().readLabels(containerName)["org.opencontainers.image.version"];
+    const label = client.readLabels(containerName)["org.opencontainers.image.version"];
     if (!label) return undefined;
     const suffix = `-${proxyEngine}`;
     const version = label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;

@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import {
+  runSandboxedCommand,
+  type RunSandboxedCommandDeps,
+  type RunSandboxedCommandOptions,
+} from "./sandboxed-command.ts";
+import { SandboxError } from "../errors.ts";
+
 // Every collaborator is tested in its own file; what is left to check here is
 // the order they run in, what runSandboxedCommand hands each one, and which
 // SandboxError each failure turns into.
-const mocks = vi.hoisted(() => ({
+const mocks = {
   withScratchDir: vi.fn(),
   extractRuncBootstrap: vi.fn(),
   extractCaCert: vi.fn(),
@@ -19,36 +26,13 @@ const mocks = vi.hoisted(() => ({
   resolveSandboxGid: vi.fn(),
   listHostMounts: vi.fn(),
   runIsolated: vi.fn(),
-  mkdirSync: vi.fn(),
+  mkdir: vi.fn(),
   info: vi.fn(),
-}));
+};
 
-vi.mock("./scratch-dir.ts", () => ({ withScratchDir: mocks.withScratchDir }));
-vi.mock("./runc-bootstrap.ts", () => ({ extractRuncBootstrap: mocks.extractRuncBootstrap }));
-vi.mock("./ca-trust.ts", () => ({
-  extractCaCert: mocks.extractCaCert,
-  writeCaTrustFiles: mocks.writeCaTrustFiles,
-}));
-vi.mock("./ephemeral-fs.ts", () => ({ createOverlayScratchDirs: mocks.createOverlayScratchDirs }));
-vi.mock("./oci-config.ts", () => ({
-  writeRunScript: mocks.writeRunScript,
-  writeResolvConf: mocks.writeResolvConf,
-  buildOciConfig: mocks.buildOciConfig,
-  writeOciConfig: mocks.writeOciConfig,
-}));
-vi.mock("./env-loader.ts", () => ({
-  buildEnvBlob: mocks.buildEnvBlob,
-  resolveSandboxEnv: mocks.resolveSandboxEnv,
-  writeEnvLoader: mocks.writeEnvLoader,
-}));
-vi.mock("./identity.ts", () => ({ resolveSandboxGid: mocks.resolveSandboxGid }));
-vi.mock("./mountinfo.ts", () => ({ listHostMounts: mocks.listHostMounts }));
-vi.mock("./run.ts", () => ({ runIsolated: mocks.runIsolated }));
-vi.mock("node:fs", () => ({ mkdirSync: mocks.mkdirSync }));
-vi.mock("@actions/core", () => ({ info: mocks.info }));
-
-import { runSandboxedCommand, type RunSandboxedCommandOptions } from "./sandboxed-command.ts";
-import { SandboxError } from "../errors.ts";
+// A bag of doubles, not a partially-typed stand-in: every step is replaced, so
+// the cast says what the shape already is.
+const deps = mocks as unknown as RunSandboxedCommandDeps;
 
 const CONTAINER = "buildcage-proxy-deadbeef";
 const SCRATCH = "/var/tmp/buildcage-1001/buildcage-proxy-deadbeef";
@@ -74,7 +58,6 @@ function options(overrides: Partial<RunSandboxedCommandOptions> = {}): RunSandbo
 }
 
 beforeEach(() => {
-  // The fakes live in vi.hoisted, so they outlive each test's own calls.
   vi.resetAllMocks();
   // withScratchDir's own behavior is tested in scratch-dir.test.ts; here it
   // only has to hand the body a directory.
@@ -98,11 +81,11 @@ describe("runSandboxedCommand", () => {
   it("returns the isolated command's own exit code", () => {
     mocks.runIsolated.mockReturnValue(42);
 
-    expect(runSandboxedCommand(options())).toBe(42);
+    expect(runSandboxedCommand(options(), deps)).toBe(42);
   });
 
   it("writes the bundle before running it, into the scratch dir it was given", () => {
-    runSandboxedCommand(options());
+    runSandboxedCommand(options(), deps);
 
     expect(mocks.writeOciConfig).toHaveBeenCalledWith({ process: {} }, SCRATCH);
     expect(mocks.writeOciConfig.mock.invocationCallOrder[0]).toBeLessThan(
@@ -113,7 +96,7 @@ describe("runSandboxedCommand", () => {
   // The netns is a different ID namespace from Docker's, but derived from the
   // container name so `ip netns` and `docker ps` stay correlated per step.
   it("names the sandbox netns after the proxy container", () => {
-    runSandboxedCommand(options());
+    runSandboxedCommand(options(), deps);
 
     expect(mocks.runIsolated.mock.calls[0][0]).toMatchObject({
       netnsName: "buildcage-sandbox-deadbeef",
@@ -129,7 +112,7 @@ describe("runSandboxedCommand", () => {
   // inspect terminates TLS, so the sandboxed process has to be made to trust
   // the proxy's CA; no other engine has one to trust.
   it("trusts the proxy's CA under the inspect engine", () => {
-    runSandboxedCommand(options({ proxyEngine: "inspect" }));
+    runSandboxedCommand(options({ proxyEngine: "inspect" }), deps);
 
     expect(mocks.extractCaCert).toHaveBeenCalledWith(CONTAINER, SCRATCH);
     expect(mocks.buildOciConfig.mock.calls[0][1].caTrust).toStrictEqual({
@@ -138,7 +121,7 @@ describe("runSandboxedCommand", () => {
   });
 
   it("extracts no CA under an engine that does not terminate TLS", () => {
-    runSandboxedCommand(options());
+    runSandboxedCommand(options(), deps);
 
     expect(mocks.extractCaCert).not.toHaveBeenCalled();
     expect(mocks.buildOciConfig.mock.calls[0][1].caTrust).toBeUndefined();
@@ -150,6 +133,7 @@ describe("runSandboxedCommand", () => {
 
     runSandboxedCommand(
       options({ filesystemMode: "ephemeral", overlayRoots, writeThroughPaths: ["/opt/cache"] }),
+      deps,
     );
 
     expect(mocks.createOverlayScratchDirs).toHaveBeenCalledWith(SCRATCH, overlayRoots);
@@ -162,7 +146,7 @@ describe("runSandboxedCommand", () => {
   });
 
   it("leaves persistent mode with no overlay at all", () => {
-    runSandboxedCommand(options());
+    runSandboxedCommand(options(), deps);
 
     expect(mocks.createOverlayScratchDirs).not.toHaveBeenCalled();
     expect(mocks.buildOciConfig.mock.calls[0][1].ephemeral).toBeUndefined();
@@ -172,7 +156,7 @@ describe("runSandboxedCommand", () => {
   // Every one of these is set by a real runner, but this action is also driven
   // directly by this repo's own integration scripts.
   it("leaves the writable paths empty when the runner set none of them", () => {
-    runSandboxedCommand(options({ env: {} }));
+    runSandboxedCommand(options({ env: {} }), deps);
 
     expect(mocks.buildOciConfig.mock.calls[0][1].writable).toStrictEqual({
       workdir: "",
@@ -185,7 +169,7 @@ describe("runSandboxedCommand", () => {
   it("says so when the runner's primary group forced a GID substitution", () => {
     mocks.resolveSandboxGid.mockReturnValue({ gid: 65534, substitutedFrom: 118 });
 
-    runSandboxedCommand(options());
+    runSandboxedCommand(options(), deps);
 
     expect(mocks.info).toHaveBeenCalledWith(expect.stringContaining("(118 -> 65534)"));
     expect(mocks.buildOciConfig.mock.calls[0][1].identity.gid).toBe(65534);
@@ -202,7 +186,7 @@ describe("runSandboxedCommand", () => {
 
     const error = (() => {
       try {
-        runSandboxedCommand(options(overrides as Partial<RunSandboxedCommandOptions>));
+        runSandboxedCommand(options(overrides as Partial<RunSandboxedCommandOptions>), deps);
       } catch (e) {
         return e as SandboxError;
       }
