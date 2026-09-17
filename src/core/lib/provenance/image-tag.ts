@@ -17,16 +17,14 @@ export function imageTagFromRef(
   actionRef: string | undefined,
   proxyEngine: string = "universal",
 ): string {
+  if (!actionRef) return "";
   let base;
-  if (!actionRef) {
-    base = "";
-  } else if (/^[0-9a-f]{40}$/i.test(actionRef)) {
+  if (/^[0-9a-f]{40}$/i.test(actionRef)) {
     base = `sha-${actionRef.toLowerCase()}`;
   } else if (actionRef.startsWith("v")) {
     base = actionRef.slice(1);
   } else {
     base = actionRef;
   }
-
   return `${base}${engineTagSuffix(proxyEngine)}`;
 }

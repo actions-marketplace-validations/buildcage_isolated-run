@@ -17215,8 +17215,9 @@ function engineTagSuffix(proxyEngine) {
 	return proxyEngine === "universal" || proxyEngine === "" ? "" : `-${proxyEngine}`;
 }
 function imageTagFromRef(actionRef, proxyEngine = "universal") {
+	if (!actionRef) return "";
 	let base;
-	return base = actionRef ? /^[0-9a-f]{40}$/i.test(actionRef) ? `sha-${actionRef.toLowerCase()}` : actionRef.startsWith("v") ? actionRef.slice(1) : actionRef : "", `${base}${engineTagSuffix(proxyEngine)}`;
+	return base = /^[0-9a-f]{40}$/i.test(actionRef) ? `sha-${actionRef.toLowerCase()}` : actionRef.startsWith("v") ? actionRef.slice(1) : actionRef, `${base}${engineTagSuffix(proxyEngine)}`;
 }
 //#endregion
 //#region src/core/lib/provenance/engine-label.ts
@@ -64192,6 +64193,13 @@ function toRow(group) {
 		display: `${group.rule} (${group.hosts.size} host${group.hosts.size === 1 ? "" : "s"})`
 	};
 }
+function usesLine(actionRepo, actionRef, actionVersion) {
+	return `  uses: ${actionRepo}@${actionRef}${actionVersion ? ` # ${actionVersion}` : ""}\n`;
+}
+function restrictExampleBlock(yaml, { footnote } = {}) {
+	let indented = yaml.split("\n").map((line) => line && "      " + line).join("\n"), md = "\n<details>\n";
+	return md += "<summary>🛡️ Switch to restrict mode</summary>\n\n", md += "```yaml\n", md += indented, md += "```\n\n", footnote && (md += `<sub>*${footnote}*</sub>\n\n`), md += "</details>\n", md;
+}
 //#endregion
 //#region src/core/lib/report/render/build-example.ts
 const ruleTypeToParam = {
@@ -64208,7 +64216,7 @@ function buildRestrictExample(auditedRows, actionRepo, actionRef, { runCommand, 
 	}
 	if (groups.size === 0) return "";
 	let yaml = "";
-	if (yaml += "- name: Start isolated-run\n", yaml += `  uses: ${actionRepo}@${actionRef}${actionVersion ? ` # ${actionVersion}` : ""}\n`, yaml += "  with:\n", runCommand) {
+	if (yaml += "- name: Start isolated-run\n", yaml += usesLine(actionRepo, actionRef, actionVersion), yaml += "  with:\n", runCommand) {
 		yaml += "    run: |\n";
 		for (let line of runCommand.replace(/\r?\n$/, "").split(/\r?\n/)) yaml += `      ${line}\n`;
 	}
@@ -64217,9 +64225,7 @@ function buildRestrictExample(auditedRows, actionRepo, actionRef, { runCommand, 
 		yaml += `    ${param}: >-\n`;
 		for (let rule of rules) yaml += `      ${rule}\n`;
 	}
-	yaml = yaml.split("\n").map((line) => line && "      " + line).join("\n");
-	let md = "\n<details>\n";
-	return md += "<summary>🛡️ Switch to restrict mode</summary>\n\n", md += "```yaml\n", md += yaml, md += "```\n\n", md += "</details>\n", md;
+	return restrictExampleBlock(yaml);
 }
 //#endregion
 //#region src/core/lib/log/traffic-event.ts
@@ -64376,7 +64382,7 @@ function buildInspectRestrictExample(requests, actionRepo, actionRef, { runComma
 	let lines = buildUrlRuleLines(requests ?? []);
 	if (lines.length === 0 && allowedIpRules.length === 0 && allowedTlsRules.length === 0) return "";
 	let yaml = "- name: Start isolated-run\n";
-	if (yaml += `  uses: ${actionRepo}@${actionRef}${actionVersion ? ` # ${actionVersion}` : ""}\n`, yaml += "  with:\n", runCommand) {
+	if (yaml += usesLine(actionRepo, actionRef, actionVersion), yaml += "  with:\n", runCommand) {
 		yaml += "    run: |\n";
 		for (let line of runCommand.replace(/\r?\n$/, "").split(/\r?\n/)) yaml += `      ${line}\n`;
 	}
@@ -64392,9 +64398,7 @@ function buildInspectRestrictExample(requests, actionRepo, actionRef, { runComma
 		yaml += "    allowed_ip_rules: |\n";
 		for (let rule of allowedIpRules) yaml += `      ${rule}\n`;
 	}
-	yaml = yaml.split("\n").map((line) => line && "      " + line).join("\n");
-	let md = "\n<details>\n";
-	return md += "<summary>🛡️ Switch to restrict mode</summary>\n\n", md += "```yaml\n", md += yaml, md += "```\n\n", md += "<sub>*Permits exactly what this build did; a versioned or dated URL may drift.*</sub>\n\n", md += "</details>\n", md;
+	return restrictExampleBlock(yaml, { footnote: "Permits exactly what this build did; a versioned or dated URL may drift." });
 }
 //#endregion
 //#region src/core/lib/report/render/render-report-markdown.ts

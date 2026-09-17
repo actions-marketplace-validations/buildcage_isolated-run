@@ -17,6 +17,7 @@
  */
 
 import type { TrafficEvent } from "#core/lib/log/traffic-event.ts";
+import { restrictExampleBlock, usesLine } from "./restrict-example.ts";
 
 /** Ports a URL rule may leave unwritten, because the scheme implies them. */
 const DEFAULT_PORT: Record<string, string> = { https: "443", http: "80" };
@@ -178,7 +179,7 @@ export function buildInspectRestrictExample(
   if (lines.length === 0 && allowedIpRules.length === 0 && allowedTlsRules.length === 0) return "";
 
   let yaml = "- name: Start isolated-run\n";
-  yaml += `  uses: ${actionRepo}@${actionRef}${actionVersion ? ` # ${actionVersion}` : ""}\n`;
+  yaml += usesLine(actionRepo, actionRef, actionVersion);
   yaml += "  with:\n";
   // `run` is a single self-contained step, so the example must repeat the
   // run: command to stay copy-pasteable on its own — see build-example.ts.
@@ -205,21 +206,7 @@ export function buildInspectRestrictExample(
     for (const rule of allowedIpRules) yaml += `      ${rule}\n`;
   }
 
-  // GitHub Actions' own indentation convention (jobs: -> <id>: -> steps: ->
-  // "- name:") always puts a step 6 spaces in, so the generated snippet can
-  // be pasted directly into an existing steps: list without re-indenting it.
-  const STEP_INDENT = "      ";
-  yaml = yaml
-    .split("\n")
-    .map((line) => (line ? STEP_INDENT + line : line))
-    .join("\n");
-
-  let md = "\n<details>\n";
-  md += "<summary>🛡️ Switch to restrict mode</summary>\n\n";
-  md += "```yaml\n";
-  md += yaml;
-  md += "```\n\n";
-  md += "<sub>*Permits exactly what this build did; a versioned or dated URL may drift.*</sub>\n\n";
-  md += "</details>\n";
-  return md;
+  return restrictExampleBlock(yaml, {
+    footnote: "Permits exactly what this build did; a versioned or dated URL may drift.",
+  });
 }

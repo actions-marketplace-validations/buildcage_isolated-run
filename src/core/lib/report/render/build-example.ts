@@ -1,4 +1,5 @@
 import type { AggregatedEntry } from "#core/lib/log/aggregate.ts";
+import { restrictExampleBlock, usesLine } from "./restrict-example.ts";
 
 const ruleTypeToParam: Record<string, string> = {
   HTTPS: "allowed_https_rules",
@@ -45,7 +46,7 @@ export function buildRestrictExample(
   // Build YAML lines
   let yaml = "";
   yaml += "- name: Start isolated-run\n";
-  yaml += `  uses: ${actionRepo}@${actionRef}${actionVersion ? ` # ${actionVersion}` : ""}\n`;
+  yaml += usesLine(actionRepo, actionRef, actionVersion);
   yaml += "  with:\n";
   // `run` is a single self-contained step, so the example must repeat the
   // run: command to stay copy-pasteable on its own.
@@ -66,20 +67,5 @@ export function buildRestrictExample(
     }
   }
 
-  // GitHub Actions' own indentation convention (jobs: -> <id>: -> steps: ->
-  // "- name:") always puts a step 6 spaces in, so the generated snippet can
-  // be pasted directly into an existing steps: list without re-indenting it.
-  const STEP_INDENT = "      ";
-  yaml = yaml
-    .split("\n")
-    .map((line) => (line ? STEP_INDENT + line : line))
-    .join("\n");
-
-  let md = "\n<details>\n";
-  md += "<summary>🛡️ Switch to restrict mode</summary>\n\n";
-  md += "```yaml\n";
-  md += yaml;
-  md += "```\n\n";
-  md += "</details>\n";
-  return md;
+  return restrictExampleBlock(yaml);
 }
