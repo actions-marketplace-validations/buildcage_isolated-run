@@ -389,6 +389,22 @@ describe("cleanupScratchDir — force-detaching what is still mounted", () => {
     vi.mocked(execFileSync).mockReset();
   });
 
+  // /proc/self/mountinfo is Linux-only, and this suite also runs on macOS.
+  // Mocked rather than left to the host, so the same branch is exercised
+  // either way.
+  it("skips the sweep and still deletes when mountinfo cannot be read", () => {
+    vi.mocked(rmSync).mockClear();
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw fsError("ENOENT");
+    });
+    vi.mocked(rmSync).mockImplementationOnce(() => {});
+
+    cleanupScratchDir(SCRATCH_DIR);
+
+    expect(vi.mocked(execFileSync).mock.calls.length).toBe(0);
+    expect(vi.mocked(rmSync).mock.calls[0][0]).toBe(SCRATCH_DIR);
+  });
+
   // A failed unmount must not abort cleanup: the delete still has to run, or
   // the scratch dir is left behind for good.
   it("warns and keeps going when one unmount fails", () => {
