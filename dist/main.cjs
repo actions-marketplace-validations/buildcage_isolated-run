@@ -64291,11 +64291,24 @@ function formatBytes(bytes) {
 	return bytes < 1024 ? `${bytes}B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / 1048576).toFixed(1)}MB`;
 }
 //#endregion
-//#region src/core/lib/report/render/inspect-example.ts
+//#region src/core/lib/log/authority.ts
 const DEFAULT_PORT = {
 	https: "443",
 	http: "80"
-}, METHOD_ORDER = [
+};
+function splitHostPort(authority) {
+	let colon = authority.lastIndexOf(":");
+	return colon <= 0 || authority.slice(colon + 1).includes("]") ? {
+		host: authority,
+		port: void 0
+	} : {
+		host: authority.slice(0, colon),
+		port: authority.slice(colon + 1)
+	};
+}
+//#endregion
+//#region src/core/lib/report/render/inspect-example.ts
+const METHOD_ORDER = [
 	"GET",
 	"HEAD",
 	"POST",
@@ -64308,9 +64321,9 @@ function parseRequest(request) {
 	if (request.url === void 0 || request.method === void 0) return null;
 	let match = /^(https?):\/\/([^/?#]+)([^?#]*)/.exec(request.url);
 	if (!match) return null;
-	let [, scheme, authority, rawPath] = match, colon = authority.lastIndexOf(":"), port = colon > 0 ? authority.slice(colon + 1) : "";
+	let [, scheme, authority, rawPath] = match, { host, port } = splitHostPort(authority);
 	return {
-		origin: port && port === DEFAULT_PORT[scheme] ? `${scheme}://${authority.slice(0, colon)}` : `${scheme}://${authority}`,
+		origin: port && port === DEFAULT_PORT[scheme] ? `${scheme}://${host}` : `${scheme}://${authority}`,
 		method: request.method,
 		path: rawPath || "/"
 	};
@@ -64458,11 +64471,9 @@ async function scanHaproxyLog(lines, isAudit) {
 			continue;
 		}
 		logHeadIntact ??= !1;
-		let [, decision, ruleType, hostPort, reason] = m, colonIdx = hostPort.lastIndexOf(":"), host, port;
-		colonIdx > 0 ? (host = hostPort.substring(0, colonIdx), port = hostPort.substring(colonIdx + 1)) : (host = hostPort, port = "0");
-		let entry = {
+		let [, decision, ruleType, hostPort, reason] = m, { host, port } = splitHostPort(hostPort), entry = {
 			host,
-			port,
+			port: port ?? "0",
 			ruleType,
 			reason: reason || "-"
 		};
@@ -64544,9 +64555,7 @@ function actionFor(refused, isAudit) {
 const URL_AUTHORITY = /^https?:\/\/([^/?#]+)/;
 function hostOf(url) {
 	let match = URL_AUTHORITY.exec(url);
-	if (!match) return url;
-	let authority = match[1], colon = authority.lastIndexOf(":");
-	return colon > 0 ? authority.slice(0, colon) : authority;
+	return match ? splitHostPort(match[1]).host : url;
 }
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
