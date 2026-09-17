@@ -2,3 +2,4 @@
 node_modules
 /dist/qjs
 /dist/qjs-test
+/coverage

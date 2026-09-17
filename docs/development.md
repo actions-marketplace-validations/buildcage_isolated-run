@@ -52,7 +52,12 @@ make test_unit_core      # core library unit tests (src/core)
 make test_unit_sandbox   # action's own unit tests (src/lib, src/main.ts)
 make test_unit_qjs       # dual-runs the acl module's tests under real QuickJS in a throwaway image
 make test_unit           # all of the above
+make test_unit_coverage  # every Node test in one run, with a coverage report in coverage/
 ```
+
+CI runs `make test_unit_coverage` and pastes `coverage/summary.txt` into the job summary. There are
+no thresholds: the point is to see which files no test reaches, not to gate merges on a number. The
+QuickJS run is not measured separately, since it executes the same `.test.ts` files as the Node run.
 
 `make test_sandbox_dev` is the dev-loop end-to-end check described above; `make
 test_integration_sandbox_linux` drives `dist/main.cjs` directly for checks that don't depend on
@@ -215,6 +220,7 @@ above, only shows what has accumulated since the most recent one.
 | `make test_sandbox_dev`                 | Run a sample isolated command in the dev loop and verify isolation |
 | `make clean_sandbox_dev`                | Stop and remove the dev-loop containers                            |
 | `make test_unit`                        | Every unit test: core, the action's own, and the QuickJS run       |
+| `make test_unit_coverage`               | Every Node unit test in one run, with a coverage report            |
 | `make test_integration_sandbox_linux`   | The action's integration tests on a Linux host                     |
 | `make test_integration_sandbox_inspect` | The same for the inspect engine, round trip included               |
 
