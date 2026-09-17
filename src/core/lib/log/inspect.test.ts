@@ -1,4 +1,4 @@
-import { describe, it, expect, reportResults } from "../test/test-shim.ts";
+import { describe, it, expect } from "vitest";
 import { scanInspectLog, scanInspectDnsLog, hasProxyStarted } from "./inspect.ts";
 import type { TrafficEvent } from "./traffic-event.ts";
 
@@ -392,5 +392,3 @@ describe("a request line whose URL names no authority", () => {
     expect(events[0].host).toBe("/pkg");
   });
 });
-
-reportResults();

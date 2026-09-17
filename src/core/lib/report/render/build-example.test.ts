@@ -1,4 +1,4 @@
-import { describe, it, expect, reportResults } from "#core/lib/test/test-shim.ts";
+import { describe, it, expect } from "vitest";
 import { buildRestrictExample } from "./build-example.ts";
 
 const REPO = "buildcage/isolated-run";
@@ -263,5 +263,3 @@ describe("buildRestrictExample — a known image version", () => {
     expect(yaml).toMatch(/uses: .*@v1 # 1\.2\.3/);
   });
 });
-
-reportResults();
