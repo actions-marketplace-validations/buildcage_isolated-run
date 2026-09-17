@@ -207,7 +207,7 @@ Two components, plus a CA-trust mount:
   `config.json`: a mount-namespace-scoped overlay, not a host write. Nothing needs to be undone
   afterwards, since `run-isolated.sh`'s teardown removes it with the rest of the sandbox's mount
   namespace, and the real host files those paths would otherwise resolve to are never touched. See
-  [CA trust and compatibility](../README.md#ca-trust-and-compatibility) for which variables are set
+  [CA trust variables](./reference.md#ca-trust-variables) for which variables are set
   and what that does not cover.
 
 ### How a request is handled
@@ -323,7 +323,7 @@ What each kind of rule decides, and what stays undecrypted:
   decision. Real resolution happens exactly once, in HAProxy, strictly after a request has passed
   the full rule check, which is an invariant rather than an optimisation: reversed, `do-resolve`
   would itself become the live exfiltration channel CoreDNS is built to avoid being. See
-  [Rule syntax](../README.md#rule-syntax) for how to write a host pattern that doesn't widen this
+  [Rule syntax](./reference.md#rule-syntax) for how to write a host pattern that doesn't widen this
   more than intended.
 - **The path is normalized, and traversal encodings are rejected outright.** `..`, `%2e%2e`,
   `..%2f`, a raw backslash, and `..%5c` are all refused rather than resolved, so a rule cannot be
@@ -354,7 +354,7 @@ What each kind of rule decides, and what stays undecrypted:
 - **TLS is terminated**, so a tool that pins a certificate, or ships its own trust store instead of
   reading the common CA-trust environment variables, will not work. The JVM (Java, Kotlin, Scala)
   is the common case. Use `universal` for those, and see
-  [CA trust and compatibility](../README.md#ca-trust-and-compatibility) for the rest of the
+  [Limitations](../README.md#limitations) for the rest of the
   compatibility picture.
 - **`audit` is not a passive observer here.** TLS is terminated in both modes, so a tool that cannot
   accept the CA fails under `audit` exactly as it would under `restrict`. What `audit` drops is the
@@ -398,7 +398,7 @@ request tried to send is still there. Two things this does not cover: a credenti
 which `allowed_url_rules` is written against and so cannot be hidden, and one in a parameter the
 list does not name. It also replaces an exfiltration payload the sender happened to name `code` or
 `key`, so **read a suspected attempt out of the
-[traffic artifact](../README.md#traffic-artifact)**, which keeps every value verbatim, rather than
+[traffic artifact](./reference.md#traffic-artifact)**, which keeps every value verbatim, rather than
 out of the summary.
 
 An `allowed_url_rules` block suggested by an audit run never carries a query at all: rules match on
@@ -594,7 +594,7 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
   absolute paths first, so a spelling like `/var/tmp/./buildcage-<uid>` is caught by the same check.
   This is a misconfiguration guard against an operator-supplied `write_through:` value, not a
   defense against the isolated command itself (see
-  [Filesystem access](../README.md#filesystem-access) in the README). The literal `/` is the exception: it
+  [`write_through` paths](./reference.md#write_through-paths)). The literal `/` is the exception: it
   is the documented opt-out from the read-only restriction as a whole, so it skips this guard by
   design. An entry that only _resolves_ to `/` is rejected rather than read as that opt-out.
 - **A created `write_through:` directory outlives a killed step**: a listed path that doesn't exist
@@ -674,7 +674,7 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
   else you list) remains exactly as exposed to this as `persistent` mode always is. `$RUNNER_TEMP` and `/tmp`
   are also the same real directory across every invocation of this action in a job, not scoped per
   sandbox, in `persistent` mode: two concurrent invocations are isolated at the container/network
-  level (see [Notes](../README.md#notes)), not the filesystem, so one can reach another's in-flight
+  level (see [How it works](../README.md#how-it-works)), not the filesystem, so one can reach another's in-flight
   scratch files there. `filesystem_mode: ephemeral` resolves this too, since each invocation gets its own
   overlay.
 

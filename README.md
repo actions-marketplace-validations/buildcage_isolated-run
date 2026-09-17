@@ -9,14 +9,17 @@
 ![license](https://img.shields.io/github/license/buildcage/isolated-run)
 
 GitHub Action that restricts where a workflow `run:` step can connect. The command runs isolated on
-the runner behind an allowlist you write by HTTP method and URL, not only by hostname, so a step can
-be allowed to fetch a package from a registry without being allowed to publish one to it.
+the runner behind an allowlist you write, and a destination that isn't on it is refused and
+reported.
 
-The command itself does not change: no proxy to configure, no certificate to install, and the same
-UID and `$HOME` as the rest of the job, so credentials, caches, and toolchains set up by earlier
-steps keep working. Run once in [`audit`](#operation-modes) mode and the report hands you the
-allowlist to paste back in. Everything runs inside your GitHub Actions job: no agent, no external
-service.
+- The command doesn't change: no proxy to configure, no certificate to install, and it runs as the
+  same user with the same `$HOME` as the rest of the job, so credentials, caches and toolchains set
+  up by earlier steps keep working.
+- Run once in [`audit`](#operation-modes) mode and the report writes the allowlist for you, ready to
+  paste back into the step.
+- A rule can name an HTTP method and a URL, inside TLS as well, so a step can fetch a package from a
+  registry without being able to publish one to it.
+- It all runs inside your GitHub Actions job, with no agent and no external service.
 
 See [buildcage.github.io](https://buildcage.github.io/) for what it does and why. To isolate a
 Docker build's `RUN` steps rather than a workflow step, use
@@ -26,15 +29,16 @@ Docker build's `RUN` steps rather than a workflow step, use
 
 - [Requirements](#requirements)
 - [Usage](#usage)
-- [Inputs](#inputs)
-- [Operation modes](#operation-modes)
-- [Rule syntax](#rule-syntax)
 - [Engines](#engines)
-- [CA trust and compatibility](#ca-trust-and-compatibility)
+- [Inputs](#inputs)
 - [The report](#the-report)
 - [Passing values to `run`](#passing-values-to-run)
 - [Filesystem access](#filesystem-access)
+- [How it works](#how-it-works)
+- [CA trust and compatibility](#ca-trust-and-compatibility)
 - [Scope](#scope)
+- [Limitations](#limitations)
+- [FAQ](#faq)
 - [Documentation](#documentation)
 
 ## Requirements
@@ -49,23 +53,16 @@ runner with passwordless `sudo` and a working Docker installation:
 - **Self-hosted**
   - Docker Engine 25.0 or later, with Compose v2.20.2 or later
   - A sudoers policy that lets `sudo` pick the user and group to run as. One naming a single user
-    can't create a missing `write_through:` path; see [Filesystem access](#filesystem-access)
+    can't create a missing `write_through:` path; see
+    [`write_through` paths](./docs/reference.md#write_through-paths)
 
 A runner that falls short fails while the proxy starts, before the command runs.
 
 ## Usage
 
 Wrap the command you want to isolate with this action instead of a plain `run:` step. Run once in
-[`audit`](#operation-modes) mode to collect what the command reaches, then switch to `restrict`.
-
-Two engines decide how closely that traffic is examined:
-
-- **`inspect`** terminates TLS and reads the request, so a rule can name a method and a URL. It
-  mounts a CA into the sandbox's own view of the filesystem; nothing is written to the runner.
-- **`universal`** never decrypts, so it also works where a CA cannot be used, such as a tool that
-  pins a certificate. Not decrypting means a rule reaches only as far as a host and a port.
-
-The steps below use `inspect`. [Engines](#engines) compares the two in full.
+[`audit`](#operation-modes) mode to collect what the command reaches, then switch to `restrict`. The
+examples below use the `inspect` engine; [Engines](#engines) covers the choice between the two.
 
 ### 1. Find out what the command reaches
 
@@ -106,19 +103,12 @@ Paste that allowlist into the step and switch the mode:
 ```
 
 Each rule names the methods it permits, so these let npm install packages without letting it publish
-any: `npm publish` is a `PUT` to the same host, which no rule here covers. Whatever is refused is
-listed under **Blocked Hosts** with the reason, and **Communication details** names the URL of every
-request, allowed or refused, with credential query parameters replaced (see
-[Credentials in a URL](docs/security.md#credentials-in-a-url)):
+any: `npm publish` is a `PUT` to the same host, which no rule here covers.
 
 <img src="assets/report-inspect-restrict-mode.png" alt="Outbound Traffic Report - restrict mode" width="556">
 
 A blocked connection fails the step, so a command that starts reaching somewhere new doesn't pass
-unnoticed. Set `fail_on_blocked: false` to report without failing, or list destinations you expect to
-stay blocked in `known_blocked_rules`.
-
-Nothing about the command changes. The CA it has to trust is mounted into the sandbox's own view of
-the filesystem, so the command sees an ordinary HTTPS connection.
+unnoticed.
 
 ### Example workflows
 
@@ -132,307 +122,110 @@ A separate
 [ephemeral filesystem example](.github/workflows/example-ephemeral-filesystem.yml) shows which
 writes survive a `filesystem_mode: ephemeral` step and which the overlay discards.
 
-### Notes
-
-- Each step is self-contained: it starts its own throwaway proxy container, runs the command in the
-  isolated sandbox, appends its report to the Job Summary, and stops the container again, all within
-  that one step. Using this action several times in the same job gives each step its own allowlist.
-  This holds even when the steps run concurrently via GitHub Actions'
-  `background`/`wait`/`wait-all`/`parallel` keywords: the proxy container, network, and Compose
-  project are namespaced by a per-step random suffix, and each container records which step started
-  it, which cleanup checks before tearing anything down — so concurrent steps never tear down each
-  other's containers. Use [`label`](#inputs) to tell their report sections apart.
-- The sandbox's `/dev` holds the standard container device set, so a command needing a host device
-  node such as `/dev/kvm` or `/dev/fuse` won't work. Open-file limits, `/dev/shm` size, and the
-  hostname match the runner.
-- Private registries are ordinary hosts: add the domain like any other.
-- The isolated command **cannot use Docker**. If `docker` (or another container/VM runtime group)
-  is the runner's primary group, it's substituted for a safe one before the command runs; the
-  runtime sockets themselves are also masked. See [Isolation Mechanisms](docs/security.md#isolation-mechanisms)
-  in the Security doc for both layers.
-- One registry often needs several domains. PyPI, for example, uses both `pypi.org` and
-  `files.pythonhosted.org`. The audit report lists every one of them, so start from that.
-- The generated allowlist covers only what the engine decrypted. `allowed_tls_rules` and
-  `allowed_ip_rules` come back exactly as the audit run was configured with them.
-- If something the command runs pins a certificate or carries its own trust store (the JVM is the
-  usual case), use `proxy_engine: universal` instead. See [Engines](#engines).
-
-## Inputs
-
-`run` is the only required input.
-
-| Input                             | Default      | Description                                                                                     |
-| --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------- |
-| `run`                             | required     | Command(s) to run inside the isolated sandbox, multi-line like a workflow `run:` step           |
-| `proxy_mode`                      | `restrict`   | `audit` or `restrict`. See [Operation modes](#operation-modes).                                 |
-| `proxy_engine`                    | `universal`  | `inspect` or `universal`. See [Engines](#engines).                                              |
-| `fail_on_blocked`                 | `true`       | Fail the step when a connection was blocked (restrict mode only; ignored in audit mode)         |
-| `write_through`                   | empty        | Paths whose writes reach the real host filesystem. See [Filesystem access](#filesystem-access). |
-| `filesystem_mode`                 | `persistent` | `persistent` or `ephemeral` (**experimental**). See [Filesystem access](#filesystem-access).    |
-| `writable`                        | empty        | Deprecated: the former name of `write_through`. Still works; set `write_through` instead.       |
-| `label`                           | empty        | Label appended to this step's Job Summary heading, e.g. `npm ci`, to tell repeated steps apart  |
-| `upload_traffic_artifact`         | `false`      | Upload the observed traffic as a JSON artifact, `inspect` only. See [The report](#the-report).  |
-| `traffic_artifact_retention_days` | empty        | How long to keep that artifact, in days; empty uses the repository's own default                |
-
-### Rule inputs
-
-All of these are empty by default. Which ones apply depends on the engine:
-
-| Input                 | `inspect` | `universal` | What one rule matches                                                               |
-| --------------------- | :-------: | :---------: | ----------------------------------------------------------------------------------- |
-| `allowed_url_rules`   |    ✅     |      -      | A method and a URL: `GET https://registry.npmjs.org/**`                             |
-| `allowed_https_rules` |    ✅     |     ✅      | A host and port reached over HTTPS: `registry.npmjs.org:443`                        |
-| `allowed_http_rules`  |    ✅     |     ✅      | A host and port reached over plain HTTP: `deb.debian.org:80`                        |
-| `allowed_ip_rules`    |    ✅     |     ✅      | An address and port, for connections made without DNS: `192.168.1.1:443`            |
-| `allowed_tls_rules`   |    ✅     |      -      | A TLS destination to pass through undecrypted, judged on SNI: `db.example.com:5432` |
-| `known_blocked_rules` |    ✅     |     ✅      | A host expected to be blocked, so it doesn't fail the step                          |
-
-Setting a rule the engine can't act on is caught before the command starts: `restrict` fails, since
-a rule that looks like it protects the step but cannot be enforced is worse than none, and `audit`
-warns and ignores it.
-
-If some blocked connections are expected, say a known-noisy dependency, or a domain you are
-deliberately keeping off the allowlist to confirm it stays blocked, list them in
-`known_blocked_rules`. When every blocked connection matches, the step no longer fails even with
-`fail_on_blocked: true`, and a `::notice::` is emitted instead of `::error::`; any unmatched blocked
-connection still fails the step.
-
-See [Rule syntax](#rule-syntax) for the grammar.
-
-## Operation modes
-
-| `proxy_mode` | What it does                                                      | When to use it                                            |
-| ------------ | ----------------------------------------------------------------- | --------------------------------------------------------- |
-| `audit`      | Logs every destination the command reaches and blocks nothing     | First setup, adding a dependency, investigating a failure |
-| `restrict`   | Allows only what the rules match, blocks and logs everything else | Everyday workflows, security-critical steps               |
-
-If you forget a domain the command needs, `restrict` blocks it and the step fails with the
-destination named, which is why it is worth running `audit` first.
-
-Under `inspect`, `audit` is not a passive observer: TLS is still terminated, so a tool that pins a
-certificate fails there exactly as it would under `restrict`. `universal`'s audit mode decrypts
-nothing and breaks nothing.
-
-## Rule syntax
-
-`allowed_url_rules` and `allowed_tls_rules` need `proxy_engine: inspect`. The host rules work with
-either engine. The inputs are additive: a connection is allowed when any rule in any of them
-matches.
-
-### URL rules: `allowed_url_rules`
-
-A rule is a method list, a space, then a URL pattern. Because a rule contains a space, this input is
-newline-separated. The method is required, so a rule always states what it permits. A blank line, or
-a line starting with `#`, is ignored, which helps once the list gets long.
-
-```yaml
-allowed_url_rules: |
-  # npm installs
-  GET https://registry.npmjs.org/@myorg/**
-  GET|HEAD https://example.com/public/*
-
-  # internal write access
-  POST,PUT https://api.internal.example.com/v1/*
-  * https://internal.example.com
-```
-
-Methods are separated by `|` or `,`, and `*` means any method. The port may be left out when it is
-the scheme's default, and a pattern with no path allows any path on that host. A `#` fragment is
-refused: it never travels with a request, so a rule carrying one could only match nothing.
-
-| Pattern | In a domain                                       | In a path                     |
-| ------- | ------------------------------------------------- | ----------------------------- |
-| `**`    | crosses dots                                      | crosses `/`                   |
-| `*`     | one or more, not crossing a dot                   | one or more, not crossing `/` |
-| `?`     | one character                                     | one character                 |
-| `~`     | raw regex, split into a host half and a path half |                               |
-
-A `~` rule is split at the first `/` after `://` rather than applied to the whole URL: everything
-before that `/` is matched against the host, everything from it onward against the path. So
-`~^https://example\.com/pub/.*$` becomes a host match on `example\.com` and a path match on
-`/pub/.*$`. The host half's port pattern can be any regex (`example\.com:(443|8443)`,
-`example\.com:\d+`), matched against the connection's own `host:port`. Leave it out and the rule
-matches the scheme's default port only, 443 for `https` and 80 for `http`; there is no implicit
-any-port, so write `example\.com:.*` to allow more.
-
-A top-level `|` is not supported: the rule becomes a host expression and a path expression, which
-between them cannot say what a choice spanning the two would mean. Keep it inside a group
-(`:(443|8443)`, `/(x|y)`), or write one rule per alternative. A group cannot straddle the `/` the
-rule is split at either, since each half is compiled on its own.
-
-A wildcard may sit among literal text, in a domain label or a path segment: `abc*.amazonaws.com`,
-`/pkg-*/**`. A path or method never narrows what a wildcard _host_ resolves. See
-[Inspect Proxy Engine](./docs/security.md#inspect-proxy-engine) for why, and for how to write a host
-pattern that doesn't widen more than intended.
-
-A rule may name an address rather than a name. Nothing is loosened by that: the rules still match
-against the `Host` header and still decide, and an address reached this way stays inspected, so
-method and path rules apply to it. Over HTTPS the origin's certificate has to be valid for the
-address, which needs an IP SAN, so in practice an address is a plaintext or a passthrough
-destination.
-
-### Host rules: `allowed_https_rules`, `allowed_http_rules`, `allowed_ip_rules`, `known_blocked_rules`
-
-These four share one syntax. Rules are separated by whitespace, so one per line reads best. A host
-rule is equivalent to a URL rule with any method and any path.
-
-#### Wildcards
-
-| Pattern | Matches                                                     | Example                                                                  |
-| ------- | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `*`     | One or more characters **excluding** dots (single label)    | `*.example.com` matches `sub.example.com` but not `deep.sub.example.com` |
-| `**`    | One or more characters **including** dots (multiple labels) | `**.example.com` matches `sub.example.com` and `deep.sub.example.com`    |
-| `?`     | A single character excluding dots                           | `exampl?.com` matches `example.com`, `examplx.com`                       |
-
-A label that contains `*` has to be exactly `*` or `**`. `abc*.example.com` is rejected here; only
-`allowed_url_rules` takes a wildcard in the middle of a label.
-
-#### Ports
-
-A port is required on every rule.
-
-| Rule                 | Matches                                                       |
-| -------------------- | ------------------------------------------------------------- |
-| `example.com:443`    | `example.com` on port 443 only                                |
-| `*.example.com:8443` | Any single-level subdomain of `example.com` on port 8443 only |
-| `example.com:*`      | `example.com` on any port                                     |
-
-`known_blocked_rules` is the exception: a rule there that names no port is read as `:*`. It is
-matched against rows of the report rather than against connections, and a row for a name the
-resolver refused has no port at all, nothing having been connected to. `telemetry.example.com` and
-`telemetry.example.com:*` are the same rule.
-
-### IP addresses: `allowed_ip_rules`
-
-Connections made straight to an address never go through DNS, so they are allowed separately from
-any domain. IPv4 only, and what a rule may hold depends on the engine:
-
-| Engine      | A rule can be                                               | It cannot be       |
-| ----------- | ----------------------------------------------------------- | ------------------ |
-| `inspect`   | An address, a CIDR block (`10.0.0.0/8:443`), or a `~` regex | A wildcard pattern |
-| `universal` | An address, a wildcard, or a `~` regex                      | A CIDR block       |
-
-Either way the connection is tunnelled without inspection: once an `ip:port` pair is allowed, any
-TCP-based protocol can use that path. Prefer a domain rule where the destination has a stable name.
-
-### TLS passthrough: `allowed_tls_rules`
-
-For TLS traffic that isn't HTTPS. The SNI and port are checked and the connection passes through
-undecrypted, so the command validates the origin's own certificate. The name is still resolved by
-the proxy, so a passthrough goes where the proxy resolved it and not where the command aimed:
-
-```yaml
-allowed_tls_rules: |
-  db.example.com:5432
-```
-
-### Regular expressions
-
-Prefix a rule with `~` to use a regular expression. A host rule's pattern is matched against
-`domain:port` as one expression, so the port is part of the pattern and can be a regex itself. It
-cannot be left out: either engine refuses a `~` host rule with no `:` in it, since what the pattern
-is matched against always carries the port.
-
-| Rule                              | Effect                                                     |
-| --------------------------------- | ---------------------------------------------------------- |
-| `~^example\.com:443$`             | Matches `example.com` on port 443 only                     |
-| `~^example\.com:\d+$`             | Matches `example.com` on any port                          |
-| `~^.*\.example\.com:(443\|8443)$` | Matches any subdomain of `example.com` on port 443 or 8443 |
-| `~^192\.168\.1\.\d+:80$`          | Matches a range of IP addresses (in `allowed_ip_rules`)    |
-
-`^` and `$` are added where they are missing, so a pattern always covers the whole `domain:port`.
-A top-level `|` is not supported, since the anchors would bind to one branch each: keep it inside a
-group, as in `~^(a|b)\.example\.com:443$`, or write one rule per alternative. An IPv6 address is
-refused here as everywhere else in the rule syntax.
-
-In `allowed_url_rules` a `~` expression covers the URL, and is split into a host half and a path
-half as described above. A rule the split cannot handle is refused with an error naming what to
-write instead.
-
 ## Engines
 
-`proxy_engine` selects how Buildcage sees the command's traffic.
+`proxy_engine` selects how closely the command's traffic is examined.
 
-|                                               | `inspect`<br>terminates TLS, checks method and URL         | `universal`<br>reads the SNI only, checks host and port |
-| --------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------- |
-| A rule can say                                | `GET\|HEAD https://registry.npmjs.org/**`                  | `registry.npmjs.org:443`                                |
-| Allow a fetch, refuse a publish, same host    | ✅                                                         | -                                                       |
-| The report shows                              | Every request with its URL                                 | Host and port                                           |
-| Domain fronting (allowed SNI, another `Host`) | Refused, the real `Host` is what rules match               | Not visible                                             |
-| The command's TLS                             | Terminated and re-signed with a CA generated for that step | Untouched                                               |
-| Certificate pinning, or the JVM's own store   | -                                                          | ✅                                                      |
-| Traffic as a JSON artifact                    | ✅                                                         | -                                                       |
+|                                             | `inspect`<br>terminates TLS, checks method and URL         | `universal`<br>reads the SNI only, checks host and port |
+| ------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------- |
+| A rule can say                              | `GET\|HEAD https://registry.npmjs.org/**`                  | `registry.npmjs.org:443`                                |
+| Allow a fetch, refuse a publish, same host  | ✅                                                         | -                                                       |
+| The report shows                            | Every request with its URL                                 | Host and port                                           |
+| The command's TLS                           | Terminated and re-signed with a CA generated for that step | Untouched                                               |
+| Certificate pinning, or the JVM's own store | -                                                          | ✅                                                      |
+
+Start with `inspect`, and fall back to `universal` when something the command runs won't accept the
+mounted CA. `universal` is the default value of `proxy_engine`, so `inspect` has to be set
+explicitly.
 
 Both intercept at the network level, so a tool that ignores `HTTP_PROXY` is covered either way, and
 both use the same sandbox and the same network boundary.
 
-Start with `inspect`, and fall back to `universal` when something the command runs won't accept the
-mounted CA; see [CA trust and compatibility](#ca-trust-and-compatibility). `universal` is the default
-value of `proxy_engine`, so `inspect` has to be set explicitly. `transparent` is accepted as an alias
-for `universal`, the name it had before `inspect` existed.
+## Inputs
 
-### Service discovery
+`run` is the only required input, and the ones below are the rules you write by hand. The full list,
+with defaults and the engines each input applies to, is in
+[Reference](./docs/reference.md#action-inputs), and the grammar those rules are written in is in
+[Rule syntax](./docs/reference.md#rule-syntax).
 
-Neither engine's resolver returns a discovery record. It has no upstream, so it has nothing to
-return: `SRV`, `TXT`, `TLSA` and `URI` queries come back empty, and the command connects to the name
-a rule allowed rather than to one a nameserver picked for it.
+Use `label` to tell several steps' report sections apart when the action appears more than once in a
+job.
 
-That is what makes a rule mean what it says. `_http._tcp.deb.debian.org` really does carry an `SRV`
-record, pointing at `debian.map.fastlydns.net`, so an apt that followed it would connect to a Fastly
-mapping name no allowlist mentions and be refused there. Getting nothing back, apt uses
-`deb.debian.org`, and the rule you wrote is the host it reaches. Every protocol that treats `SRV` as
-a discovery layer falls back the same way, and an empty answer is what the great majority of names
-on the internet return for `SRV` in any case.
+### Operation modes
 
-What this does break is a client with no fallback, where the record is the only way it can find the
-service at all. A `mongodb+srv://` connection string is the one to expect: use `mongodb://` with the
-shard hostnames written out and allowlist those instead. Active Directory and Kerberos discovery
-have the same shape.
+`proxy_mode: audit` logs every destination the command reaches and blocks nothing. `restrict`, the
+default, allows only what the rules match and blocks and logs everything else. Start with `audit`
+when you first adopt Buildcage or when a dependency changes, and keep `restrict` for everyday runs.
 
-Under `inspect`, a lookup for a `_service._proto.<host>` name is reported as `discovery`, with the
-record type it asked for, in [Communication details](#the-report) and the
-[traffic artifact](#traffic-artifact), as long as that host is one the rules allow. It is not
-counted as blocked: the lookup is what allowing the host costs, and no rule could make it resolve.
-A service name under any other host is reported as blocked, with the reason
-`dns-service-not-allowed`; see [Blocked service names](#blocked-service-names).
+If you forget a domain the command needs, `restrict` blocks it and the step fails with the
+destination named, which is why it is worth running `audit` first.
 
-For the architecture and threat model behind each engine, see
-[Security Details](./docs/security.md). For implementation internals, see the
-[Development Guide](./docs/development.md).
+### Rules for the `inspect` engine
 
-## CA trust and compatibility
+`allowed_url_rules` is the one to reach for. Each line is a method list, a space, and a URL pattern.
+`*` stays inside one domain label or path segment, `**` crosses dots and slashes, and a rule with no
+path allows any path on that host:
 
-This section is about `proxy_engine: inspect`, which terminates TLS and re-signs it with a CA
-generated for the step, so the command has to trust that CA. The CA, and where relevant an augmented
-copy of the system CA store, is mounted over the sandbox's own view of those paths. Nothing is
-written to the runner's filesystem, and the mount goes away with the sandbox when the step ends.
+```yaml
+allowed_url_rules: |
+  # npm: fetch packages, and the audit endpoint it posts to
+  GET https://registry.npmjs.org/**
+  POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk
 
-The variables below are set only when the command's environment leaves them unset, and where each
-one points depends on what it means to the tool that reads it:
+  # pip: one registry, two domains
+  GET https://pypi.org/simple/**
+  GET https://files.pythonhosted.org/packages/**
 
-| Variable              | Read by                                                                                                 | If unset                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `NODE_EXTRA_CA_CERTS` | Node.js                                                                                                 | Additive: pointed at a file holding only this CA |
-| `DENO_CERT`           | Deno                                                                                                    | Additive: pointed at a file holding only this CA |
-| `CURL_CA_BUNDLE`      | curl                                                                                                    | Left unset; curl already reads the system store  |
-| `REQUESTS_CA_BUNDLE`  | Python `requests`                                                                                       | Replaces the bundle: pointed at the system store |
-| `PIP_CERT`            | pip                                                                                                     | Replaces the bundle: pointed at the system store |
-| `SSL_CERT_FILE`       | OpenSSL, and anything reading it (Go's `crypto/x509` on Unix, Ruby, wget, Rust's `rustls-native-certs`) | Replaces the bundle: pointed at the system store |
+  # a private registry is an ordinary host
+  GET|HEAD https://registry.internal.example.com:8443/**
+```
 
-**A variable that is already set is left alone**, not appended to. Appending safely would mean
-resolving the path it points at against the sandbox rootfs without following a symlink back out to
-the host, which this engine does not do yet.
+`allowed_tls_rules` passes a TLS destination through undecrypted, judged on its SNI and port. It is
+for TLS that isn't HTTPS, and for the hosts an `inspect` step must not decrypt:
 
-**The CA is added to a store that already exists, it is not created.** A step whose filesystem has
-nothing resembling a system CA bundle at a well-known path has nothing for this action to add to.
-That only matters to a tool that needs TLS trust for something.
+```yaml
+allowed_tls_rules: |
+  db.example.com:5432
+  repo.maven.apache.org:443
+```
 
-**Not supported under `inspect`:** a tool that pins a certificate, or ships its own trust store
-instead of reading the variables above. The JVM (Java, Kotlin, Scala) is the common case, since it
-only reads its own `cacerts` file. Use `proxy_engine: universal` for those.
+`allowed_ip_rules` covers connections made straight to an address, which never go through DNS. Under
+`inspect` a rule may be an address or a CIDR block:
 
-See [Inspect Proxy Engine](./docs/security.md#inspect-proxy-engine) for the threat model and
-attack resistance.
+```yaml
+allowed_ip_rules: |
+  192.168.1.10:443
+  10.0.0.0/8:443
+```
+
+### Rules for the `universal` engine
+
+`universal` never decrypts, so rules name a host and a port. `allowed_https_rules` and
+`allowed_http_rules` split by scheme, and `allowed_ip_rules` takes an address or a wildcard:
+
+```yaml
+allowed_https_rules: |
+  registry.npmjs.org:443
+  repo.maven.apache.org:443
+  *.internal.example.com:443
+
+allowed_http_rules: |
+  deb.debian.org:80
+
+allowed_ip_rules: |
+  192.168.1.10:443
+```
+
+### Destinations you expect to stay blocked
+
+A noisy dependency, or a domain you are deliberately keeping off the allowlist to confirm it stays
+blocked, belongs in `known_blocked_rules`. Those rows are marked **Expected** in the report and stop
+failing the step, and the destination stays unreachable:
+
+```yaml
+known_blocked_rules: |
+  telemetry.example.com
+```
 
 ## The report
 
@@ -441,116 +234,17 @@ refused, and, in `audit`, the allowlist to switch to `restrict` with. Under `ins
 **Communication details** section lists every request in order with its method, URL, status and
 size, refusals included, so a blocked entry names the URL that was attempted rather than a bare
 host. A query parameter that names a credential has its value replaced, see
-[Credentials in a URL](docs/security.md#credentials-in-a-url). Use [`label`](#inputs) to tell
-several steps' sections apart.
+[Credentials in a URL](docs/security.md#credentials-in-a-url).
 
-GitHub caps a Job Summary at 1 MiB per step and drops the whole summary rather than truncating it,
-so if the timeline would push the step over that limit, that section alone is cut at a line
-boundary and a note takes its place. The report is written to the Job Summary only, so a cut
-section is recovered from the [traffic artifact](#traffic-artifact) and nowhere else.
+In `restrict` mode a blocked connection fails the step. Set `fail_on_blocked: false` to report
+without failing, or list what you expect to stay blocked in `known_blocked_rules`. In `audit` mode
+nothing fails the step. How the report folds expected rows, and what a `dns-service-not-allowed` row
+means, is in [Reference](./docs/reference.md#report-details).
 
-Once `known_blocked_rules` is set, the Blocked Hosts table gains an **Expected** column (✅) marking
-the matched rows. Under `inspect` those rows are also folded into one row per rule, named after the
-rule and counting the hosts behind it (`*.example.com:* (12 hosts)`), below the rows nothing matched.
-A rule covering noisy traffic then costs the table one line however many hosts it names, which
-matters most when the noise puts its payload in the name itself and every request brings a new long
-hostname. The individual hosts stay in **Communication details**, so `universal`, whose report has no
-such section, folds nothing.
-
-A name the step looked up and never connected to gets a row of its own, with `DNS` as the rule kind
-and no port (folded like any other row when a `known_blocked_rules` rule matches it). Under
-`inspect` that is the only trace of a name the step reached for and did not use, which is how a rule
-wider than the step needs shows up. A name that was connected to has no such row: the request is
-already there.
-
-### Blocked service names
-
-A row whose reason is `dns-service-not-allowed` is a
-[service-discovery name](#service-discovery): `_mongodb._tcp.cluster0.x.mongodb.net` and the like.
-**Neither way of clearing it makes the record resolve.** Buildcage's resolver serves no discovery
-record at all, so the answer stays empty whatever you write; what changes is only whether the row
-fails the step.
-
-1. **Allow the host the name belongs to** (`cluster0.x.mongodb.net`). The lookup is then reported as
-   `discovery` instead and leaves the table, and the step may connect to that host. This is the
-   useful one whenever the step was trying to reach the service.
-2. **List the service name in `known_blocked_rules`** (`_mongodb._tcp.cluster0.x.mongodb.net:*`).
-   The row is marked Expected, folded under that rule, and stops failing the step. Nothing else
-   changes, and the host stays unreachable.
-
-Naming the service name in an `allowed_*` rule also clears the row, but it is the misleading option:
-it reads as permission to reach something that nothing can connect to, and the record still does not
-resolve.
-
-### Traffic artifact
-
-`upload_traffic_artifact: true` uploads the same timeline as a `traffic.json` inside an artifact
-named `buildcage-traffic-<id>`, where `<id>` is this step's own container suffix so several steps in
-one job never collide. It carries every name lookup, including the ones the summary folds into the
-request that followed them, and [service-discovery lookups](#service-discovery) with the record type
-that was asked for. `universal` never sees a method or a URL, so this input only does
-anything under `inspect`.
-
-This is also the form to keep where the report is an audit trail rather than something to read: in
-`filesystem_mode: persistent` a later step can add to the Job Summary, but not to an artifact
-already uploaded. See [Known Limitations](./docs/security.md#known-limitations).
-
-| Field         | Always | Notes                                                            |
-| ------------- | ------ | ---------------------------------------------------------------- |
-| `time`        | yes    | ISO 8601 UTC                                                     |
-| `elapsed`     |        | since the proxy started, fixed `HH:MM:SS.mmm`                    |
-| `action`      | yes    | `allow`, `block`, `audit` when nothing was enforced, `discovery` |
-| `protocol`    | yes    | `https`, `http`, `tls`, `tcp`, `dns`                             |
-| `host`        | yes    | the name asked for, or the address when there was none           |
-| `port`        |        | absent for `dns`, which connects to nothing                      |
-| `queryType`   |        | the record asked for; `discovery` rows and refused service names |
-| `method`      |        | `http` and `https` only                                          |
-| `url`         |        | `http` and `https` only; verbatim, unlike the summary's          |
-| `status`      |        | only when something answered                                     |
-| `bytes`       |        | absent for a refusal and for `dns`                               |
-| `reason`      |        | only when `action` is `block`                                    |
-| `destination` |        | the address it actually resolved to; absent for `dns`            |
-
-A field is absent because it does not apply, never because it was zero: a refusal has no status
-because nothing answered, and a passthrough none because nothing was decrypted. Filter on `action`.
-The artifact is uploaded even when the step fails, since a failing run is when it is most wanted.
-
-```json
-[
-  {
-    "time": "2026-09-02T04:11:07.512Z",
-    "elapsed": "00:00:00.512",
-    "action": "allow",
-    "protocol": "https",
-    "host": "registry.npmjs.org",
-    "port": 443,
-    "method": "GET",
-    "url": "https://registry.npmjs.org/express",
-    "status": 200,
-    "bytes": 102300,
-    "destination": "104.16.0.35"
-  },
-  {
-    "time": "2026-09-02T04:11:08.048Z",
-    "elapsed": "00:00:01.048",
-    "action": "block",
-    "protocol": "dns",
-    "host": "secret-data.attacker.example",
-    "reason": "dns-not-allowed"
-  },
-  {
-    "time": "2026-09-02T04:11:08.390Z",
-    "elapsed": "00:00:01.390",
-    "action": "block",
-    "protocol": "https",
-    "host": "registry.npmjs.org",
-    "port": 443,
-    "method": "POST",
-    "url": "https://registry.npmjs.org/express/-rev/1-abc",
-    "reason": "not-allowed"
-  }
-]
-```
+`upload_traffic_artifact: true` uploads the whole timeline as a `traffic.json`, one row per request
+and per name lookup, with the method, URL, status, size and the address it resolved to. It is
+uploaded even when the step fails, and `inspect` is the only engine that has anything to put in it.
+The fields are listed in [Reference](./docs/reference.md#traffic-artifact).
 
 ## Passing values to `run`
 
@@ -581,13 +275,8 @@ native `run:` step.
 ## Filesystem access
 
 Only `$GITHUB_WORKSPACE`, `$HOME`, `/tmp`, and `$RUNNER_TEMP` are writable by default. Every other
-path is remounted read-only for the duration of the `run` command, which closes off planting a
-payload anywhere outside those four paths. It doesn't close off planting one inside them: `$HOME`
-and `$RUNNER_TEMP` stay writable, and `GITHUB_ENV`/`GITHUB_PATH`/`GITHUB_OUTPUT` live under
-`$RUNNER_TEMP`, so a later, non-isolated step in the same job can still pick up whatever the command
-left there. See `filesystem_mode: ephemeral` below, and
-[Known Limitations](./docs/security.md#known-limitations) for what neither mode closes off. It also
-doesn't restrict what the command can _read_.
+path is remounted read-only for the duration of the `run` command. What the command can _read_ is
+not restricted.
 
 `filesystem_mode` controls what happens to those writes once the step ends:
 
@@ -596,7 +285,7 @@ doesn't restrict what the command can _read_.
 | `persistent` (default)     | Writes to `$GITHUB_WORKSPACE`/`$HOME`/`/tmp`/`$RUNNER_TEMP` stay on the host after the step ends, exactly as today. Everything else is read-only. |
 | `ephemeral` (experimental) | Every writable path is discarded when the step ends (via an overlay).                                                                             |
 
-`write_through:` names the paths whose writes reach the real host filesystem in either mode — the
+`write_through:` names the paths whose writes reach the real host filesystem in either mode, the
 paths that opt out of whichever default applies:
 
 | `filesystem_mode` | What `write_through:` does                                               |
@@ -637,99 +326,21 @@ to run code once the sandbox is gone.
 > Discarding those writes is the point, but the same overlay also drops output the command was
 > meant to produce. `$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH`, and `$GITHUB_STEP_SUMMARY` all
 > live under `$RUNNER_TEMP`, so whatever the command writes to them is gone once the step ends
-> unless you name that file in `write_through:`:
->
-> ```yaml
-> - uses: buildcage/isolated-run@e406cff083e1e9475fe2b726b02f6a51a6321291 # v1.2.0
->   with:
->     filesystem_mode: ephemeral
->     write_through: |
->       $GITHUB_WORKSPACE
->       $GITHUB_OUTPUT
->       $GITHUB_STEP_SUMMARY
->     run: |
->       echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
->       echo "### Build report" >> "$GITHUB_STEP_SUMMARY"
-> ```
->
-> Naming `$GITHUB_STEP_SUMMARY` puts the command's markdown in the same job summary this action
-> writes its own report to. That report and the `traffic_artifact_name` output are unaffected
-> either way: both are written from the runner host after the sandboxed command has exited, outside
-> the overlay.
+> unless you name that file in `write_through:`. Naming `$GITHUB_STEP_SUMMARY` puts the command's
+> markdown in the same Job Summary this action writes its own report to. That report and the
+> `traffic_artifact_name` output are unaffected either way: both are written from the runner host
+> after the sandboxed command has exited, outside the overlay.
 
-`write_through: /` drops the read-only restriction wholesale, so it only means anything under
-`persistent` and is rejected under `ephemeral`, where it would persist every write — the one thing
-that mode exists to prevent. The sentinel is the literal `/` only: an entry that merely _resolves_
-to `/` (a miscounted `../`, say) is an error rather than a silent full opt-out.
-
-This still doesn't close the delayed-exfiltration path off completely: `$GITHUB_WORKSPACE` has to
-persist for the job to do anything with it, and a later step routinely runs whatever ends up there,
-so `write_through: $GITHUB_WORKSPACE` is effectively required for any real build and is exactly as
-exposed to this as `persistent` mode is. What `ephemeral` mode actually buys you is closing off
-everything else: `$HOME`, `$RUNNER_TEMP`, and the runner's own generated files unless you name them
-explicitly.
-
-`write_through:` entries resolve like this:
-
-- `$NAME` / `${NAME}` expand only for `HOME`, `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `GITHUB_OUTPUT`,
-  `GITHUB_ENV`, `GITHUB_PATH`, and `GITHUB_STEP_SUMMARY`, not arbitrary env, so a value smuggled in
-  through the step's own `env:` block can't redirect where a listed path resolves. Any other `$NAME`
-  is rejected.
-- A leading `~/` expands to `$HOME`.
-- A relative path (`./dist`) resolves against `$GITHUB_WORKSPACE`, matching the sandbox's own
-  working directory.
-- A path that doesn't already exist is created before the step runs, **always as a directory**,
-  the same convention Docker itself uses for a bind mount whose host source doesn't exist yet
-  (`docker run -v`/`--mount`), never as a file. `$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH`, and
-  `$GITHUB_STEP_SUMMARY` are the runner's own generated files and must already exist: a missing one
-  is an error, not something this action creates. Anything else missing (`./dist`, say) is created
-  for you as a directory, with the same owner and permissions as its nearest already-existing parent
-  directory: a path under a tree the runner already owns becomes writable, same as today, but a path
-  under a tree it doesn't own (`/etc/something`, for instance) is created yet stays exactly as
-  unwritable to the sandboxed command as naming that existing parent directly would be. Nothing here
-  grants access beyond what the surrounding filesystem already implies.
-- A directory created that way is removed again when the step ends, but only if the command left it
-  empty (`rmdir`, never `rm -r`), so a build output directory that actually received output stays.
-  A step killed outright skips this and leaves the empty directory behind; the next run reuses it.
-- `write_through:` accepts files as well as directories, but only a path that's **already** a file
-  when the step starts; a missing target is always created as a directory (see above), never a file.
-  A file entry is bind-mounted file-to-file (the same technique the `inspect` engine already uses to
-  distribute its CA), so an append or a truncating write goes through, but a tool that replaces the
-  file outright (`mv`, or unlink plus recreate) does not. `$GITHUB_OUTPUT` and `$GITHUB_STEP_SUMMARY`'s
-  own contract is append-only, so this doesn't affect them in practice. If you need a file that
-  doesn't exist yet to persist, either have an earlier step create it first, or list its
-  (already-existing) parent directory instead.
-
-Creating a missing path as that nearest existing parent's owner rather than as root means the
-`mkdir` runs under `sudo -u '#uid' -g '#gid'`, and sudoers only lets you pick a group the target
-user already belongs to. The `runner:docker` parent on a GitHub-hosted runner qualifies, since
-`runner` is in `docker`; a parent carrying a group its own owner is not in (a setgid directory, say)
-does not, and neither does a self-hosted runner whose sudoers names a single user to run commands
-as. The step then fails with `write_through: <path> doesn't exist and couldn't be created`, carrying
-`sudo`'s own refusal, before your command runs. It never falls back to creating the path as root.
-Entries that already exist are never created and so never reach any of this.
-
-If you `write_through: $GITHUB_OUTPUT`, treat every output it sets the same as any other value from
-untrusted code: never interpolate `${{ steps.<id>.outputs.<name> }}` directly into a later `run:`
-block (see [Passing values to run](#passing-values-to-run) above), since it came from the
-sandboxed command. `write_through: $GITHUB_STEP_SUMMARY` lets the sandboxed command append to the Job Summary
-directly; this action's own report is written to the same file, so anything the command adds appears
-alongside it, not in place of it.
-
-`write_through:` is meant for paths outside `$HOME` that the workflow has already arranged for the
-runner user to write, in an earlier, non-isolated step. It changes how the path is mounted, not who
-owns it, so pointing it at a system directory the runner user cannot write (`/usr`, most of `/etc`)
-gains nothing.
-
-A few paths are reserved, because the sandbox mounts them itself to reach the proxy's DNS and CA
-trust: `/etc/resolv.conf`, `/etc/ssl/certs/ca-certificates.crt` and `/etc/buildcage-ca.pem`. Naming
-one of them (or anything under one) in `write_through:` fails the step rather than being quietly
-ignored. Naming a directory that contains them (`write_through: /etc`) is fine: writes elsewhere
-under it reach the host, and only those three paths stay read-only. The same applies to the
-filesystems the sandbox mounts fresh, such as `/proc` and `/dev`.
+`$GITHUB_WORKSPACE` has to persist for the job to do anything with it, and a later step routinely
+runs whatever ends up there, so `write_through: $GITHUB_WORKSPACE` is effectively required for any
+real build and is exactly as exposed to a planted payload as `persistent` mode is. What `ephemeral`
+buys you is closing off everything else: `$HOME`, `$RUNNER_TEMP`, and the runner's own generated
+files unless you name them explicitly. If you `write_through: $GITHUB_OUTPUT`, treat every output it
+sets the same as any other value from untrusted code, as in
+[Passing values to `run`](#passing-values-to-run) above.
 
 If `run` needs to write somewhere else in `persistent` mode, a build output or a tool-specific cache
-directory for example, list it under `write_through`:
+directory for example, list it under `write_through:`:
 
 ```yaml
 - uses: buildcage/isolated-run@e406cff083e1e9475fe2b726b02f6a51a6321291 # v1.2.0
@@ -739,20 +350,39 @@ directory for example, list it under `write_through`:
     run: some-tool build
 ```
 
-To disable the read-only restriction entirely in `persistent` mode, set `write_through` to `/`:
+How an entry is resolved, which paths are reserved, what `write_through: /` does, and what happened
+to the old `writable:` and `allow_write:` inputs are all in
+[Reference](./docs/reference.md#write_through-paths).
 
-```yaml
-write_through: /
-```
+## How it works
 
-> [!NOTE]
-> `write_through:` was called `writable:` before it covered both filesystem modes, and
-> `allow_write:` was its `filesystem_mode: ephemeral`-only counterpart. `writable:` still works and means
-> the same thing, with one change: its entries now go through the resolution above, so a relative
-> entry resolves against `$GITHUB_WORKSPACE` rather than being passed through as-is, and a `$NAME`
-> outside the seven supported variables is rejected instead of being treated as a literal path.
-> `allow_write:` has been removed, and a step still passing it fails with a message saying so rather
-> than silently discarding the writes it asked to keep.
+The step starts its own throwaway proxy container, runs the command in an isolated sandbox on the
+runner, appends its report to the Job Summary, and stops the container again, all within that one
+step. Traffic is caught at the network level rather than through proxy environment variables, so a
+tool that ignores them is covered too, and the CA the `inspect` engine needs is mounted into the
+sandbox's own view of the filesystem, never written to the runner.
+
+Using the action several times in one job gives each step its own allowlist, including when the
+steps run concurrently through GitHub Actions' `background`/`wait`/`wait-all`/`parallel` keywords:
+the proxy container, network, and Compose project are namespaced per step, and each container
+records which step started it, so concurrent steps never tear down each other's containers.
+
+[Security Details](./docs/security.md) has the architecture of each engine and the isolation
+mechanisms, with a diagram of what runs where. [Development Guide](./docs/development.md) has the
+implementation.
+
+## CA trust and compatibility
+
+`proxy_engine: inspect` terminates TLS and re-signs it with a CA generated for that step, so the
+command has to trust that CA. The CA, and where relevant an augmented copy of the system CA store,
+is mounted over the sandbox's own view of those paths, and the mount goes away with the sandbox when
+the step ends. Where the command's environment leaves them unset, Buildcage also points the
+variables the common toolchains read at a store that holds the CA: `NODE_EXTRA_CA_CERTS`,
+`DENO_CERT`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `PIP_CERT`. `CURL_CA_BUNDLE` is left unset,
+since curl reads the system store already.
+
+The full table is in [Reference](./docs/reference.md#ca-trust-variables). What this cannot cover is
+in [Limitations](#limitations), below.
 
 ## Scope
 
@@ -780,10 +410,117 @@ Whether to go further depends on what the step has access to:
 data, or source you do not publish. For the full threat model, see
 [Security Details](./docs/security.md).
 
+## Limitations
+
+### What isn't covered
+
+- `allowed_tls_rules` is not decrypted. The SNI and the port are checked, and the proxy resolves
+  that name itself, so the connection reaches the host the rule named, but nothing inside the TLS
+  session is seen.
+- `allowed_ip_rules` is not inspected at all, and doesn't require TLS either: once an `ip:port` pair
+  is allowed, any TCP-based protocol can use that path. Prefer a domain rule wherever the
+  destination has a stable name.
+- `universal` never sees the method or the path. They travel inside TLS, so neither is enforced and
+  neither reaches the report or the traffic artifact. A request fronted behind an allowed SNI is
+  invisible to it as well, while `inspect` matches on the real `Host` and refuses it. See
+  [What it can't see](./docs/security.md#what-it-cant-see).
+- The generated allowlist covers only what the engine classified. `allowed_tls_rules` and
+  `allowed_ip_rules` come back exactly as the audit run was configured with them, since nothing
+  behind a passthrough was ever decrypted.
+
+### Protocols
+
+- UDP is dropped, so QUIC and HTTP/3 either fall back to TCP or fail. Port 53 to the proxy, which is
+  the resolver, is the one exception. ICMP is dropped too.
+- IPv6 is not used anywhere. The rule syntax refuses an IPv6 address, forwarded IPv6 is dropped, and
+  the proxy reaches allowed names over IPv4 only, so an allowed name with AAAA records and no A
+  record never resolves and no rule can clear it.
+
+### Service discovery
+
+The resolver has no upstream, so it returns nothing for a discovery record: `SRV`, `TXT`, `TLSA` and
+`URI` queries come back empty, and the command connects to the name a rule allowed rather than to
+one a nameserver picked for it. Clients that treat `SRV` as a discovery layer fall back to the host
+name itself, so the host a rule names is the host the command reaches.
+
+What this breaks is a client with no fallback, where the record is the only way it can find the
+service at all. A `mongodb+srv://` connection string is the one to expect: use `mongodb://` with the
+shard hostnames written out and allowlist those instead. Active Directory and Kerberos discovery
+have the same shape.
+
+Under `inspect`, a lookup for a `_service._proto.<host>` name is reported as `discovery` when the
+rules allow that host, and is not counted as blocked. A service name under any other host is
+reported as blocked; see
+[Blocked service names](./docs/reference.md#blocked-service-names).
+
+### Inside the sandbox
+
+- The isolated command cannot use Docker. If `docker`, or another container or VM runtime group, is
+  the runner's primary group, it is substituted for a safe one before the command runs, and the
+  runtime sockets themselves are masked. See
+  [Isolation Mechanisms](docs/security.md#isolation-mechanisms).
+- `/dev` holds the standard container device set, so a command needing a host device node such as
+  `/dev/kvm` or `/dev/fuse` won't work. Open-file limits, `/dev/shm` size, and the hostname match
+  the runner.
+- In `persistent` mode `/tmp` and `$RUNNER_TEMP` are the same real directories for every invocation
+  in the job, so two concurrent steps can reach each other's scratch files there. `ephemeral` gives
+  each invocation its own overlay.
+
+### Under the `inspect` engine
+
+- A tool that pins a certificate, or ships its own trust store instead of reading the CA-trust
+  variables, will not work. The JVM (Java, Kotlin, Scala) is the common case, since it only reads
+  its own `cacerts` file. Use `proxy_engine: universal` for those, or pass the host through
+  undecrypted with `allowed_tls_rules`.
+- `audit` terminates TLS as well. It drops the rules, not the interception, so a tool that cannot
+  accept the CA fails in `audit` exactly as it would in `restrict`. `universal`'s audit mode
+  decrypts nothing and breaks nothing.
+- A CA-trust variable that is already set is left alone rather than appended to. Appending safely
+  would mean resolving the path it points at against the sandbox rootfs without following a symlink
+  back out to the host, which this engine does not do yet.
+- The CA is added to a store that already exists, never created. A command whose filesystem has
+  nothing resembling a system CA bundle at a well-known path has nothing to add to, which matters
+  only to a tool that needs TLS trust for something.
+
+### The Job Summary size cap
+
+GitHub caps a Job Summary at 1 MiB per step and drops the whole summary rather than truncating it,
+so if the timeline would push the step over that limit, that section alone is cut at a line boundary
+and a note takes its place. The report is written to the Job Summary only, so a cut section is
+recovered from the [traffic artifact](./docs/reference.md#traffic-artifact) and nowhere else.
+
+## FAQ
+
+**Can I keep `inspect` but leave a few hosts undecrypted?**
+
+Yes, that is what `allowed_tls_rules` is for. The SNI and port are checked and the connection passes
+through untouched, so a JVM build or a tool that pins a certificate can sit inside an otherwise
+inspected step. Those hosts are enforced at host-and-port granularity, the same as `universal`.
+
+**A host only ever gets looked up, never connected to. How do I write a rule for it?**
+
+The report gives it a row with `DNS` as the rule kind and no port. If you want it to stay
+unreachable without failing the step, put the name in `known_blocked_rules`, which is the one input
+where a rule may omit the port. If the command actually needs it, write an ordinary host or URL rule
+and the lookup is reported as allowed.
+
+**One registry needs several domains. How do I find them all?**
+
+Run `audit` and read the report. PyPI, for example, uses both `pypi.org` and
+`files.pythonhosted.org`, and the audit report lists every domain the command touched, so the
+generated allowlist already has them.
+
+**My step's outputs disappear under `filesystem_mode: ephemeral`.**
+
+`$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH` and `$GITHUB_STEP_SUMMARY` live under
+`$RUNNER_TEMP`, which the overlay discards. Name the ones the command writes to in
+`write_through:`. See [Filesystem access](#filesystem-access).
+
 ## Documentation
 
 | Doc                                        | What's in it                                                      |
 | ------------------------------------------ | ----------------------------------------------------------------- |
+| [Reference](./docs/reference.md)           | Every input, the rule syntax in full, the report's own output     |
 | [Security Details](./docs/security.md)     | Architecture and threat model for every engine, attack resistance |
 | [Development Guide](./docs/development.md) | Local usage, testing, logs, and implementation internals          |
 
