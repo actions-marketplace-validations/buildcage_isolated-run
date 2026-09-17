@@ -19225,7 +19225,14 @@ const REGISTRY = "ghcr.io";
 * On failure, throws VerifyImageError — the caller is responsible for printing
 * the error message.
 *
+* Untested by design: this calls the steps below in order and returns what they
+* produce. Each of them (buildVerifyOptions, imageTagFromRef, the oci-registry
+* fetches, verifyBundle, checkImageEngine) is tested directly, the fetches
+* against a stub fetch. The one thing that lives here rather than in them is the
+* ordering, including reading the labels before verifyBundle; that is held by
+* the comment below and not by a test.
 */
+/* v8 ignore start */
 async function verifyImageDigest({ actionRef, actionRepo, proxyEngine = "universal" }) {
 	let repoPath = actionRepo.toLowerCase(), verifyOptions = buildVerifyOptions({
 		actionRef,
@@ -19239,6 +19246,7 @@ async function verifyImageDigest({ actionRef, actionRepo, proxyEngine = "univers
 		imageTag: tag
 	}), digest;
 }
+/* v8 ignore stop */
 /** Maps a VerifyImageError (or any other thrown value) to the caller-facing ProvenanceError. */
 function toProvenanceError(e) {
 	return e instanceof VerifyImageError ? new ProvenanceError(e.message, e.code) : new ProvenanceError(errorMessage(e), "VERIFY_FAILED");
@@ -19256,7 +19264,12 @@ function requireDigest(digest, actionRef) {
 * Like verifyImageDigest, but throws ProvenanceError (see errors.ts) instead
 * of the low-level VerifyImageError, so a caller gets one already-typed
 * error to catch rather than having to translate the result itself.
+*
+* Untested by design, for the same reason as verifyImageDigest above: it joins
+* that function to toProvenanceError and requireDigest, both of which are tested
+* directly. A test here would only re-reach those two through a longer path.
 */
+/* v8 ignore start */
 async function verifyImageDigestOrThrow({ actionRef, actionRepo, proxyEngine }) {
 	let digest;
 	try {
@@ -19270,6 +19283,7 @@ async function verifyImageDigestOrThrow({ actionRef, actionRepo, proxyEngine }) 
 	}
 	return requireDigest(digest, actionRef);
 }
+/* v8 ignore stop */
 //#endregion
 //#region src/core/lib/actions/docker-error.ts
 const SLIM_RUNNER_DETECTED_PREFIX = " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\")", SLIM_RUNNER_NOTE$1 = `${SLIM_RUNNER_DETECTED_PREFIX} — these ship a Docker client with no daemon and are not supported for this action.`;
@@ -20067,9 +20081,11 @@ function unescapeField(field) {
 * moment later (see buildOciConfig's readonlyPaths handling for why this
 * matters).
 */
+/* v8 ignore start */
 function listHostMounts() {
 	return parseMountinfo((0, node_fs.readFileSync)("/proc/self/mountinfo", "utf8"));
 }
+/* v8 ignore stop */
 //#endregion
 //#region src/lib/sandbox/scratch-dir.ts
 const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid()}`;
@@ -22478,10 +22494,12 @@ const HAPROXY_LOG_DIR = "/var/log/haproxy";
 * read and which builder to call depends on which proxy image ran --
 * inspect's has a second (CoreDNS) log the universal image does not.
 */
+/* v8 ignore start */
 function fetchReport(containerName, parameters, proxyEngine) {
 	let docker = createDocker();
 	return proxyEngine === "inspect" ? buildInspectReportData(readRotatedLog(docker, containerName, HAPROXY_LOG_DIR), readRotatedLog(docker, containerName, "/var/log/coredns"), parameters) : buildUniversalReportData(readRotatedLog(docker, containerName, HAPROXY_LOG_DIR), parameters);
 }
+/* v8 ignore stop */
 /**
 * Best-effort `org.opencontainers.image.version` label read, converted back
 * into the `vX.Y.Z` git tag it was published from (the label itself is the

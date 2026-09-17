@@ -485,6 +485,7 @@ function parseMountinfo(mountinfoContent) {
 function unescapeField(field) {
 	return (field ?? "").replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
 }
+/* v8 ignore stop */
 //#endregion
 //#region src/lib/sandbox/scratch-dir.ts
 const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid()}`;

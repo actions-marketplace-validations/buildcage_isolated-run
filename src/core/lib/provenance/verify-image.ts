@@ -43,7 +43,14 @@ export interface ResolvedImage {
  * On failure, throws VerifyImageError — the caller is responsible for printing
  * the error message.
  *
+ * Untested by design: this calls the steps below in order and returns what they
+ * produce. Each of them (buildVerifyOptions, imageTagFromRef, the oci-registry
+ * fetches, verifyBundle, checkImageEngine) is tested directly, the fetches
+ * against a stub fetch. The one thing that lives here rather than in them is the
+ * ordering, including reading the labels before verifyBundle; that is held by
+ * the comment below and not by a test.
  */
+/* v8 ignore start */
 export async function verifyImageDigest({
   actionRef,
   actionRepo,
@@ -65,6 +72,7 @@ export async function verifyImageDigest({
   checkImageEngine({ labels, proxyEngine, imageTag: tag });
   return digest;
 }
+/* v8 ignore stop */
 
 /** Maps a VerifyImageError (or any other thrown value) to the caller-facing ProvenanceError. */
 export function toProvenanceError(e: unknown): ProvenanceError {
@@ -94,7 +102,12 @@ export function requireDigest(digest: string | null, actionRef: string): string 
  * Like verifyImageDigest, but throws ProvenanceError (see errors.ts) instead
  * of the low-level VerifyImageError, so a caller gets one already-typed
  * error to catch rather than having to translate the result itself.
+ *
+ * Untested by design, for the same reason as verifyImageDigest above: it joins
+ * that function to toProvenanceError and requireDigest, both of which are tested
+ * directly. A test here would only re-reach those two through a longer path.
  */
+/* v8 ignore start */
 export async function verifyImageDigestOrThrow({
   actionRef,
   actionRepo,
@@ -108,3 +121,4 @@ export async function verifyImageDigestOrThrow({
   }
   return requireDigest(digest, actionRef);
 }
+/* v8 ignore stop */
