@@ -1,30 +1,15 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { readFileSync, statSync } from "node:fs";
 
-// buildOciConfig probes the host three ways: existsSync for setpriv, statfsSync
-// for /dev/shm's real size, and readFileSync for /proc/*/limits. Left real, the
-// answers differ between a Linux runner and a macOS dev machine, and the suite
-// silently tests something different on each.
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...actual,
-    existsSync: vi.fn(actual.existsSync),
-    statfsSync: vi.fn(actual.statfsSync),
-    readFileSync: vi.fn(actual.readFileSync),
-  };
-});
-import { existsSync, statfsSync, readFileSync, statSync } from "node:fs";
-import { hostname } from "node:os";
-
-const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
-
+import { parseNofileLimit, type HostProbes } from "./host-probes.ts";
+import type { BuildOciConfigOptions } from "./oci-config.ts";
+import type { OciSpec } from "./types.ts";
 import {
   writeRunScript,
   writeResolvConf,
   computeReadonlyHostMounts,
   freshMountDestinationsFrom,
   withHostShmSize,
-  parseNofileLimit,
   buildOciConfig,
   writeOciConfig,
   RESOLV_CONF_DESTINATION,
@@ -134,40 +119,6 @@ describe("freshMountDestinationsFrom", () => {
   });
 });
 
-describe("parseNofileLimit", () => {
-  const limits = [
-    "Limit                     Soft Limit           Hard Limit           Units",
-    "Max stack size            8388608              unlimited            bytes",
-    "Max open files            65536                65536                files",
-    "Max locked memory         8388608              8388608              bytes",
-  ].join("\n");
-
-  it("reads the soft and hard limit out of /proc/self/limits", () => {
-    expect(parseNofileLimit(limits)).toStrictEqual({ soft: 65536, hard: 65536 });
-  });
-
-  it("reads an unlimited column as the kernel's own ceiling", () => {
-    const unlimited = limits.replace(
-      "65536                65536",
-      "65536                unlimited",
-    );
-    expect(parseNofileLimit(unlimited, 1048576)).toStrictEqual({ soft: 65536, hard: 1048576 });
-  });
-
-  it("gives up on an unlimited column with no ceiling to substitute", () => {
-    // Rather than guess: RLIM_INFINITY doesn't survive JSON's number type.
-    expect(
-      parseNofileLimit(
-        limits.replace("65536                65536", "65536                unlimited"),
-      ),
-    ).toBeUndefined();
-  });
-
-  it("gives up when the line isn't there at all", () => {
-    expect(parseNofileLimit("Limit Soft Hard Units")).toBeUndefined();
-  });
-});
-
 describe("withHostShmSize", () => {
   const shm = {
     destination: "/dev/shm",
@@ -210,7 +161,6 @@ describe("withHostShmSize", () => {
 // A minimal stand-in for what `runc spec` actually produces (see
 // runc-bootstrap.ts's generateBaseOciSpec) — only the fields buildOciConfig
 // reads/overrides are included.
-const TMPFS_MAGIC = 0x01021994;
 const SHM_BYTES = 4 * 1024 * 1024 * 1024;
 const PROC_LIMITS = [
   "Limit                     Soft Limit           Hard Limit           Units",
@@ -218,39 +168,36 @@ const PROC_LIMITS = [
 ].join("\n");
 
 /**
- * Answers the three host probes as a GitHub-hosted Linux runner would, leaving
- * every other path to the real filesystem so the scratch-dir writes still work.
- * `absent` drops a probe's answer, which is what a non-Linux host looks like.
+ * A GitHub-hosted Linux runner's answers. `absent` drops one, which is what a
+ * non-Linux host looks like -- supplied rather than read, since otherwise the
+ * suite silently covers something different on a macOS dev machine than in CI.
  */
-function pinHostProbes({ absent = [] }: { absent?: ("setpriv" | "shm" | "nofile")[] } = {}) {
-  vi.mocked(existsSync).mockImplementation(
-    (p) => !absent.includes("setpriv") && p === "/usr/bin/setpriv",
-  );
-  vi.mocked(statfsSync).mockImplementation(((p: string) => {
-    if (p === "/dev/shm" && !absent.includes("shm")) {
-      return { type: TMPFS_MAGIC, bsize: 4096, blocks: SHM_BYTES / 4096 };
-    }
-    throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-  }) as unknown as typeof statfsSync);
-  vi.mocked(readFileSync).mockImplementation(((p: string, enc: BufferEncoding) => {
-    if (typeof p === "string" && p.startsWith("/proc/")) {
-      if (absent.includes("nofile")) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-      return p === "/proc/sys/fs/nr_open" ? "1073741816\n" : PROC_LIMITS;
-    }
-    return realFs.readFileSync(p, enc);
-  }) as typeof readFileSync);
+function pinnedProbes({
+  absent = [],
+}: { absent?: ("setpriv" | "shm" | "nofile")[] } = {}): HostProbes {
+  return {
+    setprivPath: () => (absent.includes("setpriv") ? "setpriv" : "/usr/bin/setpriv"),
+    nofileRlimit: () =>
+      absent.includes("nofile") ? undefined : parseNofileLimit(PROC_LIMITS, 1073741816),
+    shmSizeBytes: () => (absent.includes("shm") ? undefined : SHM_BYTES),
+    hostname: () => HOSTNAME,
+  };
 }
 
-function resetHostProbes() {
-  vi.mocked(existsSync).mockReset();
-  vi.mocked(statfsSync).mockReset();
-  vi.mocked(readFileSync).mockReset();
-}
+const HOSTNAME = "runner-abcdef";
 
 // Every buildOciConfig case runs against the same pinned host, so a case only
-// has to say so when it wants a different one.
-beforeEach(() => pinHostProbes());
-afterEach(resetHostProbes);
+// has to say so when it wants a different one -- which it does by reassigning
+// `probes` before calling build().
+let probes: HostProbes;
+beforeEach(() => {
+  probes = pinnedProbes();
+});
+
+/** buildOciConfig against whatever host the current case pinned. */
+function build(baseSpec: OciSpec, options: BuildOciConfigOptions) {
+  return buildOciConfig(baseSpec, options, probes);
+}
 
 function fakeBaseSpec() {
   return {
@@ -318,7 +265,7 @@ describe("buildOciConfig", () => {
   };
 
   it("clears all five capability sets and sets noNewPrivileges", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.process.capabilities).toStrictEqual({
       bounding: [],
       effective: [],
@@ -330,7 +277,7 @@ describe("buildOciConfig", () => {
   });
 
   it("replaces runc's 1024-file default with the host's own RLIMIT_NOFILE", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.process.rlimits).toStrictEqual([
       { type: "RLIMIT_NOFILE", soft: 65536, hard: 65536 },
     ]);
@@ -339,18 +286,18 @@ describe("buildOciConfig", () => {
   // runc reads config.json, so the key has to be gone from the serialised form,
   // not merely undefined on the object.
   it("drops rlimits entirely when the host exposes no limits to read", () => {
-    pinHostProbes({ absent: ["nofile"] });
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    probes = pinnedProbes({ absent: ["nofile"] });
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(JSON.parse(JSON.stringify(config)).process).not.toHaveProperty("rlimits");
   });
 
   it('names the sandbox after the runner instead of runc\'s default "runc"', () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
-    expect(config.hostname).toBe(hostname());
+    const config = build(fakeBaseSpec(), baseArgs);
+    expect(config.hostname).toBe(HOSTNAME);
   });
 
   it("resizes /dev/shm to the host's own, away from runc's 64MB container default", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     const shm = config.mounts.find((m) => m.destination === "/dev/shm");
     expect(shm?.options).not.toContain("size=65536k");
     expect(shm?.options).toContain(`size=${SHM_BYTES}`);
@@ -360,84 +307,50 @@ describe("buildOciConfig", () => {
   // answers for the containing filesystem, and sizing a tmpfs to a whole disk
   // would let a step exhaust the host's memory.
   it("leaves /dev/shm unsized when the host has no tmpfs mounted there", () => {
-    pinHostProbes({ absent: ["shm"] });
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
-    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
-    expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
-  });
-
-  it("leaves /dev/shm unsized when statfs answers for a filesystem that is not tmpfs", () => {
-    vi.mocked(statfsSync).mockImplementation((() => ({
-      type: 0xef53,
-      bsize: 4096,
-      blocks: 1e9,
-    })) as unknown as typeof statfsSync);
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
-    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
-    expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
-  });
-
-  it("leaves /dev/shm unsized when the reported size is not a usable number", () => {
-    vi.mocked(statfsSync).mockImplementation((() => ({
-      type: TMPFS_MAGIC,
-      bsize: 4096,
-      blocks: 0,
-    })) as unknown as typeof statfsSync);
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    probes = pinnedProbes({ absent: ["shm"] });
+    const config = build(fakeBaseSpec(), baseArgs);
     const shm = config.mounts.find((m) => m.destination === "/dev/shm");
     expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
   });
 
   it("sets uid/gid and cwd from the given options", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.process.user).toStrictEqual({ uid: 1000, gid: 1000 });
     expect(config.process.cwd).toBe(baseArgs.writable.workdir);
   });
 
-  describe("setpriv resolution", () => {
-    // runc resolves args[0] against the sandbox's own PATH, which the step can
-    // override, so the absolute path is what makes this reach the real binary.
-    it("wraps the script in `setpriv --pdeathsig=KILL` at the path that exists", () => {
-      vi.mocked(existsSync).mockImplementation((p) => p === "/usr/bin/setpriv");
-      const config = buildOciConfig(fakeBaseSpec(), baseArgs);
-      expect(config.process.args[0]).toBe("/usr/bin/setpriv");
-      expect(config.process.args.slice(1)).toStrictEqual([
-        "--pdeathsig=KILL",
-        "--",
-        baseArgs.runtime.envLoaderPath,
-        baseArgs.runtime.scriptPath,
-      ]);
-    });
+  it("wraps the script in `setpriv --pdeathsig=KILL` at the path the host reported", () => {
+    const config = build(fakeBaseSpec(), baseArgs);
+    expect(config.process.args).toStrictEqual([
+      "/usr/bin/setpriv",
+      "--pdeathsig=KILL",
+      "--",
+      baseArgs.runtime.envLoaderPath,
+      baseArgs.runtime.scriptPath,
+    ]);
+  });
 
-    it("takes the first candidate in the documented order", () => {
-      vi.mocked(existsSync).mockImplementation(
-        (p) => p === "/bin/setpriv" || p === "/sbin/setpriv",
-      );
-      expect(buildOciConfig(fakeBaseSpec(), baseArgs).process.args[0]).toBe("/bin/setpriv");
-    });
-
-    // run-isolated.sh has already confirmed setpriv is on root's PATH by this
-    // point, so a PATH lookup is a safe last resort.
-    it("falls back to a bare PATH lookup when no candidate exists", () => {
-      pinHostProbes({ absent: ["setpriv"] });
-      expect(buildOciConfig(fakeBaseSpec(), baseArgs).process.args[0]).toBe("setpriv");
-    });
+  // run-isolated.sh has already confirmed setpriv is on root's PATH by this
+  // point, so a PATH lookup is a safe last resort.
+  it("passes a bare PATH lookup through when the host has no candidate", () => {
+    probes = pinnedProbes({ absent: ["setpriv"] });
+    expect(build(fakeBaseSpec(), baseArgs).process.args[0]).toBe("setpriv");
   });
 
   it("leaves process.env empty (the step environment travels over stdin)", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.process.env).toStrictEqual([]);
   });
 
   it("adds `path` to the network namespace entry, leaving other namespace types untouched", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     const netNs = config.linux.namespaces.find((ns) => ns.type === "network");
     expect(netNs!.path).toBe(baseArgs.runtime.netnsPath);
     expect(config.linux.namespaces.length).toBe(6);
   });
 
   it("extends maskedPaths with kallsyms/kmsg/sysrq-trigger and moves sysrq-trigger out of readonlyPaths", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     for (const p of [
       "/proc/kallsyms",
       "/proc/kmsg",
@@ -456,7 +369,7 @@ describe("buildOciConfig", () => {
   });
 
   it("masks known container/VM runtime sockets", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     for (const p of [
       "/var/run/docker.sock",
       "/run/docker.sock",
@@ -476,13 +389,13 @@ describe("buildOciConfig", () => {
   });
 
   it("masks the named-netns directory, so a step can't list the sandboxes running beside it", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.linux.maskedPaths).toContain("/run/netns");
     expect(config.linux.maskedPaths).toContain("/var/run/netns");
   });
 
   it("doesn't leak the netns directory into readonlyPaths alongside masking it", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       runtime: {
         ...baseArgs.runtime,
@@ -493,7 +406,7 @@ describe("buildOciConfig", () => {
   });
 
   it("also masks the rootless runtime sockets under $XDG_RUNTIME_DIR when set", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       env: { ...baseArgs.env, XDG_RUNTIME_DIR: "/run/user/1000" },
     });
@@ -502,18 +415,18 @@ describe("buildOciConfig", () => {
   });
 
   it("doesn't add rootless runtime socket paths when $XDG_RUNTIME_DIR is unset", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.linux.maskedPaths).not.toContain("/run/user/1000/docker.sock");
     expect(config.linux.maskedPaths).not.toContain("/run/user/1000/podman/podman.sock");
   });
 
   it("masks /run/user/<uid> (the systemd --user bus dir) built from identity.uid, even without $XDG_RUNTIME_DIR", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.linux.maskedPaths).toContain("/run/user/1000");
   });
 
   it("masks /run/user/<uid> and a different $XDG_RUNTIME_DIR when the two diverge", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       env: { ...baseArgs.env, XDG_RUNTIME_DIR: "/run/custom-xdg" },
     });
@@ -522,7 +435,7 @@ describe("buildOciConfig", () => {
   });
 
   it("doesn't leak /run/user/<uid> into readonlyPaths alongside masking it", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       runtime: {
         ...baseArgs.runtime,
@@ -534,7 +447,7 @@ describe("buildOciConfig", () => {
   });
 
   it("keeps masking /run/user/<uid> even when writable: / disables the read-only root", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/"] },
     });
@@ -542,12 +455,12 @@ describe("buildOciConfig", () => {
   });
 
   it("embeds the seccomp profile as-is", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.linux.seccomp).toStrictEqual(baseArgs.runtime.seccompProfile);
   });
 
   it("makes root read-only and binds workdir/home/tmp/writablePaths as writable exceptions", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
     });
@@ -560,7 +473,7 @@ describe("buildOciConfig", () => {
   });
 
   it("does not mount anything over rootfsBindDir (it lives under the scratch base, so nothing re-exposes it)", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
     });
@@ -570,7 +483,7 @@ describe("buildOciConfig", () => {
   });
 
   it("masks the scratch base with an empty tmpfs and reveals only this run's execDir", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     const mask = config.mounts.find((m) => m.destination === SANDBOX_SCRATCH_BASE);
     expect(mask).toStrictEqual({
       destination: SANDBOX_SCRATCH_BASE,
@@ -589,7 +502,7 @@ describe("buildOciConfig", () => {
   });
 
   it("orders the mask last of all, and the execDir reveal after it", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
     });
@@ -598,7 +511,7 @@ describe("buildOciConfig", () => {
   });
 
   it("masks the scratch base in ephemeral mode too, after the overlays", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       ephemeral: { overlayRoots: [], allowWrite: ["/home/runner/work"] },
     });
@@ -607,7 +520,7 @@ describe("buildOciConfig", () => {
   });
 
   it("masks the scratch base even with the read-only restriction disabled", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/"] },
     });
@@ -616,7 +529,7 @@ describe("buildOciConfig", () => {
 
   it("fails closed when writable: lists the scratch base itself", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         writable: { ...baseArgs.writable, writablePaths: [SANDBOX_SCRATCH_BASE] },
       }),
@@ -625,7 +538,7 @@ describe("buildOciConfig", () => {
 
   it("fails closed when writable: lists an ancestor of the scratch base", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         writable: { ...baseArgs.writable, writablePaths: ["/var/tmp"] },
       }),
@@ -634,7 +547,7 @@ describe("buildOciConfig", () => {
 
   it("fails closed when writable: lists a descendant of the scratch base", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         writable: {
           ...baseArgs.writable,
@@ -646,7 +559,7 @@ describe("buildOciConfig", () => {
 
   it("fails closed when $HOME or RUNNER_TEMP itself overlaps the scratch base", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         writable: { ...baseArgs.writable, home: SANDBOX_SCRATCH_BASE, writablePaths: [] },
       }),
@@ -655,7 +568,7 @@ describe("buildOciConfig", () => {
 
   it("does not fail closed for an unrelated sibling under /var/tmp", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         writable: { ...baseArgs.writable, writablePaths: ["/var/tmp/some-other-tool"] },
       }),
@@ -664,7 +577,7 @@ describe("buildOciConfig", () => {
 
   it("`writable: /` is exempt from the scratch-base guard (documented full opt-out)", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         writable: { ...baseArgs.writable, writablePaths: ["/"] },
       }),
@@ -672,7 +585,7 @@ describe("buildOciConfig", () => {
   });
 
   it("mounts in layer order: base spec, writable binds, this action's own, scratch tmpfs, execDir", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.mounts.map((m) => m.destination)).toStrictEqual([
       "/proc",
       "/sys",
@@ -687,7 +600,7 @@ describe("buildOciConfig", () => {
   });
 
   it("keeps its own mounts after a write_through entry that contains them", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/etc"] },
     });
@@ -700,7 +613,7 @@ describe("buildOciConfig", () => {
   it("fails closed when a writable path names a destination runc mounts itself", () => {
     for (const path of ["/proc", "/sys", "/proc/self"]) {
       expect(() =>
-        buildOciConfig(fakeBaseSpec(), {
+        build(fakeBaseSpec(), {
           ...baseArgs,
           writable: { ...baseArgs.writable, writablePaths: [path] },
         }),
@@ -714,7 +627,7 @@ describe("buildOciConfig", () => {
       { mountPoint: "/", fsType: "ext4" },
       { mountPoint: runnerTemp, fsType: "ext4" },
     ];
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: [], runnerTemp },
       runtime: { ...baseArgs.runtime, hostMounts },
@@ -728,7 +641,7 @@ describe("buildOciConfig", () => {
   });
 
   it("does not double-mount RUNNER_TEMP when it duplicates another writable path", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: [], runnerTemp: "/tmp" },
     });
@@ -739,7 +652,7 @@ describe("buildOciConfig", () => {
   });
 
   it("adds a read-only resolv.conf bind mount", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     const resolv = config.mounts.find((m) => m.destination === "/etc/resolv.conf");
     expect(resolv).toStrictEqual({
       destination: "/etc/resolv.conf",
@@ -750,7 +663,7 @@ describe("buildOciConfig", () => {
   });
 
   it("`writable: /` disables the read-only root and skips the individual writable-path mounts", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/"] },
     });
@@ -766,7 +679,7 @@ describe("buildOciConfig", () => {
       { mountPoint: "/mnt", fsType: "ext4" },
       { mountPoint: baseArgs.writable.workdir, fsType: "ext4" },
     ];
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: [] },
       runtime: { ...baseArgs.runtime, hostMounts },
@@ -791,7 +704,7 @@ describe("buildOciConfig", () => {
 
   it("`writable: /` skips the host-mount readonly pass entirely", () => {
     const hostMounts = [{ mountPoint: "/mnt", fsType: "ext4" }];
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/"] },
       runtime: { ...baseArgs.runtime, hostMounts },
@@ -807,7 +720,7 @@ describe("buildOciConfig", () => {
     // e.g. securityfs at /sys/kernel/security, which is commonly mounted
     // read-write on AppArmor-enabled hosts.
     const hostMounts = [{ mountPoint: "/sys/kernel/security", fsType: "securityfs" }];
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: [] },
       runtime: { ...baseArgs.runtime, hostMounts },
@@ -821,7 +734,7 @@ describe("buildOciConfig", () => {
       ...spec,
       linux: { ...spec.linux, maskedPaths: undefined, readonlyPaths: undefined },
     };
-    const config = buildOciConfig(bare, baseArgs);
+    const config = build(bare, baseArgs);
     expect(config.linux.maskedPaths).toContain("/proc/sysrq-trigger");
     // Nothing is invented for readonlyPaths: it is the base spec plus the
     // host-mount sweep, and here there is neither.
@@ -829,7 +742,7 @@ describe("buildOciConfig", () => {
   });
 
   it("falls back to / when the step has no workdir to run in", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, workdir: "" },
     });
@@ -874,7 +787,7 @@ describe("buildOciConfig ephemeral mode", () => {
   };
 
   it("emits one overlay mount per overlay root, with lowerdir/upperdir/workdir set from the given paths", () => {
-    const config = buildOciConfig(fakeBaseSpec(), { ...baseArgs, ephemeral });
+    const config = build(fakeBaseSpec(), { ...baseArgs, ephemeral });
     for (const root of ephemeral.overlayRoots) {
       expect(config.mounts).toContainEqual({
         destination: root.path,
@@ -887,7 +800,7 @@ describe("buildOciConfig ephemeral mode", () => {
 
   it("fails closed when a write_through entry names a destination runc mounts itself", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         ephemeral: { ...ephemeral, allowWrite: ["/proc"] },
       }),
@@ -895,7 +808,7 @@ describe("buildOciConfig ephemeral mode", () => {
   });
 
   it("emits a plain rw rbind for each write_through entry", () => {
-    const config = buildOciConfig(fakeBaseSpec(), { ...baseArgs, ephemeral });
+    const config = build(fakeBaseSpec(), { ...baseArgs, ephemeral });
     expect(config.mounts).toContainEqual({
       destination: baseArgs.writable.workdir,
       type: "none",
@@ -905,7 +818,7 @@ describe("buildOciConfig ephemeral mode", () => {
   });
 
   it("does not fall back to the persistent writableDirs logic (workdir/home/tmp/RUNNER_TEMP) when ephemeral is set", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       ephemeral,
       writable: { ...baseArgs.writable, writablePaths: ["/opt/should-be-ignored"] },
@@ -921,7 +834,7 @@ describe("buildOciConfig ephemeral mode", () => {
       ],
       allowWrite: ["/home/runner/deep/allow-deep", "/allow-shallow"],
     };
-    const config = buildOciConfig(fakeBaseSpec(), { ...baseArgs, ephemeral: deepEphemeral });
+    const config = build(fakeBaseSpec(), { ...baseArgs, ephemeral: deepEphemeral });
     const indexOf = (destination: string) =>
       config.mounts.findIndex((m) => m.destination === destination);
 
@@ -936,12 +849,12 @@ describe("buildOciConfig ephemeral mode", () => {
   });
 
   it("keeps root.readonly true even though no writablePaths sentinel applies", () => {
-    const config = buildOciConfig(fakeBaseSpec(), { ...baseArgs, ephemeral });
+    const config = build(fakeBaseSpec(), { ...baseArgs, ephemeral });
     expect(config.root.readonly).toBe(true);
   });
 
   it("never places an overlay root's upper/work dir under rootfsBindDir", () => {
-    const config = buildOciConfig(fakeBaseSpec(), { ...baseArgs, ephemeral });
+    const config = build(fakeBaseSpec(), { ...baseArgs, ephemeral });
     const overlayMounts = config.mounts.filter((m) => m.type === "overlay");
     for (const m of overlayMounts) {
       for (const opt of m.options ?? []) {
@@ -959,7 +872,7 @@ describe("buildOciConfig ephemeral mode", () => {
       { mountPoint: baseArgs.writable.workdir, fsType: "ext4" },
       { mountPoint: "/mnt", fsType: "ext4" },
     ];
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       ephemeral,
       runtime: { ...baseArgs.runtime, hostMounts },
@@ -971,7 +884,7 @@ describe("buildOciConfig ephemeral mode", () => {
 
   it("still fails closed if an overlay root or write_through entry somehow overlaps the scratch base", () => {
     expect(() =>
-      buildOciConfig(fakeBaseSpec(), {
+      build(fakeBaseSpec(), {
         ...baseArgs,
         ephemeral: { overlayRoots: [], allowWrite: [SANDBOX_SCRATCH_BASE] },
       }),
@@ -1006,7 +919,7 @@ describe("buildOciConfig — caTrust", () => {
   };
 
   it("adds no CA mounts when caTrust is omitted", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const config = build(fakeBaseSpec(), baseArgs);
     expect(config.mounts.some((m) => m.destination === OWN_CA_DESTINATION)).toBe(false);
     expect(config.mounts.some((m) => m.destination === SYSTEM_CA_DESTINATION)).toBe(false);
   });
@@ -1014,7 +927,7 @@ describe("buildOciConfig — caTrust", () => {
   // The matching CA env vars are resolveSandboxEnv's job; see
   // env-loader.test.ts.
   it("adds the CA mounts when caTrust is given", () => {
-    const config = buildOciConfig(fakeBaseSpec(), { ...baseArgs, caTrust });
+    const config = build(fakeBaseSpec(), { ...baseArgs, caTrust });
     expect(config.mounts).toContainEqual({
       destination: OWN_CA_DESTINATION,
       type: "none",
@@ -1030,7 +943,7 @@ describe("buildOciConfig — caTrust", () => {
   });
 
   it("keeps the CA mounts after a write_through entry containing them", () => {
-    const config = buildOciConfig(fakeBaseSpec(), {
+    const config = build(fakeBaseSpec(), {
       ...baseArgs,
       writable: { ...baseArgs.writable, writablePaths: ["/etc"] },
       caTrust,

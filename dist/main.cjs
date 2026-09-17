@@ -14103,7 +14103,7 @@ var require_envelope = __commonJSMin(((exports) => {
 		return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
 	};
 })), require_supports_color = __commonJSMin(((exports, module) => {
-	let os$3 = require("os"), tty$1 = require("tty"), hasFlag = require_has_flag(), { env } = process, forceColor;
+	let os$4 = require("os"), tty$1 = require("tty"), hasFlag = require_has_flag(), { env } = process, forceColor;
 	hasFlag("no-color") || hasFlag("no-colors") || hasFlag("color=false") || hasFlag("color=never") ? forceColor = 0 : (hasFlag("color") || hasFlag("colors") || hasFlag("color=true") || hasFlag("color=always")) && (forceColor = 1), "FORCE_COLOR" in env && (forceColor = env.FORCE_COLOR === "true" ? 1 : env.FORCE_COLOR === "false" ? 0 : env.FORCE_COLOR.length === 0 ? 1 : Math.min(parseInt(env.FORCE_COLOR, 10), 3));
 	function translateLevel(level) {
 		return level !== 0 && {
@@ -14121,7 +14121,7 @@ var require_envelope = __commonJSMin(((exports) => {
 		let min = forceColor || 0;
 		if (env.TERM === "dumb") return min;
 		if (process.platform === "win32") {
-			let osRelease = os$3.release().split(".");
+			let osRelease = os$4.release().split(".");
 			return Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586 ? Number(osRelease[2]) >= 14931 ? 3 : 2 : 1;
 		}
 		if ("CI" in env) return [
@@ -17780,6 +17780,60 @@ function assertScratchBaseNotWritable(writableDirs) {
 	if (overlapping) throw Error(`writable path ${JSON.stringify(overlapping)} overlaps the sandbox's own scratch directory (${SANDBOX_SCRATCH_BASE}); this would re-expose the sandboxed host filesystem read-write inside the sandbox itself. Choose a writable path outside ${SANDBOX_SCRATCH_BASE}.`);
 }
 //#endregion
+//#region src/lib/sandbox/host-probes.ts
+const SETPRIV_CANDIDATE_PATHS = [
+	"/usr/bin/setpriv",
+	"/bin/setpriv",
+	"/usr/sbin/setpriv",
+	"/sbin/setpriv"
+];
+function resolveSetprivPath(exists) {
+	return SETPRIV_CANDIDATE_PATHS.find((p) => exists(p)) ?? "setpriv";
+}
+function parseNofileLimit(procLimits, nrOpen) {
+	let line = procLimits.split("\n").find((l) => l.startsWith("Max open files"));
+	if (!line) return;
+	let [soft, hard] = line.slice(14).trim().split(/\s+/).map((c) => /^\d+$/.test(c) ? Number(c) : c === "unlimited" ? nrOpen : void 0);
+	return soft !== void 0 && hard !== void 0 ? {
+		soft,
+		hard
+	} : void 0;
+}
+function shmSizeFromStatfs({ type, bsize, blocks }) {
+	if (type !== 16914836) return;
+	let size = bsize * blocks;
+	return Number.isFinite(size) && size > 0 ? size : void 0;
+}
+function readOptionalFile(path) {
+	try {
+		return (0, node_fs.readFileSync)(path, "utf8");
+	} catch {
+		return;
+	}
+}
+function readNumericFile(path) {
+	let raw = readOptionalFile(path)?.trim();
+	return raw !== void 0 && /^\d+$/.test(raw) ? Number(raw) : void 0;
+}
+const realHostProbes = {
+	setprivPath: () => resolveSetprivPath(node_fs.existsSync),
+	nofileRlimit: () => {
+		let nrOpen = readNumericFile("/proc/sys/fs/nr_open");
+		for (let pid of [process.ppid, "self"]) {
+			let limits = readOptionalFile(`/proc/${pid}/limits`), parsed = limits === void 0 ? void 0 : parseNofileLimit(limits, nrOpen);
+			if (parsed) return parsed;
+		}
+	},
+	shmSizeBytes: () => {
+		try {
+			return shmSizeFromStatfs((0, node_fs.statfsSync)("/dev/shm"));
+		} catch {
+			return;
+		}
+	},
+	hostname: () => node_os.default.hostname()
+};
+//#endregion
 //#region src/core/lib/docker/args.ts
 function buildDockerCpArgs({ containerName, containerPath, hostPath }) {
 	return [
@@ -17934,63 +17988,16 @@ function computeReadonlyHostMounts(hostMounts, protectedPaths, freshMountDestina
 function freshMountDestinationsFrom(baseSpec) {
 	return new Set(baseSpec.mounts.map((m) => m.destination));
 }
-const SETPRIV_CANDIDATE_PATHS = [
-	"/usr/bin/setpriv",
-	"/bin/setpriv",
-	"/usr/sbin/setpriv",
-	"/sbin/setpriv"
-];
-function resolveSetprivPath() {
-	return SETPRIV_CANDIDATE_PATHS.find((p) => (0, node_fs.existsSync)(p)) ?? "setpriv";
-}
 const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
-function parseNofileLimit(procLimits, nrOpen) {
-	let line = procLimits.split("\n").find((l) => l.startsWith("Max open files"));
-	if (!line) return;
-	let [soft, hard] = line.slice(14).trim().split(/\s+/).map((c) => /^\d+$/.test(c) ? Number(c) : c === "unlimited" ? nrOpen : void 0);
-	return soft !== void 0 && hard !== void 0 ? {
-		soft,
-		hard
-	} : void 0;
-}
-function hostNofileRlimit() {
-	let nrOpen = readNumericFile("/proc/sys/fs/nr_open");
-	for (let pid of [process.ppid, "self"]) {
-		let limits = readOptionalFile(`/proc/${pid}/limits`), parsed = limits === void 0 ? void 0 : parseNofileLimit(limits, nrOpen);
-		if (parsed) return parsed;
-	}
-}
-function readOptionalFile(path) {
-	try {
-		return (0, node_fs.readFileSync)(path, "utf8");
-	} catch {
-		return;
-	}
-}
-function readNumericFile(path) {
-	let raw = readOptionalFile(path)?.trim();
-	return raw !== void 0 && /^\d+$/.test(raw) ? Number(raw) : void 0;
-}
-const SHM_DESTINATION = "/dev/shm";
 function withHostShmSize(mounts, hostShmBytes) {
 	return mounts.map((m) => {
-		if (m.destination !== SHM_DESTINATION) return m;
+		if (m.destination !== "/dev/shm") return m;
 		let options = (m.options ?? []).filter((o) => !o.startsWith("size="));
 		return {
 			...m,
 			options: hostShmBytes ? [...options, `size=${hostShmBytes}`] : options
 		};
 	});
-}
-function hostShmSizeBytes() {
-	try {
-		let { type, bsize, blocks } = (0, node_fs.statfsSync)(SHM_DESTINATION);
-		if (type !== 16914836) return;
-		let size = bsize * blocks;
-		return Number.isFinite(size) && size > 0 ? size : void 0;
-	} catch {
-		return;
-	}
 }
 const RESOLV_CONF_DESTINATION = "/etc/resolv.conf", RESERVED_INTERNAL_DESTINATIONS = [
 	RESOLV_CONF_DESTINATION,
@@ -18003,13 +18010,13 @@ function assertNoFreshMountDestinations(writableDirs, freshMountDestinations) {
 		if (shadowed) throw Error(`writable path ${JSON.stringify(dir)} is inside ${JSON.stringify(shadowed)}, which the sandbox mounts itself; bind-mounting the host's copy there would expose it inside the sandbox. Choose a path outside it.`);
 	}
 }
-function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env, caTrust }) {
+function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env, caTrust }, probes = realHostProbes) {
 	let { uid, gid } = identity, { workdir, home, runnerTemp, writablePaths = [] } = writable, { netnsPath, rootfsBindDir, resolvConfPath, seccompProfile, execDir, envLoaderPath, scriptPath, hostMounts = [] } = runtime, disableReadonly = !ephemeral && writablePaths.includes("/"), caAdditions = caTrust ? caTrustAdditions(caTrust, env) : void 0, internalMounts = [{
 		destination: RESOLV_CONF_DESTINATION,
 		type: "none",
 		source: resolvConfPath,
 		options: ["rbind", "ro"]
-	}, ...caAdditions?.mounts ?? []], mounts = withHostShmSize(baseSpec.mounts, hostShmSizeBytes()), nofile = hostNofileRlimit(), freshMountDestinations = freshMountDestinationsFrom(baseSpec), protectedPaths;
+	}, ...caAdditions?.mounts ?? []], mounts = withHostShmSize(baseSpec.mounts, probes.shmSizeBytes()), nofile = probes.nofileRlimit(), freshMountDestinations = freshMountDestinationsFrom(baseSpec), protectedPaths;
 	if (ephemeral) {
 		let { overlayRoots, allowWrite } = ephemeral, overlayPaths = overlayRoots.map((r) => r.path);
 		assertScratchBaseNotWritable([...overlayPaths, ...allowWrite]), assertNoFreshMountDestinations(allowWrite, freshMountDestinations), protectedPaths = new Set([...overlayPaths, ...allowWrite]);
@@ -18082,7 +18089,7 @@ function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env,
 			readonly: !disableReadonly
 		},
 		mounts,
-		hostname: (0, node_os.hostname)(),
+		hostname: probes.hostname(),
 		process: {
 			...baseSpec.process,
 			terminal: !1,
@@ -18091,7 +18098,7 @@ function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env,
 				gid
 			},
 			args: [
-				resolveSetprivPath(),
+				probes.setprivPath(),
 				"--pdeathsig=KILL",
 				"--",
 				envLoaderPath,
