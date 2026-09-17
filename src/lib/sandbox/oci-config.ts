@@ -1,8 +1,13 @@
-import { writeFileSync, existsSync, readFileSync, statfsSync } from "node:fs";
-import { hostname as hostHostname } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HasMounts, MountEntry, OciSpec, BuiltOciSpec, HostMount } from "./types.ts";
 import { assertScratchBaseNotWritable, isAtOrUnder } from "./paths.ts";
+import {
+  realHostProbes,
+  SHM_DESTINATION,
+  type HostProbes,
+  type NofileLimit,
+} from "./host-probes.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 import {
   caTrustAdditions,
@@ -98,23 +103,6 @@ export function freshMountDestinationsFrom(baseSpec: HasMounts): Set<string> {
   return new Set(baseSpec.mounts.map((m) => m.destination));
 }
 
-// runc resolves process.args[0] against the *sandbox's* PATH (the step's own
-// env, which a user could override to omit /usr/bin), so resolve setpriv to an
-// absolute path up front instead of relying on that lookup. The sandbox rootfs
-// is a bind-mount of the host's own `/`, so a path that exists on the host
-// resolves to the same binary inside. Falls back to bare "setpriv" (PATH
-// lookup) only if none of the usual locations exist -- run-isolated.sh has
-// already verified setpriv is on root's PATH before we get here.
-const SETPRIV_CANDIDATE_PATHS = [
-  "/usr/bin/setpriv",
-  "/bin/setpriv",
-  "/usr/sbin/setpriv",
-  "/sbin/setpriv",
-];
-function resolveSetprivPath(): string {
-  return SETPRIV_CANDIDATE_PATHS.find((p) => existsSync(p)) ?? "setpriv";
-}
-
 // `ip netns add` leaves its name as a real file under the host's own /run,
 // which the rootfs rbind carries into every sandbox -- so a step could list
 // the netns names of the other steps running beside it, and the proxy
@@ -125,58 +113,6 @@ function resolveSetprivPath(): string {
 // directory on a few. A path that doesn't exist is a no-op -- runc's
 // maskPath ignores ENOENT.
 const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
-
-const NOFILE_LABEL = "Max open files";
-
-/**
- * Pure: RLIMIT_NOFILE out of a /proc/<pid>/limits dump. `nrOpen` stands in for
- * an "unlimited" column, since RLIM_INFINITY can't round-trip through JSON's
- * number type and /proc/sys/fs/nr_open is the ceiling the kernel enforces
- * anyway; without it such a limit is unreadable rather than guessed at.
- */
-export function parseNofileLimit(
-  procLimits: string,
-  nrOpen?: number,
-): { soft: number; hard: number } | undefined {
-  const line = procLimits.split("\n").find((l) => l.startsWith(NOFILE_LABEL));
-  if (!line) return undefined;
-  const columns = line.slice(NOFILE_LABEL.length).trim().split(/\s+/);
-  const [soft, hard] = columns.map((c) =>
-    /^\d+$/.test(c) ? Number(c) : c === "unlimited" ? nrOpen : undefined,
-  );
-  return soft !== undefined && hard !== undefined ? { soft, hard } : undefined;
-}
-
-// Not this process: Node raises its own soft RLIMIT_NOFILE to the hard limit
-// before any JS runs, so /proc/self/limits reports the raised value rather than
-// the runner's. The parent still holds the real one, being the process that
-// spawned this action and that would have spawned the step unwrapped. Reading
-// it here, on the near side of run.ts's `sudo`, which drops the soft limit to
-// 1024 on the way to runc.
-function hostNofileRlimit(): { soft: number; hard: number } | undefined {
-  const nrOpen = readNumericFile("/proc/sys/fs/nr_open");
-  for (const pid of [process.ppid, "self"]) {
-    const limits = readOptionalFile(`/proc/${pid}/limits`);
-    const parsed = limits === undefined ? undefined : parseNofileLimit(limits, nrOpen);
-    if (parsed) return parsed;
-  }
-  return undefined;
-}
-
-function readOptionalFile(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
-function readNumericFile(path: string): number | undefined {
-  const raw = readOptionalFile(path)?.trim();
-  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : undefined;
-}
-
-const SHM_DESTINATION = "/dev/shm";
 
 /**
  * Pure: rewrite runc's 64MB /dev/shm cap to the host's own size, so a step
@@ -191,25 +127,6 @@ export function withHostShmSize(mounts: MountEntry[], hostShmBytes?: number): Mo
     const options = (m.options ?? []).filter((o) => !o.startsWith("size="));
     return { ...m, options: hostShmBytes ? [...options, `size=${hostShmBytes}`] : options };
   });
-}
-
-const TMPFS_MAGIC = 0x01021994;
-
-// tmpfs reports f_bsize = PAGE_SIZE and f_blocks = size >> PAGE_SHIFT, so the
-// product round-trips through `size=` exactly. The fstype check is what makes
-// that reasoning hold: where /dev/shm is a plain directory rather than a mount
-// of its own, statfs answers for the containing filesystem instead, and sizing
-// a tmpfs to a whole disk lets a step exhaust the host's memory. Undefined
-// there, and where the path can't be read at all.
-function hostShmSizeBytes(): number | undefined {
-  try {
-    const { type, bsize, blocks } = statfsSync(SHM_DESTINATION);
-    if (type !== TMPFS_MAGIC) return undefined;
-    const size = bsize * blocks;
-    return Number.isFinite(size) && size > 0 ? size : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** Where the proxy's nameserver is mounted inside the sandbox. */
@@ -357,6 +274,7 @@ export interface BuildOciConfigOptions {
 export function buildOciConfig(
   baseSpec: OciSpec,
   { identity, writable, ephemeral, runtime, env, caTrust }: BuildOciConfigOptions,
+  probes: HostProbes = realHostProbes,
 ): BuiltOciSpec {
   const { uid, gid } = identity;
   const { workdir, home, runnerTemp, writablePaths = [] } = writable;
@@ -385,8 +303,8 @@ export function buildOciConfig(
     },
     ...(caAdditions?.mounts ?? []),
   ];
-  const mounts = withHostShmSize(baseSpec.mounts, hostShmSizeBytes());
-  const nofile = hostNofileRlimit();
+  const mounts = withHostShmSize(baseSpec.mounts, probes.shmSizeBytes());
+  const nofile: NofileLimit | undefined = probes.nofileRlimit();
   const freshMountDestinations = freshMountDestinationsFrom(baseSpec);
 
   let protectedPaths: Set<string>;
@@ -508,7 +426,7 @@ export function buildOciConfig(
     mounts,
     // runc's default spec names every container "runc", while /etc/hostname
     // comes in with the host rootfs and already reads the runner's name.
-    hostname: hostHostname(),
+    hostname: probes.hostname(),
     process: {
       ...baseSpec.process,
       terminal: false,
@@ -525,7 +443,7 @@ export function buildOciConfig(
       // No other setpriv flags are needed here -- uid/gid, capabilities,
       // and no_new_privs are already applied by runc itself (above/below)
       // before this execs.
-      args: [resolveSetprivPath(), "--pdeathsig=KILL", "--", envLoaderPath, scriptPath],
+      args: [probes.setprivPath(), "--pdeathsig=KILL", "--", envLoaderPath, scriptPath],
       // Empty by design: envLoaderPath applies the step's environment from
       // stdin before execing scriptPath, keeping `env:` secrets off the
       // runner's disk. See env-loader.ts.
