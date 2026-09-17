@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   readFileSync,
   mkdirSync,
@@ -7,6 +7,7 @@ import {
   chmodSync,
   writeFileSync,
   statSync,
+  existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,15 @@ import { join } from "node:path";
 // uid -- see the ensureOwnScratchBase describe block below.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, lstatSync: vi.fn(actual.lstatSync) };
+  return {
+    ...actual,
+    lstatSync: vi.fn(actual.lstatSync),
+    // rmSync/mkdirSync/readFileSync are wrapped so the cleanup paths that only
+    // run when the filesystem refuses (EACCES, EBUSY) can be driven here.
+    rmSync: vi.fn(actual.rmSync),
+    mkdirSync: vi.fn(actual.mkdirSync),
+    readFileSync: vi.fn(actual.readFileSync),
+  };
 });
 import { lstatSync } from "node:fs";
 
@@ -37,6 +46,7 @@ import {
   SANDBOX_SCRATCH_BASE,
 } from "./scratch-dir.ts";
 import { writeRunScript } from "./oci-config.ts";
+import { SandboxError } from "../errors.ts";
 
 describe("scratchDirFor", () => {
   it("derives a path under SANDBOX_SCRATCH_BASE from the container name (not under a writable exception)", () => {
@@ -142,6 +152,12 @@ describe("parseMountsUnder", () => {
     const result = parseMountsUnder(mountinfo, "/tmp/buildcage-sandbox-ab");
     expect(result).toStrictEqual([]);
   });
+
+  it("accepts a directory given with a trailing slash", () => {
+    expect(parseMountsUnder(mountinfo, "/tmp/buildcage-sandbox-abc/")).toStrictEqual([
+      "/tmp/buildcage-sandbox-abc/rootfs",
+    ]);
+  });
 });
 
 describe("withScratchDir", () => {
@@ -213,5 +229,210 @@ describe("cleanupScratchDir", () => {
 
   it("refuses a sibling of the scratch base whose basename merely looks right", () => {
     expect(() => cleanupScratchDir("/etc/sandbox-abcd1234")).toThrow(/not a scratch dir under/);
+  });
+});
+
+// ── privileged cleanup paths ──────────────────────────────────────────────
+//
+// Everything below only runs when the plain unprivileged delete fails, which
+// is why none of it had ever been exercised: the fast path covers persistent
+// mode and every other test. These are also the paths that reach `sudo`.
+
+function fsError(code: string): NodeJS.ErrnoException {
+  const e: NodeJS.ErrnoException = new Error(`simulated ${code}`);
+  e.code = code;
+  return e;
+}
+
+/** A dir whose shape passes assertUnderScratchBase. */
+const SCRATCH_DIR = join(SANDBOX_SCRATCH_BASE, "sandbox-abcd1234");
+
+/** Nothing is mounted under the dir, so cleanup goes straight to the delete. */
+function noMounts() {
+  vi.mocked(readFileSync).mockImplementationOnce(() => "");
+}
+
+/** lstat answers "a directory you own", which is what the guard demands. */
+function ownedDirectory() {
+  vi.mocked(lstatSync).mockReturnValueOnce({
+    isDirectory: () => true,
+    uid: process.getuid!(),
+  } as unknown as ReturnType<typeof lstatSync>);
+}
+
+describe("cleanupScratchDir — sudo rm fallback on EACCES", () => {
+  beforeEach(() => {
+    vi.mocked(execFileSync).mockClear();
+  });
+
+  it("re-checks ownership and then deletes as root", () => {
+    noMounts();
+    vi.mocked(rmSync).mockImplementationOnce(() => {
+      throw fsError("EACCES");
+    });
+    ownedDirectory();
+    vi.mocked(execFileSync).mockImplementationOnce(() => Buffer.alloc(0));
+
+    cleanupScratchDir(SCRATCH_DIR);
+
+    expect(vi.mocked(execFileSync).mock.calls[0][0]).toBe("sudo");
+    expect(vi.mocked(execFileSync).mock.calls[0][1]).toStrictEqual([
+      "-n",
+      "rm",
+      "-rf",
+      SCRATCH_DIR,
+    ]);
+  });
+
+  // The guard below is the last thing standing between a bug and a root-owned
+  // `rm -rf` of whatever the path turned out to be, so both ways it can refuse
+  // have to stop before execFileSync, not merely report afterwards.
+  it("refuses when the path is not a directory, without reaching sudo", () => {
+    noMounts();
+    vi.mocked(rmSync).mockImplementationOnce(() => {
+      throw fsError("EACCES");
+    });
+    vi.mocked(lstatSync).mockReturnValueOnce({
+      isDirectory: () => false,
+      uid: process.getuid!(),
+    } as unknown as ReturnType<typeof lstatSync>);
+
+    expect(() => cleanupScratchDir(SCRATCH_DIR)).toThrow(/Refusing to sudo rm -rf/);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the directory is owned by another uid, without reaching sudo", () => {
+    noMounts();
+    vi.mocked(rmSync).mockImplementationOnce(() => {
+      throw fsError("EACCES");
+    });
+    vi.mocked(lstatSync).mockReturnValueOnce({
+      isDirectory: () => true,
+      uid: process.getuid!() + 1,
+    } as unknown as ReturnType<typeof lstatSync>);
+
+    try {
+      cleanupScratchDir(SCRATCH_DIR);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(SandboxError);
+      expect((err as SandboxError).code).toBe("SCRATCH_DIR_UNSAFE");
+    }
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("cleanupScratchDir — EBUSY retry", () => {
+  it("retries and succeeds once the lazily-detached mount has finished going away", () => {
+    noMounts();
+    vi.mocked(rmSync)
+      .mockImplementationOnce(() => {
+        throw fsError("EBUSY");
+      })
+      .mockImplementationOnce(() => {});
+
+    expect(() => cleanupScratchDir(SCRATCH_DIR)).not.toThrow();
+  });
+
+  it("gives up after the last attempt rather than looping forever", () => {
+    noMounts();
+    for (let i = 0; i < 5; i++) {
+      vi.mocked(rmSync).mockImplementationOnce(() => {
+        throw fsError("EBUSY");
+      });
+    }
+
+    expect(() => cleanupScratchDir(SCRATCH_DIR)).toThrow(/simulated EBUSY/);
+  });
+
+  it("rethrows any other errno immediately, without retrying", () => {
+    noMounts();
+    vi.mocked(rmSync).mockImplementationOnce(() => {
+      throw fsError("EROFS");
+    });
+
+    expect(() => cleanupScratchDir(SCRATCH_DIR)).toThrow(/simulated EROFS/);
+    // A second attempt would have consumed the delegating implementation and
+    // deleted for real; one call is what "no retry" means here.
+    expect(vi.mocked(rmSync).mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("cleanupScratchDir — force-detaching what is still mounted", () => {
+  const mountinfo = [
+    `1 0 0:1 / / rw,relatime shared:1 - ext4 /dev/root rw`,
+    `2 1 0:2 / ${SCRATCH_DIR} rw,relatime shared:2 - tmpfs tmpfs rw`,
+    `3 2 0:3 / ${SCRATCH_DIR}/rootfs rw,relatime shared:3 - ext4 /dev/root rw`,
+  ].join("\n");
+
+  beforeEach(() => {
+    vi.mocked(execFileSync).mockClear();
+  });
+
+  it("lazily unmounts the deepest path first, so children go before their parents", () => {
+    vi.mocked(readFileSync).mockImplementationOnce(() => mountinfo);
+    vi.mocked(execFileSync).mockImplementation(() => Buffer.alloc(0));
+    vi.mocked(rmSync).mockImplementationOnce(() => {});
+
+    cleanupScratchDir(SCRATCH_DIR);
+
+    expect(vi.mocked(execFileSync).mock.calls.map((c) => (c[1] as string[])[3])).toStrictEqual([
+      `${SCRATCH_DIR}/rootfs`,
+      SCRATCH_DIR,
+    ]);
+    expect(vi.mocked(execFileSync).mock.calls[0][1]).toStrictEqual([
+      "umount",
+      "-R",
+      "-l",
+      `${SCRATCH_DIR}/rootfs`,
+    ]);
+    vi.mocked(execFileSync).mockReset();
+  });
+
+  // A failed unmount must not abort cleanup: the delete still has to run, or
+  // the scratch dir is left behind for good.
+  it("warns and keeps going when one unmount fails", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(readFileSync).mockImplementationOnce(() => mountinfo);
+    vi.mocked(execFileSync)
+      .mockImplementationOnce(() => {
+        throw new Error("target is busy");
+      })
+      .mockImplementationOnce(() => Buffer.alloc(0));
+    vi.mocked(rmSync).mockImplementationOnce(() => {});
+
+    cleanupScratchDir(SCRATCH_DIR);
+
+    expect(vi.mocked(execFileSync).mock.calls.length).toBe(2);
+    expect(log.mock.calls.map((c) => String(c[0]))).toStrictEqual([
+      `::warning::Failed to unmount ${SCRATCH_DIR}/rootfs before cleanup: target is busy`,
+    ]);
+  });
+});
+
+describe("ensureOwnScratchBase — mkdir failures other than EEXIST", () => {
+  it("rethrows rather than falling through to the ownership check", () => {
+    vi.mocked(mkdirSync).mockImplementationOnce(() => {
+      throw fsError("EACCES");
+    });
+    expect(() =>
+      ensureOwnScratchBase(join(tmpdir(), "buildcage-scratch-base-never-created")),
+    ).toThrow(/simulated EACCES/);
+  });
+});
+
+describe("withScratchDir — deterministic naming", () => {
+  it("derives the dir from the container name and removes it on the way out", () => {
+    const containerName = "buildcage-proxy-abcd1234";
+    const expected = scratchDirFor(containerName);
+    let captured: string | undefined;
+
+    withScratchDir((dir) => {
+      captured = dir;
+      writeFileSync(join(dir, "marker"), "x");
+    }, containerName);
+
+    expect(captured).toBe(expected);
+    expect(existsSync(expected)).toBe(false);
   });
 });
