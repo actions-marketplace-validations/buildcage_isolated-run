@@ -487,7 +487,7 @@ function unescapeField(field) {
 }
 //#endregion
 //#region src/lib/sandbox/scratch-dir.ts
-const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid?.() ?? 0}`;
+const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid()}`;
 /**
 * Pure: mount points from raw /proc/self/mountinfo content that are
 * nested under `dir` (including `dir` itself), deepest-path-first so a

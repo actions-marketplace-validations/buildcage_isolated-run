@@ -21,7 +21,9 @@ import { parseMountinfo } from "./mountinfo.ts";
 // Suffixed with the runner's UID so two runners running as different users
 // on one host don't contend for the same base -- ensureOwnScratchBase below
 // would otherwise reject the second one outright as looking like tampering.
-export const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid?.() ?? 0}`;
+// getuid is asserted rather than probed, as everywhere else this uid is read:
+// the isolation is Linux-only, so a platform without it has nothing to run.
+export const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid!()}`;
 
 /**
  * Pure: mount points from raw /proc/self/mountinfo content that are
