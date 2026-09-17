@@ -64024,7 +64024,7 @@ const ALIGN_MARKERS = {
 	left: "---",
 	right: "---:",
 	center: ":---:"
-}, alignMarker = (align) => ALIGN_MARKERS[align ?? "left"] ?? ALIGN_MARKERS.left;
+}, alignMarker = (align) => ALIGN_MARKERS[align ?? "left"];
 function escapeCell(value) {
 	return value === void 0 ? "" : String(value).replace(/[\\`[\]<>|*]/g, "\\$&").replace(/\r?\n/g, " ");
 }
@@ -64234,9 +64234,7 @@ function parseRequest(request) {
 	};
 }
 function commonPrefixSegments(paths) {
-	let split = paths.map((p) => p.split("/").filter((s) => s !== ""));
-	if (split.length === 0) return [];
-	let prefix = split[0];
+	let split = paths.map((p) => p.split("/").filter((s) => s !== "")), prefix = split[0];
 	for (let segments of split.slice(1)) {
 		let i = 0;
 		for (; i < prefix.length && i < segments.length && prefix[i] === segments[i];) i++;
@@ -64256,7 +64254,7 @@ function pathPatternsFor(paths) {
 function sortMethods(methods) {
 	return [...new Set(methods)].sort((a, b) => {
 		let ai = METHOD_ORDER.indexOf(a), bi = METHOD_ORDER.indexOf(b);
-		return ai !== -1 && bi !== -1 ? ai - bi : ai === -1 ? bi === -1 ? a < b ? -1 : +(a > b) : 1 : -1;
+		return ai !== -1 && bi !== -1 ? ai - bi : ai === -1 ? bi === -1 && a < b ? -1 : 1 : -1;
 	});
 }
 function buildUrlRuleLines(requests) {
