@@ -34,7 +34,8 @@ services:
           'for check in /etc/s6-overlay/s6-rc.d/*/data/check; do "$$check" || exit 1; done',
         ]
       interval: 30s
-      start_interval: 2s
+      # Every start pays this before the first probe, and the tree is ready in ~0.3s.
+      start_interval: 250ms
       timeout: 10s
       retries: 3
       start_period: 60s

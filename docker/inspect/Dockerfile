@@ -94,6 +94,9 @@ ENV S6_LOGGING=0
 # half-started tree and an s6-rc transition that never ends.
 ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=60000
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+# Shutdown sleeps this long unconditionally between its SIGTERM and SIGKILL, so
+# the default 3000 costs every teardown 3s. The services stop in under 50ms.
+ENV S6_KILL_GRACETIME=500
 
 COPY --from=deps /usr/local/bin/coredns /usr/local/bin/coredns
 
