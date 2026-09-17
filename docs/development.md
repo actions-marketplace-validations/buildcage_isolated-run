@@ -266,6 +266,8 @@ The two integration targets need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook bui
 │                              # (see docker/compose.sandbox-dev.yaml), not used in production or CI
 ├── docs/                      # development.md, security.md, plus the reference.md/rules.md/
 │                              # inspect-engine.md link stubs
+├── licenses/                  # gen-license-file.mjs, which regenerates THIRD_PARTY_LICENSES_NPM
+│                              # during `vp run build`, and what .glf.jsonc substitutes in
 ├── compose.yaml               # Docker Compose config for local dev (builds docker/universal/Dockerfile;
 │                              # also what CI's test_sandbox/test_sandbox_* jobs build from)
 └── Makefile                   # Operational commands

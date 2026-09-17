@@ -39,11 +39,13 @@ jobs:
               - 'tsconfig.json'
               - 'tsconfig.qjs.json'
               - 'vite.config.ts'
+              - '.glf.jsonc'
               - '.dockerignore'
               - '.github/actions/setup-vp/**'
               - '.github/workflows/test-unit.yml'
               - 'src/**'
               - 'docker/**'
+              - 'licenses/**'
               - 'Makefile'
 
   unit_test:
@@ -70,7 +72,7 @@ jobs:
       - name: Build
         run: vp run build
 
-      - name: Check dist is up to date
+      - name: Check dist and THIRD_PARTY_LICENSES_NPM are up to date
         run: git diff --exit-code
 
       - name: Check dist is free of the BUILDCAGE_BUILD_TEST_HOOKS test hooks
