@@ -1,17 +1,10 @@
 /**
  * The facts buildOciConfig reads off the machine it runs on, behind one
- * collaborator.
+ * collaborator: they all describe the same machine, so a test supplying one
+ * without the others would be describing one that cannot exist.
  *
- * These are the only part of the OCI spec that isn't derived from the inputs,
- * and the reason the suite around it used to replace `node:fs` wholesale: left
- * to the real host, what the tests covered changed between a Linux runner and
- * a macOS dev machine. Grouped rather than injected one function at a time --
- * they all describe the same machine, and a test supplying one without the
- * others would be describing one that cannot exist.
- *
- * Every judgement any of them makes is a pure function here, tested directly.
- * What sits behind the `v8 ignore` at the bottom is only the syscalls that
- * feed them.
+ * Every judgement they make is a pure function here; only the syscalls sit
+ * behind the `v8 ignore` below.
  */
 import { existsSync, readFileSync, statfsSync } from "node:fs";
 import os from "node:os";
@@ -101,17 +94,10 @@ export interface HostProbes {
 }
 
 // Untested by design, down to the end of the file: the syscalls behind the
-// HostProbes seam. Reaching for them in a test would mean reading this
-// machine's own /proc and /dev/shm, which is what the seam exists to avoid.
-// Every judgement they feed -- the candidate order, the limits parse, the
-// tmpfs check and the size arithmetic -- is a pure function above.
-//
-// What no unit test can check is the wiring itself: a typo in a /proc path or
-// the wrong predicate would leave the pure functions correct and still produce
-// the wrong spec. test/integration-test-host-parity.sh is what covers that,
-// asserting from inside a real sandbox that RLIMIT_NOFILE, the hostname and
-// /dev/shm's size all match the runner's own. A wrong setprivPath needs no
-// assertion: it wraps the step's script, so nothing would start at all.
+// seam, which a test could only reach by reading this machine. The wiring
+// itself is covered by test/integration-test-host-parity.sh, which checks
+// RLIMIT_NOFILE, the hostname and /dev/shm's size against the runner's own
+// from inside a real sandbox.
 /* v8 ignore start */
 function readOptionalFile(path: string): string | undefined {
   try {
