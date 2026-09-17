@@ -16,7 +16,7 @@ import {
 import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
 import { SandboxError } from "./lib/errors.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
-import { listHostIpv4Addresses } from "./lib/host-addresses.ts";
+import { buildComposeEnv } from "./lib/compose-env.ts";
 import { checkPasswordlessSudo } from "./lib/sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./lib/overlayfs-preflight.ts";
 import {
@@ -34,7 +34,7 @@ import {
   type CreatedDir,
 } from "./lib/sandbox/write-through.ts";
 import { assertScratchBaseNotWritable, isAtOrUnder } from "./lib/sandbox/paths.ts";
-import { generateContainerName, getContainerNetns, ownerToken } from "./lib/container.ts";
+import { generateContainerName, getContainerNetns } from "./lib/container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
 import { RESERVED_INTERNAL_DESTINATIONS } from "./lib/sandbox/oci-config.ts";
 import { runSandboxedCommand } from "./lib/sandbox/sandboxed-command.ts";
@@ -56,7 +56,11 @@ const LOCAL_IMAGE_OVERRIDE_ENABLED = process.env.BUILDCAGE_BUILD_TEST_HOOKS === 
 /**
  * Verifies image provenance and resolves the digest-pinned image ref for
  * isolated-run's (buildkitd-less) proxy image.
+ *
+ * Untested by design: verifyImageDigestOrThrow and resolveBuildcageImageRef
+ * are tested directly.
  */
+/* v8 ignore start */
 async function resolveVerifiedImage({
   actionRef,
   actionRepo,
@@ -75,7 +79,8 @@ async function resolveVerifiedImage({
 /**
  * Never sent to the container's ACL — used only for report-time annotation
  * of expected vs. unexpected blocked connections.
- */
+ */ /* v8 ignore stop */
+
 export function readKnownBlockedRules(input: string | undefined): string[] {
   return parseKnownBlockedRulesOrThrow(input);
 }
@@ -312,6 +317,9 @@ export function resolveFilesystemPlan(
   }
 }
 
+// Untested by design, down to the end of the file: every step main() calls is
+// tested directly, and what it adds is the docker/runc invocations themselves.
+/* v8 ignore start */
 async function main(): Promise<void> {
   const env = process.env;
   // Empty (not `??`-catchable) for local-path `uses: ./` invocations.
@@ -428,26 +436,20 @@ async function main(): Promise<void> {
       }
     }
 
-    const composeEnv = {
-      ...env,
-      PROXY_CONTAINER_NAME: containerName,
-      BUILDCAGE_OWNER: ownerToken(env),
-      PROXY_MODE: proxyMode,
-      PROXY_ENGINE: proxyEngine,
-      ALLOWED_HTTPS_RULES: rules.httpsRules.join("\n"),
-      ALLOWED_HTTP_RULES: rules.httpRules.join("\n"),
-      ALLOWED_IP_RULES: rules.ipRules.join("\n"),
-      ALLOWED_URL_RULES: urlRules.join("\n"),
-      ALLOWED_TLS_RULES: tlsRules.join("\n"),
-      BUILDCAGE_PROXY_IMAGE_REF: imageRef,
-      // Pinned rather than inherited: in persistent mode an isolated command can
-      // write $GITHUB_ENV, so a resolver left to the step environment would be a
-      // previous step's choice, not the action's.
-      EXTERNAL_RESOLVER: "",
-      // Completed engine-side with the compose network's gateway, which does
-      // not exist yet here. See lib/host-addresses.ts.
-      HOST_ADDRESSES: listHostIpv4Addresses().join(" "),
-    };
+    const composeEnv = buildComposeEnv(
+      {
+        containerName,
+        proxyMode,
+        proxyEngine,
+        imageRef,
+        httpsRules: rules.httpsRules,
+        httpRules: rules.httpRules,
+        ipRules: rules.ipRules,
+        urlRules,
+        tlsRules,
+      },
+      env,
+    );
 
     await startSandboxProxy({ composeFile, projectName, containerName, pullPolicy, composeEnv });
 
@@ -548,3 +550,4 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   });
 }
+/* v8 ignore stop */

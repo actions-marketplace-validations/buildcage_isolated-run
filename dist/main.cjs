@@ -17583,13 +17583,6 @@ function checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules 
 	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced — the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
 }
 //#endregion
-//#region src/lib/host-addresses.ts
-function listHostIpv4Addresses({ networkInterfaces: list = node_os.networkInterfaces } = {}) {
-	let found = new Set();
-	for (let infos of Object.values(list())) for (let info of infos ?? []) (info.family === "IPv4" || info.family === 4) && (info.internal || found.add(info.address));
-	return [...found].sort();
-}
-//#endregion
 //#region src/core/lib/actions/docker-error.ts
 const SLIM_RUNNER_DETECTED_PREFIX = " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\")", SLIM_RUNNER_NOTE$1 = `${SLIM_RUNNER_DETECTED_PREFIX} — these ship a Docker client with no daemon and are not supported for this action.`;
 function describeDockerFailure(e, { operation = "docker", env = process.env, exists = node_fs.existsSync } = {}) {
@@ -17603,27 +17596,6 @@ function describeDockerFailure(e, { operation = "docker", env = process.env, exi
 }
 function isLikelySlimRunner(_env = process.env, _exists = node_fs.existsSync) {
 	return _env.ImageOS === "Linux" && _exists("/run/.containerenv");
-}
-//#endregion
-//#region src/lib/sudo-preflight.ts
-const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
-function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
-	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
-	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
-}
-function checkPasswordlessSudo() {
-	try {
-		(0, node_child_process.execFileSync)("sudo", ["-n", "true"], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"ignore",
-				"pipe"
-			]
-		});
-	} catch (e) {
-		throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
-	}
 }
 //#endregion
 //#region src/lib/container.ts
@@ -17673,6 +17645,53 @@ function getContainerNetns(containerName, { exec = node_child_process.execFileSy
 		throw new SandboxError(describeDockerFailure(e, { operation: "docker inspect" }), "DOCKER_UNAVAILABLE");
 	}
 	return out || null;
+}
+//#endregion
+//#region src/lib/host-addresses.ts
+function listHostIpv4Addresses({ networkInterfaces: list = node_os.networkInterfaces } = {}) {
+	let found = new Set();
+	for (let infos of Object.values(list())) for (let info of infos ?? []) (info.family === "IPv4" || info.family === 4) && (info.internal || found.add(info.address));
+	return [...found].sort();
+}
+//#endregion
+//#region src/lib/compose-env.ts
+function buildComposeEnv({ containerName, proxyMode, proxyEngine, imageRef, httpsRules, httpRules, ipRules, urlRules, tlsRules }, env, hostAddresses = listHostIpv4Addresses) {
+	return {
+		...env,
+		PROXY_CONTAINER_NAME: containerName,
+		BUILDCAGE_OWNER: ownerToken(env),
+		PROXY_MODE: proxyMode,
+		PROXY_ENGINE: proxyEngine,
+		ALLOWED_HTTPS_RULES: httpsRules.join("\n"),
+		ALLOWED_HTTP_RULES: httpRules.join("\n"),
+		ALLOWED_IP_RULES: ipRules.join("\n"),
+		ALLOWED_URL_RULES: urlRules.join("\n"),
+		ALLOWED_TLS_RULES: tlsRules.join("\n"),
+		BUILDCAGE_PROXY_IMAGE_REF: imageRef,
+		EXTERNAL_RESOLVER: "",
+		HOST_ADDRESSES: hostAddresses().join(" ")
+	};
+}
+//#endregion
+//#region src/lib/sudo-preflight.ts
+const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
+function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
+	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
+}
+function checkPasswordlessSudo() {
+	try {
+		(0, node_child_process.execFileSync)("sudo", ["-n", "true"], {
+			encoding: "utf8",
+			stdio: [
+				"ignore",
+				"ignore",
+				"pipe"
+			]
+		});
+	} catch (e) {
+		throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
+	}
 }
 //#endregion
 //#region src/lib/sandbox/mountinfo.ts
@@ -64767,21 +64786,17 @@ async function main() {
 		}, (message) => annotation.warning(message)), console.log("::group::buildcage: Configured ACL Rules"), logRules("HTTPS", rules.httpsRules), logRules("HTTP", rules.httpRules), logRules("IP", rules.ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules), console.log("::endgroup::");
 		let containerName = generateContainerName(), projectName = deriveProjectName(containerName);
 		env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots.map((r) => r.path))));
-		let composeEnv = {
-			...env,
-			PROXY_CONTAINER_NAME: containerName,
-			BUILDCAGE_OWNER: ownerToken(env),
-			PROXY_MODE: proxyMode,
-			PROXY_ENGINE: proxyEngine,
-			ALLOWED_HTTPS_RULES: rules.httpsRules.join("\n"),
-			ALLOWED_HTTP_RULES: rules.httpRules.join("\n"),
-			ALLOWED_IP_RULES: rules.ipRules.join("\n"),
-			ALLOWED_URL_RULES: urlRules.join("\n"),
-			ALLOWED_TLS_RULES: tlsRules.join("\n"),
-			BUILDCAGE_PROXY_IMAGE_REF: imageRef,
-			EXTERNAL_RESOLVER: "",
-			HOST_ADDRESSES: listHostIpv4Addresses().join(" ")
-		};
+		let composeEnv = buildComposeEnv({
+			containerName,
+			proxyMode,
+			proxyEngine,
+			imageRef,
+			httpsRules: rules.httpsRules,
+			httpRules: rules.httpRules,
+			ipRules: rules.ipRules,
+			urlRules,
+			tlsRules
+		}, env);
 		await startSandboxProxy({
 			composeFile,
 			projectName,

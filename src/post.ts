@@ -7,6 +7,9 @@ import { buildComposeDownArgs } from "#core/lib/docker/args.ts";
 import { planPostCleanup } from "./lib/post-cleanup.ts";
 import type { PostCleanupTargets } from "./lib/post-state.ts";
 
+// Untested by design, down to the end of the file: planPostCleanup decides
+// what may be torn down, and tearing it down is docker's own.
+/* v8 ignore start */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
 
@@ -55,3 +58,4 @@ function main(): void {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main();
 }
+/* v8 ignore stop */

@@ -27,6 +27,9 @@ export interface ProxyLifecycleDeps {
   printDocker?: (args: string[], env: NodeJS.ProcessEnv) => void;
 }
 
+// Untested by design: the defaults behind the seams above, which only hand
+// execFileSync what the tested callers decided.
+/* v8 ignore start */
 const captureDockerViaExec = (args: string[], env: NodeJS.ProcessEnv): string =>
   execFileSync("docker", args, {
     encoding: "utf8",
@@ -39,6 +42,7 @@ const captureDockerViaExec = (args: string[], env: NodeJS.ProcessEnv): string =>
 const printDockerViaExec = (args: string[], env: NodeJS.ProcessEnv): void => {
   execFileSync("docker", args, { stdio: "inherit", env });
 };
+/* v8 ignore stop */
 
 /**
  * Wraps buildcage's own (non-user) log output in a collapsed
