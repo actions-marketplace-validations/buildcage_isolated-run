@@ -193,6 +193,14 @@ describe("withHostShmSize", () => {
     expect(rewritten.options).toStrictEqual(["nosuid", "noexec", "nodev", "mode=1777"]);
   });
 
+  it("adds the size to a /dev/shm entry that carries no options at all", () => {
+    const [rewritten] = withHostShmSize(
+      [{ destination: "/dev/shm", type: "tmpfs", source: "shm" }],
+      1024,
+    );
+    expect(rewritten.options).toStrictEqual(["size=1024"]);
+  });
+
   it("leaves every other mount alone, size= included", () => {
     // /dev is a separate tmpfs holding device nodes only; 64MB is ample there.
     expect(withHostShmSize([other], 1024)).toStrictEqual([other]);
@@ -805,6 +813,27 @@ describe("buildOciConfig", () => {
       runtime: { ...baseArgs.runtime, hostMounts },
     });
     expect(config.linux.readonlyPaths.includes("/sys/kernel/security")).toBeTruthy();
+  });
+
+  it("builds both path lists from scratch when the base spec lists neither", () => {
+    const spec = fakeBaseSpec();
+    const bare = {
+      ...spec,
+      linux: { ...spec.linux, maskedPaths: undefined, readonlyPaths: undefined },
+    };
+    const config = buildOciConfig(bare, baseArgs);
+    expect(config.linux.maskedPaths).toContain("/proc/sysrq-trigger");
+    // Nothing is invented for readonlyPaths: it is the base spec plus the
+    // host-mount sweep, and here there is neither.
+    expect(config.linux.readonlyPaths).toStrictEqual([]);
+  });
+
+  it("falls back to / when the step has no workdir to run in", () => {
+    const config = buildOciConfig(fakeBaseSpec(), {
+      ...baseArgs,
+      writable: { ...baseArgs.writable, workdir: "" },
+    });
+    expect(config.process.cwd).toBe("/");
   });
 });
 

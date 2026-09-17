@@ -153,6 +153,10 @@ export interface EnsureWriteThroughTargetsExistOptions {
   execFile?: (command: string, args: string[]) => void;
 }
 
+// Untested by design: the defaults behind ensureWriteThroughTargetsExist's
+// seams, which only hand node:fs and node:child_process what the tested caller
+// decided.
+/* v8 ignore start */
 function defaultStat(path: string): StatShape {
   const s = statSync(path);
   return { uid: s.uid, gid: s.gid, mode: s.mode };
@@ -161,6 +165,7 @@ function defaultStat(path: string): StatShape {
 function defaultExecFile(command: string, args: string[]): void {
   execFileSync(command, args, { stdio: ["ignore", "ignore", "pipe"] });
 }
+/* v8 ignore stop */
 
 /** The sudo flags that run a command as uid/gid rather than as root. Numeric
  *  (`#1000`) so no passwd/group name is needed for the identity itself, though
@@ -176,9 +181,7 @@ function pathSegmentsBetween(ancestor: string, descendant: string): string[] {
   let current = descendant;
   while (current !== ancestor) {
     segments.unshift(current);
-    const parent = dirname(current);
-    if (parent === current) break; // reached filesystem root without hitting ancestor -- shouldn't happen
-    current = parent;
+    current = dirname(current);
   }
   return segments;
 }

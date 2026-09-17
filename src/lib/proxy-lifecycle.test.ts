@@ -34,6 +34,8 @@ const UNHEALTHY_STATE = JSON.stringify({
 interface Overrides {
   /** What `docker inspect` answers, or the failure it raises. */
   state?: string | Error;
+  /** Raised by `docker inspect` as-is, for a failure that is not an Error. */
+  stateThrows?: unknown;
   /** Raised by the `compose up`/`compose down`/`compose logs` call. */
   print?: Error;
   /** Limits `print` to the call whose first argument matches, so `compose up`
@@ -52,6 +54,7 @@ function fakeDocker(overrides: Overrides = {}): {
     deps: {
       captureDocker(args) {
         calls.push(args);
+        if ("stateThrows" in overrides) throw overrides.stateThrows;
         if (overrides.state instanceof Error) throw overrides.state;
         return overrides.state ?? "";
       },
@@ -155,6 +158,22 @@ describe("startSandboxProxy", () => {
       state: Object.assign(new Error("exit 1"), {
         stderr: `Error: No such object: ${CONTAINER}\n`,
       }),
+    });
+
+    await expect(startSandboxProxy(OPTIONS, deps)).rejects.toThrow();
+
+    expect(log.mock.calls).toStrictEqual([
+      ["::group::buildcage: starting sandbox proxy"],
+      ["::endgroup::"],
+    ]);
+  });
+
+  it("says nothing when the state could not be read and there is no stderr to quote", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { deps } = fakeDocker({
+      print: COMPOSE_UP_FAILED,
+      printFailsOn: "up",
+      stateThrows: "docker: command not found",
     });
 
     await expect(startSandboxProxy(OPTIONS, deps)).rejects.toThrow();

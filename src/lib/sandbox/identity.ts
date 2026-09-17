@@ -46,11 +46,11 @@ function readGroupNamesByGid(groupFile: string): Map<number, string[]> | null {
 
 /** GIDs owning any of `paths` on this host, regardless of group name.
  *  A path that doesn't exist is skipped, not an error. */
-function ownerGids(paths: string[]): Set<number> {
+function ownerGids(paths: string[], gidOf: (path: string) => number): Set<number> {
   const gids = new Set<number>();
   for (const p of paths) {
     try {
-      gids.add(statSync(p).gid);
+      gids.add(gidOf(p));
     } catch {
       // Doesn't exist on this host -- nothing to protect against here.
     }
@@ -69,6 +69,9 @@ export interface ResolveSandboxGidOptions {
   groupFile?: string;
   /** @default EXTRA_MASKED_RUNTIME_PATHS + rootlessRuntimeSocketPaths(env) -- overridable for tests. */
   runtimeSocketPaths?: string[];
+  /** @default the owning GID reported by stat -- overridable for tests, whose
+   *  outcome must not depend on who owns a file on the machine running them. */
+  gidOf?: (path: string) => number;
 }
 
 /**
@@ -83,13 +86,17 @@ export function resolveSandboxGid(
   env: NodeJS.ProcessEnv,
   options: ResolveSandboxGidOptions = {},
 ): ResolvedSandboxGid {
+  // Untested by design: the real host behind this function's seams.
+  /* v8 ignore start */
   const groupFile = options.groupFile ?? "/etc/group";
   const runtimeSocketPaths = options.runtimeSocketPaths ?? [
     ...EXTRA_MASKED_RUNTIME_PATHS,
     ...rootlessRuntimeSocketPaths(env),
   ];
+  const gidOf = options.gidOf ?? ((path: string) => statSync(path).gid);
+  /* v8 ignore stop */
   const groupNamesByGid = readGroupNamesByGid(groupFile);
-  const socketOwnerGids = ownerGids(runtimeSocketPaths);
+  const socketOwnerGids = ownerGids(runtimeSocketPaths, gidOf);
 
   const isPrivileged = (gid: number): boolean => {
     if (gid === 0) return true;

@@ -7,9 +7,13 @@ export interface OverlayRoot {
   path: string;
 }
 
+// Untested by design: the default behind determineOverlayRoots' deviceOf
+// seam, which only hands node:fs what the tested caller decided.
+/* v8 ignore start */
 function defaultDeviceOf(path: string): number {
   return statSync(path).dev;
 }
+/* v8 ignore stop */
 
 export interface DetermineOverlayRootsOptions {
   exists?: (path: string) => boolean;
