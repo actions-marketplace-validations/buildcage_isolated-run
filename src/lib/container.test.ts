@@ -182,3 +182,9 @@ describe("deriveProjectName", () => {
     }
   });
 });
+
+describe("isContainerNotFoundError on a value that is not an object", () => {
+  it("reads it as some other failure rather than a missing container", () => {
+    expect(isContainerNotFoundError("Error: No such object: buildcage")).toBe(false);
+  });
+});

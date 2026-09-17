@@ -252,4 +252,16 @@ describe("buildRestrictExample — rows that map to no action input", () => {
   });
 });
 
+describe("buildRestrictExample — a known image version", () => {
+  it("annotates the uses: line with it", () => {
+    const yaml = buildRestrictExample(
+      [{ host: "a.example.com", port: "443", ruleType: "HTTPS" }],
+      REPO,
+      "v1",
+      { actionVersion: "1.2.3" },
+    );
+    expect(yaml).toMatch(/uses: .*@v1 # 1\.2\.3/);
+  });
+});
+
 reportResults();

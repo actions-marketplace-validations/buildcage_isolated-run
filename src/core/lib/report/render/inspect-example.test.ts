@@ -334,4 +334,16 @@ describe("buildUrlRuleLines — comparisons in both directions", () => {
   });
 });
 
+describe("buildInspectRestrictExample — a known image version", () => {
+  it("annotates the uses: line with it", () => {
+    const yaml = buildInspectRestrictExample(
+      [req("GET", "https://a.example.com/x")],
+      "buildcage/isolated-run",
+      "v1",
+      { actionVersion: "1.2.3" },
+    );
+    expect(yaml).toMatch(/uses: .*@v1 # 1\.2\.3/);
+  });
+});
+
 reportResults();

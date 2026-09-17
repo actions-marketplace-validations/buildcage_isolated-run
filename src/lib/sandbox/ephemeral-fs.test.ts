@@ -168,3 +168,10 @@ describe("formatFilesystemPlanLog", () => {
     ]);
   });
 });
+
+describe("createOverlayScratchDirs — a root that slugifies to nothing", () => {
+  it("falls back to _root so the directory still has a name", () => {
+    const dirs = createOverlayScratchDirs("/scratch", [{ path: "" }], { mkdir: () => undefined });
+    expect(dirs[0].upper).toBe("/scratch/ephemeral/_root/upper");
+  });
+});
