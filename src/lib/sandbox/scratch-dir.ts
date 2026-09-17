@@ -52,18 +52,49 @@ export function parseMountsUnder(mountinfoContent: string, dir: string): string[
  * busy references, so this step itself can't hang or fail the way a
  * normal (non-lazy) unmount could.
  */
-function unmountAllUnder(dir: string): void {
+export interface ScratchDirDeps {
+  /** This process's mount table, as /proc/self/mountinfo lines. */
+  readMountinfo?: () => string;
+  /** Runs a privileged command. Throws on a non-zero exit. */
+  exec?: (command: string, args: string[]) => void;
+  /** lstat, never stat: a symlink here must not be followed. */
+  lstat?: (path: string) => { isDirectory(): boolean; uid: number; mode: number };
+  remove?: (path: string) => void;
+  /** Throws with code EEXIST if the directory is already there. */
+  mkdir?: (path: string, mode: number) => void;
+}
+
+// Untested by design: the defaults behind this module's seams, which only hand
+// node:fs and node:child_process what the tested caller decided.
+/* v8 ignore start */
+function defaultReadMountinfo(): string {
+  return readFileSync("/proc/self/mountinfo", "utf8");
+}
+
+function defaultExec(command: string, args: string[]): void {
+  execFileSync(command, args, { stdio: ["ignore", "ignore", "pipe"] });
+}
+
+function defaultRemove(path: string): void {
+  rmSync(path, { recursive: true, force: true });
+}
+
+function defaultMkdir(path: string, mode: number): void {
+  mkdirSync(path, { mode }); // no recursive: /var/tmp always exists
+}
+/* v8 ignore stop */
+
+function unmountAllUnder(dir: string, deps: ScratchDirDeps): void {
+  const { readMountinfo = defaultReadMountinfo, exec = defaultExec } = deps;
   let mountPoints;
   try {
-    mountPoints = parseMountsUnder(readFileSync("/proc/self/mountinfo", "utf8"), dir);
+    mountPoints = parseMountsUnder(readMountinfo(), dir);
   } catch {
     return;
   }
   for (const mountPoint of mountPoints) {
     try {
-      execFileSync("sudo", ["umount", "-R", "-l", mountPoint], {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
+      exec("sudo", ["umount", "-R", "-l", mountPoint]);
     } catch (e) {
       annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
     }
@@ -90,11 +121,12 @@ function unmountAllUnder(dir: string): void {
  * gone. The plain (unprivileged) rmSync above stays the fast path, since
  * it's all persistent mode -- and every unit test -- ever needs.
  */
-function removeScratchDir(dir: string): void {
+function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
+  const { exec = defaultExec, lstat = lstatSync, remove = defaultRemove } = deps;
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      rmSync(dir, { recursive: true, force: true });
+      remove(dir);
       return;
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
@@ -104,14 +136,14 @@ function removeScratchDir(dir: string): void {
         // own check. lstat, not stat, since a symlink here must not be
         // followed. Safe even for filesystem_mode: ephemeral's root-owned overlay
         // bookkeeping, since that lives inside the dir, not as the dir itself.
-        const st = lstatSync(dir);
+        const st = lstat(dir);
         if (!st.isDirectory() || st.uid !== process.getuid!()) {
           throw new SandboxError(
             `Refusing to sudo rm -rf ${dir}: not a directory owned by uid ${process.getuid!()}.`,
             "SCRATCH_DIR_UNSAFE",
           );
         }
-        execFileSync("sudo", ["-n", "rm", "-rf", dir], { stdio: ["ignore", "ignore", "pipe"] });
+        exec("sudo", ["-n", "rm", "-rf", dir]);
         return;
       }
       if (code !== "EBUSY" || attempt === maxAttempts) throw e;
@@ -133,13 +165,17 @@ function removeScratchDir(dir: string): void {
  * withScratchDir's own stale-remnant-clearing call (this isn't the current
  * run's own discard) and by every persistent-mode call.
  */
-export function cleanupScratchDir(dir: string, ephemeralRoots?: string[]): void {
+export function cleanupScratchDir(
+  dir: string,
+  ephemeralRoots?: string[],
+  deps: ScratchDirDeps = {},
+): void {
   assertUnderScratchBase(dir);
   if (ephemeralRoots && ephemeralRoots.length > 0) {
     console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`);
   }
-  unmountAllUnder(dir);
-  removeScratchDir(dir);
+  unmountAllUnder(dir, deps);
+  removeScratchDir(dir, deps);
 }
 
 /**
@@ -206,14 +242,17 @@ export function scratchDirFor(containerName: string): string {
  * Fails closed: an unexpected owner or mode is not repaired, because
  * nothing legitimate produces one.
  */
-export function ensureOwnScratchBase(base: string = SANDBOX_SCRATCH_BASE): void {
+export function ensureOwnScratchBase(
+  base: string = SANDBOX_SCRATCH_BASE,
+  { mkdir = defaultMkdir, lstat = lstatSync }: ScratchDirDeps = {},
+): void {
   try {
-    mkdirSync(base, { mode: 0o700 }); // no recursive: /var/tmp always exists
+    mkdir(base, 0o700);
     return;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
   }
-  const st = lstatSync(base); // lstat: never follows a symlink
+  const st = lstat(base); // lstat: never follows a symlink
   const uid = process.getuid!();
   if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o077) !== 0) {
     throw new SandboxError(

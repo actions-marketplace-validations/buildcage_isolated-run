@@ -326,58 +326,64 @@ function parseMountsUnder(mountinfoContent, dir) {
 	let prefix = dir.endsWith("/") ? dir : `${dir}/`;
 	return parseMountinfo(mountinfoContent).map(({ mountPoint }) => mountPoint).filter((mountPoint) => mountPoint === dir || mountPoint.startsWith(prefix)).sort((a, b) => b.length - a.length);
 }
-function unmountAllUnder(dir) {
-	let mountPoints;
+function defaultReadMountinfo() {
+	return (0, node_fs.readFileSync)("/proc/self/mountinfo", "utf8");
+}
+function defaultExec(command, args) {
+	(0, node_child_process.execFileSync)(command, args, { stdio: [
+		"ignore",
+		"ignore",
+		"pipe"
+	] });
+}
+function defaultRemove(path) {
+	(0, node_fs.rmSync)(path, {
+		recursive: !0,
+		force: !0
+	});
+}
+function unmountAllUnder(dir, deps) {
+	let { readMountinfo = defaultReadMountinfo, exec = defaultExec } = deps, mountPoints;
 	try {
-		mountPoints = parseMountsUnder((0, node_fs.readFileSync)("/proc/self/mountinfo", "utf8"), dir);
+		mountPoints = parseMountsUnder(readMountinfo(), dir);
 	} catch {
 		return;
 	}
 	for (let mountPoint of mountPoints) try {
-		(0, node_child_process.execFileSync)("sudo", [
+		exec("sudo", [
 			"umount",
 			"-R",
 			"-l",
 			mountPoint
-		], { stdio: [
-			"ignore",
-			"ignore",
-			"pipe"
-		] });
+		]);
 	} catch (e) {
 		annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
-function removeScratchDir(dir) {
+function removeScratchDir(dir, deps) {
+	let { exec = defaultExec, lstat = node_fs.lstatSync, remove = defaultRemove } = deps;
 	for (let attempt = 1; attempt <= 5; attempt++) try {
-		(0, node_fs.rmSync)(dir, {
-			recursive: !0,
-			force: !0
-		});
+		remove(dir);
 		return;
 	} catch (e) {
 		let code = e.code;
 		if (code === "EACCES") {
-			let st = (0, node_fs.lstatSync)(dir);
+			let st = lstat(dir);
 			if (!st.isDirectory() || st.uid !== process.getuid()) throw new SandboxError(`Refusing to sudo rm -rf ${dir}: not a directory owned by uid ${process.getuid()}.`, "SCRATCH_DIR_UNSAFE");
-			(0, node_child_process.execFileSync)("sudo", [
+			exec("sudo", [
 				"-n",
 				"rm",
 				"-rf",
 				dir
-			], { stdio: [
-				"ignore",
-				"ignore",
-				"pipe"
-			] });
+			]);
 			return;
 		}
 		if (code !== "EBUSY" || attempt === 5) throw e;
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
 	}
 }
-function cleanupScratchDir(dir, ephemeralRoots) {
-	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir), removeScratchDir(dir);
+function cleanupScratchDir(dir, ephemeralRoots, deps = {}) {
+	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps), removeScratchDir(dir, deps);
 }
 function assertUnderScratchBase(dir) {
 	let abs = (0, node_path.resolve)(dir);
