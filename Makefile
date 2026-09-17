@@ -39,6 +39,12 @@ test_unit_core: ## Run core library unit tests
 test_unit_sandbox: ## Run the action's own unit tests
 	@vp test run src/lib src/main
 
+# One vitest run, because each run overwrites the coverage report: split by
+# package the way the targets above are, only the last one's numbers survive.
+.PHONY: test_unit_coverage
+test_unit_coverage: ## Run every Node unit test once, with coverage
+	@vp test run src/core src/lib src/main --coverage
+
 # qjs can't execute .ts directly, so compile fresh (vp run build:qjs-test)
 # and bind-mount the output in.
 QJS_MOUNTS := \
