@@ -1,8 +1,21 @@
-import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// `docker cp` is the whole of extractCaCert's work, so it is stubbed.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
+});
+import { execFileSync } from "node:child_process";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, chmodSync: vi.fn(actual.chmodSync) };
+});
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  extractCaCert,
   writeCaTrustFiles,
   caTrustAdditions,
   OWN_CA_DESTINATION,
@@ -86,5 +99,39 @@ describe("caTrustAdditions", () => {
     expect(env.REQUESTS_CA_BUNDLE).toBeUndefined();
     expect(env.PIP_CERT).toBeUndefined();
     expect(env.SSL_CERT_FILE).toBeUndefined();
+  });
+});
+
+describe("extractCaCert", () => {
+  const containerName = "buildcage-proxy-abcd1234";
+  const destDir = "/var/tmp/buildcage-0/sandbox-abcd1234";
+
+  beforeEach(() => {
+    // mockReset restores what vi.fn(impl) was given, which here is the real
+    // chmodSync, so both need an explicit no-op stub.
+    vi.mocked(execFileSync).mockReset();
+    vi.mocked(execFileSync).mockImplementation(() => Buffer.alloc(0));
+    vi.mocked(chmodSync).mockReset();
+    vi.mocked(chmodSync).mockImplementation(() => {});
+  });
+
+  it("copies the proxy's own CA out of the running container", () => {
+    const path = extractCaCert(containerName, destDir);
+
+    expect(path).toBe(`${destDir}/proxy-ca.pem`);
+    expect(vi.mocked(execFileSync).mock.calls[0][0]).toBe("docker");
+    expect(vi.mocked(execFileSync).mock.calls[0][1]).toStrictEqual([
+      "cp",
+      `${containerName}:/opt/buildcage/ca.pem`,
+      `${destDir}/proxy-ca.pem`,
+    ]);
+  });
+
+  // The sandboxed process runs as the unprivileged runner user and has to be
+  // able to read it.
+  it("leaves the copy world-readable", () => {
+    extractCaCert(containerName, destDir);
+
+    expect(vi.mocked(chmodSync).mock.calls).toStrictEqual([[`${destDir}/proxy-ca.pem`, 0o644]]);
   });
 });
