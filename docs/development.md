@@ -55,9 +55,13 @@ make test_unit           # all of the above
 make test_unit_coverage  # every Node test in one run, with a coverage report in coverage/
 ```
 
-CI runs `make test_unit_coverage` and pastes `coverage/summary.txt` into the job summary. There are
-no thresholds: the point is to see which files no test reaches, not to gate merges on a number. The
-QuickJS run is not measured separately, since it executes the same `.test.ts` files as the Node run.
+CI runs `make test_unit_coverage` and pastes `coverage/summary.txt` into the job summary. The
+threshold is 100% on all four counters, so anything added without a test fails the run. Code that is
+deliberately not tested carries a `/* v8 ignore */` comment saying why, which keeps that decision in
+the source rather than buried in a percentage. Only two things qualify: code whose body lives
+outside the process, and the default implementation behind a seam whose callers are already tested.
+The QuickJS run is not measured separately, since it executes the same `.test.ts` files as the Node
+run.
 
 `make test_sandbox_dev` is the dev-loop end-to-end check described above; `make
 test_integration_sandbox_linux` drives `dist/main.cjs` directly for checks that don't depend on
