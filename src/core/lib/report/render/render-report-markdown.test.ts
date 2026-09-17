@@ -1,4 +1,4 @@
-import { describe, it, expect, reportResults } from "#core/lib/test/test-shim.ts";
+import { describe, it, expect } from "vitest";
 import { renderReportMarkdown } from "./render-report-markdown.ts";
 import type { GenReportParameters, UniversalReportData, InspectReportData } from "../types.ts";
 import type { TrafficEvent } from "#core/lib/log/traffic-event.ts";
@@ -46,11 +46,6 @@ const expectedRows = [
   },
 ];
 
-// test-shim's Assert interface has no doesNotMatch.
-function assertNotMatch(value: string, pattern: RegExp): void {
-  expect(pattern.test(value)).toBe(false);
-}
-
 describe("renderReportMarkdown", () => {
   const base: UniversalReportData = {
     engine: "universal",
@@ -69,7 +64,7 @@ describe("renderReportMarkdown", () => {
       { title: "Outbound Traffic Report" },
     );
     expect(md).toMatch(/^## Outbound Traffic Report\n/);
-    assertNotMatch(md, /restrict mode\)/);
+    expect(md).not.toMatch(/restrict mode\)/);
     expect(md).toMatch(/### ✅ Allowed Hosts/);
     expect(md).toMatch(/good\.com/);
   });
@@ -97,7 +92,7 @@ describe("renderReportMarkdown", () => {
       "buildcage/isolated-run",
       "v1",
     );
-    assertNotMatch(md, /incomplete/);
+    expect(md).not.toMatch(/incomplete/);
   });
 
   it("renders the audit-mode heading and Audited Hosts table, plus a restrict-mode example", () => {
@@ -126,12 +121,12 @@ describe("renderReportMarkdown", () => {
     expect(md).toMatch(
       /Reported by \[buildcage\/isolated-run\]\(https:\/\/github\.com\/buildcage\/isolated-run\)/,
     );
-    assertNotMatch(md, /GITHUB_ACTION_REPOSITORY/);
+    expect(md).not.toMatch(/GITHUB_ACTION_REPOSITORY/);
   });
 
   it("omits the Allowed Hosts table entirely when nothing passed", () => {
     const md = renderReportMarkdown(base, "buildcage/isolated-run", "v1");
-    assertNotMatch(md, /### ✅ Allowed Hosts/);
+    expect(md).not.toMatch(/### ✅ Allowed Hosts/);
   });
 
   it("shows a '(no communication)' note when nothing passed and nothing blocked", () => {
@@ -145,14 +140,14 @@ describe("renderReportMarkdown", () => {
       "buildcage/isolated-run",
       "v1",
     );
-    assertNotMatch(passedMd, /_\(no communication\)_/);
+    expect(passedMd).not.toMatch(/_\(no communication\)_/);
 
     const blockedMd = renderReportMarkdown(
       { ...base, blocked: [blockedRow], blockedCount: 1 },
       "buildcage/isolated-run",
       "v1",
     );
-    assertNotMatch(blockedMd, /_\(no communication\)_/);
+    expect(blockedMd).not.toMatch(/_\(no communication\)_/);
   });
 
   it("uses the title option verbatim, e.g. a run step's em-dash label", () => {
@@ -201,7 +196,7 @@ describe("renderReportMarkdown", () => {
       "buildcage/isolated-run",
       "v1",
     );
-    assertNotMatch(md, /Expected/);
+    expect(md).not.toMatch(/Expected/);
   });
 
   it("keeps each matched row, having no Communication details to name its host in", () => {
@@ -216,7 +211,7 @@ describe("renderReportMarkdown", () => {
     );
     expect(md).toMatch(/\| a\.sury\.org:443 \|/);
     expect(md).toMatch(/\| b\.sury\.org:443 \|/);
-    assertNotMatch(md, /hosts\)/);
+    expect(md).not.toMatch(/hosts\)/);
   });
 });
 
@@ -253,7 +248,7 @@ describe("renderReportMarkdown — inspect", () => {
   it("renders Communication details instead of the SNI footnote", () => {
     const md = renderReportMarkdown({ ...base, timeline }, "buildcage/isolated-run", "v1");
     expect(md).toMatch(/Communication details/);
-    assertNotMatch(md, /based on the Host header/);
+    expect(md).not.toMatch(/based on the Host header/);
   });
 
   it("builds the audit-mode example from the timeline, method and path included", () => {
@@ -282,9 +277,7 @@ describe("renderReportMarkdown — inspect", () => {
     expect(md).toMatch(
       /\| \\\*\.sury\.org:\\\* \(2 hosts\) \| HTTPS \| https-not-allowed \| 2 \| ✅ \|/,
     );
-    assertNotMatch(md, /a\.sury\.org/);
+    expect(md).not.toMatch(/a\.sury\.org/);
     expect(md).toMatch(/\| bad\.com:80 \|/);
   });
 });
-
-reportResults();

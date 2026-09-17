@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { describe, it, expect, reportResults } from "../test/test-shim.ts";
+import { describe, it, expect } from "vitest";
 import { createDocker, parseContainerIds, type SpawnCommand } from "./client.ts";
 
 // Arbitrary in-container path — copyFromContainer doesn't care what it
@@ -208,5 +208,3 @@ describe("createDocker readFileLines", () => {
     );
   });
 });
-
-reportResults();
