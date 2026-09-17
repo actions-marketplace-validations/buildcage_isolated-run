@@ -1,0 +1,86 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as core from "@actions/core";
+
+import type { Annotation } from "#core/lib/actions/annotation.ts";
+import { errorMessage } from "#core/lib/errors.ts";
+import { buildTrafficRecords, writeTrafficFile } from "#core/lib/report/outcome/traffic-output.ts";
+import type { Report } from "./report.ts";
+
+export function wantsTrafficArtifact(): boolean {
+  try {
+    return core.getBooleanInput("upload_traffic_artifact");
+  } catch {
+    // Unset, as in the integration/unit invocations that run this from
+    // source rather than through action.yml's own defaults.
+    return false;
+  }
+}
+
+/** Guaranteed collision-free across concurrent invocations of this action in
+ *  the same job, since containerName's own random suffix already is (see
+ *  generateContainerName) -- unlike buildcage/docker, there is no stable
+ *  builder_name-equivalent identity to name it from instead. */
+export function trafficArtifactName(containerName: string): string {
+  return `buildcage-traffic-${containerName.split("-").at(-1)}`;
+}
+
+export type UploadArtifact = (
+  name: string,
+  files: string[],
+  rootDirectory: string,
+  options: { retentionDays?: number },
+) => Promise<unknown>;
+
+/** Imported lazily so a run that asks for no artifact does not load it. */
+const uploadViaActionsArtifact: UploadArtifact = async (name, files, rootDirectory, options) => {
+  const { DefaultArtifactClient } = await import("@actions/artifact");
+  return new DefaultArtifactClient().uploadArtifact(name, files, rootDirectory, options);
+};
+
+/** `upload` is injectable so tests can assert on the arguments instead of
+ *  mocking @actions/artifact directly. */
+export interface UploadTrafficArtifactDeps {
+  upload?: UploadArtifact;
+}
+
+/**
+ * Upload the traffic JSON, when the engine produced one, and set the
+ * traffic_artifact_name output on success. Best-effort: the step's own
+ * outcome is already decided by this point, so a failed upload only warns.
+ */
+export async function uploadTrafficArtifact(
+  report: Report,
+  containerName: string,
+  annotation: Annotation,
+  { upload = uploadViaActionsArtifact }: UploadTrafficArtifactDeps = {},
+): Promise<void> {
+  if (report.engine !== "inspect") {
+    annotation.warning(
+      "upload_traffic_artifact was set, but this engine produces no traffic JSON. " +
+        "Only proxy_engine: inspect does.",
+    );
+    return;
+  }
+  const scratchDir = mkdtempSync(join(tmpdir(), "buildcage-traffic-"));
+  try {
+    const file = join(scratchDir, "traffic.json");
+    writeTrafficFile(file, buildTrafficRecords(report.timeline, report.startedAt));
+    const days = Number(core.getInput("traffic_artifact_retention_days") || "");
+    const name = trafficArtifactName(containerName);
+    await upload(name, [file], scratchDir, {
+      retentionDays: Number.isFinite(days) && days > 0 ? days : undefined,
+    });
+    console.log(`Uploaded the traffic JSON as ${name}`);
+    // Set only on confirmed success, and only here (after the sandboxed
+    // command has already exited) -- GITHUB_OUTPUT's own last-write-wins
+    // parsing means this always overrides anything the isolated command
+    // itself may have written to the same key.
+    core.setOutput("traffic_artifact_name", name);
+  } catch (e) {
+    annotation.warning(`Could not upload the traffic artifact: ${errorMessage(e)}`);
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true });
+  }
+}

@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // readActionVersion's only external call is `docker inspect` via the shared
 // client, so the client is what gets replaced here.
@@ -8,8 +11,10 @@ vi.mock("#core/lib/docker/client.ts", () => ({ createDocker: () => docker }));
 import {
   computeReportOutcome,
   readActionVersion,
+  writeReportSummary,
   type ComputeReportOutcomeOptions,
 } from "./report.ts";
+import { createAnnotation } from "#core/lib/actions/annotation.ts";
 import { annotateKnownBlocked } from "#core/lib/report/build/aggregate.ts";
 import type { GenReportParameters, UniversalReportData } from "#core/lib/report/types.ts";
 
@@ -150,5 +155,86 @@ describe("readActionVersion", () => {
       throw new Error("No such container");
     });
     expect(readActionVersion(containerName, "universal")).toBeUndefined();
+  });
+});
+
+describe("writeReportSummary", () => {
+  let scratchDir: string;
+  let exitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    scratchDir = mkdtempSync(join(tmpdir(), "buildcage-summary-"));
+    exitCode = process.exitCode;
+  });
+
+  afterEach(() => {
+    rmSync(scratchDir, { recursive: true, force: true });
+    process.exitCode = exitCode;
+  });
+
+  // A blocked connection under restrict + fail_on_blocked is the one outcome
+  // that has to reach all three destinations at once.
+  function blockedReport() {
+    return report({
+      blockedCount: 1,
+      blocked: annotateKnownBlocked(
+        [{ host: "bad.example.com", port: "443", ruleType: "HTTPS", reason: "-", count: 1 }],
+        [],
+      ),
+    });
+  }
+
+  it("writes the summary to GITHUB_STEP_SUMMARY", async () => {
+    const summaryFile = join(scratchDir, "summary.md");
+    writeFileSync(summaryFile, "");
+    vi.stubEnv("GITHUB_STEP_SUMMARY", summaryFile);
+
+    await writeReportSummary(report(), createAnnotation(true), options(), false);
+
+    expect(readFileSync(summaryFile, "utf8")).toContain("Outbound Traffic Report");
+    vi.unstubAllEnvs();
+  });
+
+  // Local/manual invocations have no step summary to write to.
+  it("falls back to stdout when there is no step summary", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubEnv("GITHUB_STEP_SUMMARY", "");
+
+    await writeReportSummary(report(), createAnnotation(false), options(), false);
+
+    expect(log.mock.calls[0][0]).toContain("Outbound Traffic Report");
+    vi.unstubAllEnvs();
+  });
+
+  it("annotates the outcome and fails the step when the outcome calls for it", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubEnv("GITHUB_STEP_SUMMARY", "");
+
+    await writeReportSummary(
+      blockedReport(),
+      createAnnotation(true),
+      options({ failOnBlocked: true }),
+      false,
+    );
+
+    expect(log.mock.calls.map(([line]) => line as string)).toContainEqual(
+      expect.stringContaining("::error::"),
+    );
+    expect(process.exitCode).toBe(1);
+    vi.unstubAllEnvs();
+  });
+
+  // GITHUB_STEP_SUMMARY is unique per step, so a later step has no way to read
+  // this step's copy back -- the mirror is what this repo's own tests read.
+  it("mirrors the summary to BUILDCAGE_RUN_DEBUG_SUMMARY_FILE when it is set", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const debugFile = join(scratchDir, "debug.md");
+    vi.stubEnv("GITHUB_STEP_SUMMARY", "");
+    vi.stubEnv("BUILDCAGE_RUN_DEBUG_SUMMARY_FILE", debugFile);
+
+    await writeReportSummary(report(), createAnnotation(false), options(), false);
+
+    expect(readFileSync(debugFile, "utf8")).toContain("Outbound Traffic Report");
+    vi.unstubAllEnvs();
   });
 });
