@@ -54,12 +54,6 @@ new class {
 	constructor() {
 		this._buffer = "";
 	}
-	/**
-	* Finds the summary file path from the environment, rejects if env var is not found or file does not exist
-	* Also checks r/w permissions.
-	*
-	* @returns step summary file path
-	*/
 	filePath() {
 		return __awaiter$6(this, void 0, void 0, function* () {
 			if (this._filePath) return this._filePath;
@@ -73,116 +67,44 @@ new class {
 			return this._filePath = pathFromEnv, this._filePath;
 		});
 	}
-	/**
-	* Wraps content in an HTML tag, adding any HTML attributes
-	*
-	* @param {string} tag HTML tag to wrap
-	* @param {string | null} content content within the tag
-	* @param {[attribute: string]: string} attrs key-value list of HTML attributes to add
-	*
-	* @returns {string} content wrapped in HTML element
-	*/
 	wrap(tag, content, attrs = {}) {
 		let htmlAttrs = Object.entries(attrs).map(([key, value]) => ` ${key}="${value}"`).join("");
 		return content ? `<${tag}${htmlAttrs}>${content}</${tag}>` : `<${tag}${htmlAttrs}>`;
 	}
-	/**
-	* Writes text in the buffer to the summary buffer file and empties buffer. Will append by default.
-	*
-	* @param {SummaryWriteOptions} [options] (optional) options for write operation
-	*
-	* @returns {Promise<Summary>} summary instance
-	*/
 	write(options) {
 		return __awaiter$6(this, void 0, void 0, function* () {
 			let overwrite = !!options?.overwrite, filePath = yield this.filePath();
 			return yield (overwrite ? writeFile : appendFile)(filePath, this._buffer, { encoding: "utf8" }), this.emptyBuffer();
 		});
 	}
-	/**
-	* Clears the summary buffer and wipes the summary file
-	*
-	* @returns {Summary} summary instance
-	*/
 	clear() {
 		return __awaiter$6(this, void 0, void 0, function* () {
 			return this.emptyBuffer().write({ overwrite: !0 });
 		});
 	}
-	/**
-	* Returns the current summary buffer as a string
-	*
-	* @returns {string} string of summary buffer
-	*/
 	stringify() {
 		return this._buffer;
 	}
-	/**
-	* If the summary buffer is empty
-	*
-	* @returns {boolen} true if the buffer is empty
-	*/
 	isEmptyBuffer() {
 		return this._buffer.length === 0;
 	}
-	/**
-	* Resets the summary buffer without writing to summary file
-	*
-	* @returns {Summary} summary instance
-	*/
 	emptyBuffer() {
 		return this._buffer = "", this;
 	}
-	/**
-	* Adds raw text to the summary buffer
-	*
-	* @param {string} text content to add
-	* @param {boolean} [addEOL=false] (optional) append an EOL to the raw text (default: false)
-	*
-	* @returns {Summary} summary instance
-	*/
 	addRaw(text, addEOL = !1) {
 		return this._buffer += text, addEOL ? this.addEOL() : this;
 	}
-	/**
-	* Adds the operating system-specific end-of-line marker to the buffer
-	*
-	* @returns {Summary} summary instance
-	*/
 	addEOL() {
 		return this.addRaw(os.EOL);
 	}
-	/**
-	* Adds an HTML codeblock to the summary buffer
-	*
-	* @param {string} code content to render within fenced code block
-	* @param {string} lang (optional) language to syntax highlight code
-	*
-	* @returns {Summary} summary instance
-	*/
 	addCodeBlock(code, lang) {
 		let attrs = Object.assign({}, lang && { lang }), element = this.wrap("pre", this.wrap("code", code), attrs);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML list to the summary buffer
-	*
-	* @param {string[]} items list of items to render
-	* @param {boolean} [ordered=false] (optional) if the rendered list should be ordered or not (default: false)
-	*
-	* @returns {Summary} summary instance
-	*/
 	addList(items, ordered = !1) {
 		let tag = ordered ? "ol" : "ul", listItems = items.map((item) => this.wrap("li", item)).join(""), element = this.wrap(tag, listItems);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML table to the summary buffer
-	*
-	* @param {SummaryTableCell[]} rows table rows
-	*
-	* @returns {Summary} summary instance
-	*/
 	addTable(rows) {
 		let tableBody = rows.map((row) => {
 			let cells = row.map((cell) => {
@@ -194,27 +116,10 @@ new class {
 		}).join(""), element = this.wrap("table", tableBody);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds a collapsable HTML details element to the summary buffer
-	*
-	* @param {string} label text for the closed state
-	* @param {string} content collapsable content
-	*
-	* @returns {Summary} summary instance
-	*/
 	addDetails(label, content) {
 		let element = this.wrap("details", this.wrap("summary", label) + content);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML image tag to the summary buffer
-	*
-	* @param {string} src path to the image you to embed
-	* @param {string} alt text description of the image
-	* @param {SummaryImageOptions} options (optional) addition image attributes
-	*
-	* @returns {Summary} summary instance
-	*/
 	addImage(src, alt, options) {
 		let { width, height } = options || {}, attrs = Object.assign(Object.assign({}, width && { width }), height && { height }), element = this.wrap("img", null, Object.assign({
 			src,
@@ -222,14 +127,6 @@ new class {
 		}, attrs));
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML section heading element
-	*
-	* @param {string} text heading text
-	* @param {number | string} [level=1] (optional) the heading level, default: 1
-	*
-	* @returns {Summary} summary instance
-	*/
 	addHeading(text, level) {
 		let tag = `h${level}`, allowedTag = [
 			"h1",
@@ -241,44 +138,18 @@ new class {
 		].includes(tag) ? tag : "h1", element = this.wrap(allowedTag, text);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML thematic break (<hr>) to the summary buffer
-	*
-	* @returns {Summary} summary instance
-	*/
 	addSeparator() {
 		let element = this.wrap("hr", null);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML line break (<br>) to the summary buffer
-	*
-	* @returns {Summary} summary instance
-	*/
 	addBreak() {
 		let element = this.wrap("br", null);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML blockquote to the summary buffer
-	*
-	* @param {string} text quote text
-	* @param {string} cite (optional) citation url
-	*
-	* @returns {Summary} summary instance
-	*/
 	addQuote(text, cite) {
 		let attrs = Object.assign({}, cite && { cite }), element = this.wrap("blockquote", text, attrs);
 		return this.addRaw(element).addEOL();
 	}
-	/**
-	* Adds an HTML anchor tag to the summary buffer
-	*
-	* @param {string} text link text/content
-	* @param {string} href hyperlink
-	*
-	* @returns {Summary} summary instance
-	*/
 	addLink(text, href) {
 		let element = this.wrap("a", text, { href });
 		return this.addRaw(element).addEOL();
@@ -286,28 +157,15 @@ new class {
 }();
 const { chmod, copyFile, lstat, mkdir, open, readdir, rename, rm, rmdir, stat, symlink, unlink } = fs.promises;
 process.platform, fs.constants.O_RDONLY, process.platform, events.EventEmitter, events.EventEmitter, os.default.platform(), os.default.arch();
-/**
-* The code to exit an action
-*/
 var ExitCode;
 (function(ExitCode) {
-	/**
-	* A code indicating that the action was a failure
-	*/
 	ExitCode[ExitCode.Success = 0] = "Success", ExitCode[ExitCode.Failure = 1] = "Failure";
 })(ExitCode ||= {});
-/**
-* Gets the value of an state set by this action's main execution.
-*
-* @param     name     name of the state to get
-* @returns   string
-*/
 function getState(name) {
 	return process.env[`STATE_${name}`] || "";
 }
 //#endregion
 //#region src/core/lib/docker/args.ts
-/** Build the `docker compose ... down` argv — see buildComposeUpArgs above. */
 function buildComposeDownArgs({ composeFile, projectName }) {
 	return [
 		"compose",
@@ -318,14 +176,6 @@ function buildComposeDownArgs({ composeFile, projectName }) {
 		"down"
 	];
 }
-/**
-* Turns a caught `docker` invocation error into an actionable message,
-* pointing at the runner requirement instead of surfacing execFileSync's
-* opaque "Command failed: docker ...args..." text. Deliberately doesn't
-* echo `e.message` when stderr was inherited (already visible live in the
-* Actions log) — only captured stderr (e.g. from a piped call) is included,
-* since otherwise nothing points the reader back to it.
-*/
 function describeDockerFailure(e, { operation = "docker", env = process.env, exists = node_fs.existsSync } = {}) {
 	let err = e && typeof e == "object" ? e : {}, slimNote = isLikelySlimRunner(env, exists) ? " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\") — these ship a Docker client with no daemon and are not supported for this action." : "", whatHappened;
 	if (err.code === "ENOENT") whatHappened = `The "docker" command was not found on this runner's PATH while running ${operation}.`;
@@ -335,42 +185,17 @@ function describeDockerFailure(e, { operation = "docker", env = process.env, exi
 	}
 	return `${whatHappened}${slimNote} Buildcage requires a working Docker installation (client and daemon) on the runner, on Docker Engine 25.0 or later with Compose v2.20.2 or later. Lightweight runner images such as GitHub-hosted "ubuntu-slim" ship a Docker client but no daemon and are not supported for this action — use "ubuntu-latest" (or another runner with a full Docker install) instead. See README.md and docs/security.md for details.`;
 }
-/**
-* Best-effort detection of GitHub's container-based hosted runner images
-* (currently: ubuntu-slim) — these run jobs inside a container rather than
-* a dedicated VM, so unlike VM-based ubuntu-latest/22.04/24.04/26.04 they
-* ship a Docker client with no daemon.
-*
-* Not an official/documented API: ImageOS is hardcoded to "Linux" (vs.
-* "ubuntu24" etc. on VM images) and /run/.containerenv is baked into the
-* image at build time by GitHub's own Dockerfile
-* (github.com/actions/runner-images/blob/main/images/ubuntu-slim/Dockerfile).
-* Both signals could change without notice — failing to detect just falls
-* back to the generic message in describeDockerFailure, so this is safe to
-* get wrong.
-*/
 function isLikelySlimRunner(_env = process.env, _exists = node_fs.existsSync) {
 	return _env.ImageOS === "Linux" && _exists("/run/.containerenv");
 }
 //#endregion
 //#region src/core/lib/errors.ts
-/**
-* Base class for an action's own "intentional" errors — a caught failure
-* whose message is safe to print directly via ::error::, as opposed to an
-* unexpected one. A top-level catch checks `instanceof ActionError`.
-* `name` is derived from `new.target`, so a subclass needs no constructor
-* of its own to get its own name.
-*/
 var ActionError = class extends Error {
 	code;
 	constructor(message, code) {
 		super(message), this.name = new.target.name, this.code = code;
 	}
 };
-/**
-* Safely extract a message from a caught value of unknown shape — a plain
-* `Error` most of the time, but `catch` doesn't guarantee that.
-*/
 function errorMessage(e) {
 	return e instanceof Error ? e.message : String(e);
 }
@@ -379,53 +204,24 @@ function errorMessage(e) {
 var SandboxError = class extends ActionError {};
 //#endregion
 //#region src/lib/container.ts
-/**
-* A container name read back from GITHUB_STATE can differ from the one this
-* action saved there, since the sandboxed command can overwrite it. Kept
-* next to generateContainerName so the two can't drift apart.
-*/
 const CONTAINER_NAME_PATTERN = /^buildcage-proxy-[0-9a-f]{8}$/;
 function isValidContainerName(name) {
 	return CONTAINER_NAME_PATTERN.test(name);
 }
-/** Label carrying the identity of the step that started the container. */
 const OWNER_TOKEN_VARS = [
 	"GITHUB_RUN_ID",
 	"GITHUB_RUN_ATTEMPT",
 	"GITHUB_JOB",
 	"GITHUB_ACTION"
 ];
-/**
-* Identifies the step that started a proxy container. The post step compares
-* it against the container's own OWNER_LABEL so it only tears down what this
-* step started -- a well-formed container name proves nothing on its own,
-* since the isolated command can write one into GITHUB_STATE.
-*
-* Empty when the environment isn't a real Actions step (this repo's own
-* integration tests and `make setup_sandbox_dev` drive dist/main.cjs
-* directly). Those containers carry an empty label and so still match their
-* own post step, while a container started by a real step never does: its
-* label is non-empty, so an empty token fails the comparison rather than
-* passing it.
-*/
 function ownerToken(env) {
 	let values = OWNER_TOKEN_VARS.map((name) => env[name]);
 	return values.every(Boolean) ? values.join("/") : "";
 }
-/**
-* Distinguishes "this container doesn't exist" (docker's own wording, e.g.
-* `no such object`) from "docker itself is unusable on this runner" — both
-* phrasings are matched for resilience across docker CLI versions.
-*/
 function isContainerNotFoundError(e) {
 	let err = e && typeof e == "object" ? e : {}, text = `${err.stderr ?? ""} ${err.message ?? ""}`.toLowerCase();
 	return text.includes("no such object") || text.includes("no such container");
 }
-/**
-* The identity of the step that started this container (OWNER_LABEL), or
-* null when no such container exists. An unlabelled container reads as an
-* empty string, which is also what ownerToken gives outside Actions.
-*/
 function readContainerOwner(containerName, { exec = node_child_process.execFileSync } = {}) {
 	let out;
 	try {
@@ -454,14 +250,6 @@ function readContainerOwner(containerName, { exec = node_child_process.execFileS
 }
 //#endregion
 //#region src/lib/sandbox/mountinfo.ts
-/**
-* Pure: extract {mountPoint, fsType} for every line of raw
-* /proc/self/mountinfo content. Format (space-separated fields):
-*   ID PARENT-ID MAJOR:MINOR ROOT MOUNT-POINT OPTIONS [OPT-FIELDS...] - FSTYPE SOURCE SUPER-OPTIONS
-* The mount point is always field 5 (index 4); the filesystem type is
-* always the field right after the literal "-" separator, regardless of
-* how many optional fields precede it.
-*/
 function parseMountinfo(mountinfoContent) {
 	return mountinfoContent.split("\n").filter(Boolean).map((line) => {
 		let fields = line.split(" "), dashIndex = fields.indexOf("-");
@@ -471,46 +259,16 @@ function parseMountinfo(mountinfoContent) {
 		};
 	});
 }
-/**
-* Undo the octal escapes the kernel writes for the four characters that
-* would otherwise be unreadable in a space-separated table: space (\040),
-* tab (\011), newline (\012) and backslash (\134). A mount point left
-* escaped names a path that does not exist, so runc ignores the
-* readonlyPaths entry built from it and that mount stays writable.
-*
-* One left-to-right pass, which is what keeps a path that really contains a
-* backslash correct: the kernel writes it as \134, so the text following an
-* escape is never rescanned as one.
-*/
 function unescapeField(field) {
 	return (field ?? "").replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
 }
-/* v8 ignore stop */
 //#endregion
 //#region src/lib/sandbox/scratch-dir.ts
 const SANDBOX_SCRATCH_BASE = `/var/tmp/buildcage-${process.getuid()}`;
-/**
-* Pure: mount points from raw /proc/self/mountinfo content that are
-* nested under `dir` (including `dir` itself), deepest-path-first so a
-* caller can safely unmount children before their parents.
-*/
 function parseMountsUnder(mountinfoContent, dir) {
 	let prefix = dir.endsWith("/") ? dir : `${dir}/`;
 	return parseMountinfo(mountinfoContent).map(({ mountPoint }) => mountPoint).filter((mountPoint) => mountPoint === dir || mountPoint.startsWith(prefix)).sort((a, b) => b.length - a.length);
 }
-/**
-* Force-detaches any mount points still nested under `dir` before it's
-* recursively deleted. This is the safety net for rootfsBindDir (a
-* `mount --rbind /` of the entire host filesystem — see main.ts) surviving
-* past run-isolated.sh's own cleanup trap: if that trap never runs (e.g.
-* run-isolated.sh itself is SIGKILL'd, which bypasses traps entirely) or
-* its `umount -R` fails (EBUSY), a plain recursive delete of `dir` would
-* otherwise walk straight through the still-live bind-mount and delete
-* the real files on the host it points at, not a sandboxed copy. `-l`
-* (lazy) detaches each mount from the namespace immediately regardless of
-* busy references, so this step itself can't hang or fail the way a
-* normal (non-lazy) unmount could.
-*/
 function unmountAllUnder(dir) {
 	let mountPoints;
 	try {
@@ -533,26 +291,6 @@ function unmountAllUnder(dir) {
 		console.log(`::warning::Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
-/**
-* Removes the scratch dir, retrying on EBUSY. A lazy unmount (see
-* unmountAllUnder) detaches a mount from the path-resolution tree
-* immediately -- it stops appearing in /proc/self/mountinfo right away --
-* but the kernel's underlying teardown of that now-orphaned mount can
-* still lag behind by a short, bounded window, which can make a
-* directory rmSync is about to delete spuriously report EBUSY even
-* though it's no longer listed as a mountpoint at all. Resolves on the
-* very next attempt after a brief wait.
-*
-* Falls back to `sudo rm -rf` on EACCES: filesystem_mode: ephemeral's overlay
-* roots (see ephemeral-fs.ts's createOverlayScratchDirs) are mounted by
-* runc running as root, and the kernel's own overlayfs implementation
-* writes bookkeeping content directly into each root's `work` dir while
-* mounted (notably a "work/work" subdirectory used for atomic rename
-* during copy-up) -- content that stays on disk, root-owned and not
-* traversable by the unprivileged runner user, once the mount itself is
-* gone. The plain (unprivileged) rmSync above stays the fast path, since
-* it's all persistent mode -- and every unit test -- ever needs.
-*/
 function removeScratchDir(dir) {
 	for (let attempt = 1; attempt <= 5; attempt++) try {
 		(0, node_fs.rmSync)(dir, {
@@ -581,78 +319,24 @@ function removeScratchDir(dir) {
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
 	}
 }
-/**
-* Force-detach anything still mounted under `dir` (the rootfs bind-mount
-* safety net — see unmountAllUnder) and then recursively remove it. Exported
-* so post.ts can reclaim a scratch dir orphaned by a hard kill that bypassed
-* withScratchDir's own finally. No-ops safely when `dir` doesn't exist.
-*
-* `ephemeralRoots`, when given, is filesystem_mode: ephemeral's own already-folded
-* overlay-root paths (see ephemeral-fs.ts's determineOverlayRoots) -- logged
-* here, right before the upper/work dirs holding those writes are deleted,
-* so there's a visible record of what was discarded. Omitted by
-* withScratchDir's own stale-remnant-clearing call (this isn't the current
-* run's own discard) and by every persistent-mode call.
-*/
 function cleanupScratchDir(dir, ephemeralRoots) {
 	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir), removeScratchDir(dir);
 }
-/**
-* Path-shape gate for every privileged operation below: `resolve` collapses
-* any `..` first, so a traversal outside the scratch base is caught before
-* reaching `sudo umount -R -l`. Placed in cleanupScratchDir rather than
-* removeScratchDir since unmountAllUnder runs first and is itself
-* privileged.
-*
-* Accepts both naming schemes withScratchDir produces: scratchDirFor's
-* deterministic `sandbox-<8 hex>` and mkdtemp's random `sandbox-XXXXXX`
-* (used in tests).
-*/
 function assertUnderScratchBase(dir) {
 	let abs = (0, node_path.resolve)(dir);
 	if ((0, node_path.dirname)(abs) !== SANDBOX_SCRATCH_BASE || !/^sandbox-[A-Za-z0-9]+$/.test((0, node_path.basename)(abs))) throw new SandboxError(`Refusing to clean up ${JSON.stringify(dir)}: not a scratch dir under ${SANDBOX_SCRATCH_BASE}.`, "SCRATCH_DIR_OUT_OF_BASE");
 }
-/**
-* Absolute path of the scratch dir for a given proxy container, derived
-* deterministically from `containerName` (the `buildcage-proxy-` prefix
-* swapped for `sandbox-`, under SANDBOX_SCRATCH_BASE). Lets the post step
-* reconstruct and reclaim the exact same directory from `STATE_container_name`
-* alone.
-*/
 function scratchDirFor(containerName) {
 	if (!isValidContainerName(containerName)) throw new SandboxError(`Refusing to derive a scratch dir from container name ${JSON.stringify(containerName)}.`, "CONTAINER_NAME_INVALID");
 	return (0, node_path.join)(SANDBOX_SCRATCH_BASE, containerName.replace(/^buildcage-proxy-/, "sandbox-"));
 }
 //#endregion
 //#region src/core/lib/docker/compose-project-name.ts
-/**
-* An explicit, deterministic Compose project name, so concurrent
-* `up`/`down`/`ps` from different steps in the same job never collide on
-* Compose's shared, directory-derived default.
-*
-* Hashed rather than used verbatim: Compose project names are constrained
-* to `^[a-z0-9][a-z0-9_-]*$`, but the input can be a wider-charset
-* user-supplied `builder_name` — a hex digest is always in-charset
-* regardless, so this never needs to validate its input.
-*/
 function deriveProjectName(containerName) {
 	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
 }
 //#endregion
 //#region src/lib/post-state.ts
-/**
-* Validates the GITHUB_STATE values post.ts acts on before they reach a
-* path, a sudo call, or a log line. Nothing read back from state is trusted
-* at face value, since the sandboxed command can overwrite it.
-*
-* projectName isn't one of the inputs: it's a pure function of
-* containerName, so it's derived here instead of being read from state.
-*
-* A missing containerName is the ordinary case (main.ts was never reached)
-* and yields null with no problems. An invalid one is reported and also
-* yields null: the only path derivable from it is one this action can't
-* confirm it wrote, so no cleanup runs at all.
-*/
 function resolvePostState(state) {
 	let problems = [], { containerName, ephemeralRoots } = state;
 	if (!containerName) return {
@@ -689,20 +373,6 @@ const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("
 	ephemeralRoots: getState("ephemeral_overlay_roots")
 });
 for (let problem of problems) console.log(`::error::run post-cleanup: ${problem}`);
-/**
-* A name this action could have generated isn't proof that this step
-* generated it: the isolated command can name a concurrent Buildcage step's
-* container just as easily as a malformed one. What the container itself
-* records about the step that started it is what decides.
-*
-* No container behind the name leaves nothing to protect -- main.ts starts
-* the proxy before the scratch dir and stops it after, so a live sandbox
-* always has one, and anything left under that name is a dead run's
-* leftovers. Reclaiming those is what this fallback exists for.
-*
-* Deliberately not caught: if docker can't answer, ownership can't be
-* established and nothing should be torn down.
-*/
 function startedByThisStep(containerName) {
 	let owner = readContainerOwner(containerName);
 	return owner === null || owner === ownerToken(process.env);

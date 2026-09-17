@@ -33,10 +33,11 @@ function settingsFor(input) {
 const baseOutput = {
   format: "esm",
   codeSplitting: false,
+  comments: false,
   minify: {
     compress: true,
     mangle: false,
-    codegen: { removeWhitespace: false, legalComments: "none" },
+    codegen: { removeWhitespace: false },
   },
 };
 
