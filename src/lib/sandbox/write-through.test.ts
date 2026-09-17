@@ -314,3 +314,39 @@ describe("removeCreatedDirsIfEmpty", () => {
     expect(execFile).not.toHaveBeenCalled();
   });
 });
+
+describe("ensureWriteThroughTargetsExist — nothing to create it under", () => {
+  const OWNED_DIR = { uid: 1000, gid: 1000, mode: 0o40755 };
+
+  it("rolls back and refuses when no ancestor exists at all", () => {
+    const execFile = vi.fn();
+    expect(() =>
+      ensureWriteThroughTargetsExist(["/a/b/c"], ENV, { exists: () => false, execFile }),
+    ).toThrow(WriteThroughTargetUncreatableError);
+  });
+
+  // The message carries whatever mkdir failed with, and sudo can fail with
+  // something that is not an Error.
+  it("wraps a non-Error failure from mkdir", () => {
+    const execFile = vi.fn(() => {
+      throw "sudo: a password is required";
+    });
+    expect(() =>
+      ensureWriteThroughTargetsExist(["/a/b"], ENV, {
+        exists: (path) => path === "/a",
+        stat: () => OWNED_DIR,
+        execFile,
+      }),
+    ).toThrow(/a password is required/);
+  });
+});
+
+describe("resolveWriteThroughEntry — a tilde with no HOME to expand to", () => {
+  // The empty fallback leaves a relative path, which then resolves against the
+  // workspace like any other. What matters is that "undefined" never lands in it.
+  it("resolves the remainder rather than putting undefined in the path", () => {
+    const resolved = resolveWriteThroughEntry("~/cache", { ...ENV, HOME: undefined });
+    expect(resolved).not.toContain("undefined");
+    expect(resolved.endsWith("/cache")).toBe(true);
+  });
+});

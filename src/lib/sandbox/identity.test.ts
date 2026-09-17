@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { writeFileSync, statSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveSandboxGid } from "./identity.ts";
@@ -38,23 +38,58 @@ describe("resolveSandboxGid", () => {
   it("flags a GID as privileged when it owns a runtime socket, even under a non-standard group name", () => {
     withScratchDir((dir) => {
       const groupFile = join(dir, "group");
-      const fakeSocket = join(dir, "fake.sock");
-      writeFileSync(fakeSocket, "");
-      // Read back the real owning GID (file group inheritance is
-      // platform-dependent) and give it a non-standard name, so the
-      // substitution can only be explained by socket ownership, not the
-      // name list.
-      const ownerGid = statSync(fakeSocket).gid;
-      writeFileSync(groupFile, `not-a-known-name:x:${ownerGid}:\nnogroup:x:65534:\n`);
+      // A non-standard name, so the substitution can only be explained by
+      // socket ownership and not by the name list.
+      writeFileSync(groupFile, "not-a-known-name:x:1234:\nnogroup:x:65534:\n");
       const result = resolveSandboxGid(
-        ownerGid,
+        1234,
+        {},
+        { groupFile, runtimeSocketPaths: ["/run/fake.sock"], gidOf: () => 1234 },
+      );
+      expect(result).toStrictEqual({ gid: 65534, substitutedFrom: 1234 });
+    });
+  });
+
+  it("skips a runtime socket path that doesn't exist rather than failing", () => {
+    withScratchDir((dir) => {
+      const groupFile = join(dir, "group");
+      writeFileSync(groupFile, "runner:x:1000:\n");
+      const result = resolveSandboxGid(
+        1000,
         {},
         {
           groupFile,
-          runtimeSocketPaths: [fakeSocket],
+          runtimeSocketPaths: ["/run/gone.sock"],
+          gidOf: () => {
+            throw new Error("ENOENT");
+          },
         },
       );
-      expect(result).toStrictEqual({ gid: 65534, substitutedFrom: ownerGid });
+      expect(result).toStrictEqual({ gid: 1000 });
+    });
+  });
+
+  it("ignores group file lines with no name or no numeric GID", () => {
+    withScratchDir((dir) => {
+      const groupFile = join(dir, "group");
+      writeFileSync(
+        groupFile,
+        ["# a comment", "", ":x:1000:", "docker:x:not-a-number:", "docker:x:1000:"].join("\n") +
+          "\n",
+      );
+      // The only line that parses puts docker on 1000, so a GID that the
+      // malformed lines would also have claimed still resolves from that one.
+      const result = resolveSandboxGid(1000, {}, { groupFile, runtimeSocketPaths: [] });
+      expect(result).toStrictEqual({ gid: 65534, substitutedFrom: 1000 });
+    });
+  });
+
+  it("moves on to nobody when the group file has no nogroup", () => {
+    withScratchDir((dir) => {
+      const groupFile = join(dir, "group");
+      writeFileSync(groupFile, "docker:x:999:\nnobody:x:65500:\n");
+      const result = resolveSandboxGid(999, {}, { groupFile, runtimeSocketPaths: [] });
+      expect(result).toStrictEqual({ gid: 65500, substitutedFrom: 999 });
     });
   });
 

@@ -397,6 +397,20 @@ describe("resolveFilesystemPlan", () => {
     }
   });
 
+  it("wraps any other pre-creation failure as INVALID_WRITE_THROUGH_PATH", () => {
+    expect.assertions(2);
+    try {
+      resolveFilesystemPlan("ephemeral", "./dist", ENV, {
+        exists: () => {
+          throw new Error("EACCES: permission denied");
+        },
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(SandboxError);
+      expect((err as SandboxError).code).toBe("INVALID_WRITE_THROUGH_PATH");
+    }
+  });
+
   it("wraps an unsupported $VAR in write_through: as INVALID_WRITE_THROUGH_PATH", () => {
     expect.assertions(2);
     try {

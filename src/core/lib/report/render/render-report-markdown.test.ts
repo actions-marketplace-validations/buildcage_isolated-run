@@ -186,6 +186,15 @@ describe("renderReportMarkdown", () => {
     expect(md).toMatch(/\| Host \| Rule \| Reason \| Count \| Expected \|/);
   });
 
+  it("separates the two tables when a run has both allowed and blocked hosts", () => {
+    const md = renderReportMarkdown(
+      { ...base, passed: [allowedRow], blocked: [blockedRow], blockedCount: 1 },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    expect(md).toMatch(/good\.com[\s\S]*\n\n### 🚫 Blocked Hosts/);
+  });
+
   it("omits the Expected column when known_blocked_rules is not set", () => {
     const md = renderReportMarkdown(
       { ...base, blocked: [blockedRow] },
