@@ -1,3 +1,4 @@
+import { annotate } from "#core/lib/actions/annotation.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { caTrustAdditions, type CaTrustFiles } from "./ca-trust.ts";
@@ -84,8 +85,8 @@ export function resolveSandboxEnv(
     else resolved[key] = value;
   }
   if (skipped.length > 0) {
-    console.log(
-      `::warning::Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`,
+    annotate.warning(
+      `Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`,
     );
   }
   return resolved;

@@ -1,11 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import {
-  startSandboxProxy,
-  stopSandboxProxy,
-  withGroup,
-  type ProxyLifecycleDeps,
-} from "./proxy-lifecycle.ts";
+import { startSandboxProxy, stopSandboxProxy, type ProxyLifecycleDeps } from "./proxy-lifecycle.ts";
 import { SandboxError } from "./errors.ts";
 import { createAnnotation } from "#core/lib/actions/annotation.ts";
 import {
@@ -69,29 +64,6 @@ function fakeDocker(overrides: Overrides = {}): {
 }
 
 const COMPOSE_UP_FAILED = Object.assign(new Error("exit 1"), { status: 1, stderr: "" });
-
-describe("withGroup", () => {
-  it("closes the group even when the body throws", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    await expect(
-      withGroup("buildcage: doing something", () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-
-    expect(log.mock.calls).toStrictEqual([
-      ["::group::buildcage: doing something"],
-      ["::endgroup::"],
-    ]);
-  });
-
-  it("returns what the body resolves to", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    await expect(withGroup("label", () => Promise.resolve(7))).resolves.toBe(7);
-  });
-});
 
 describe("startSandboxProxy", () => {
   it("brings the container up with the resolved pull policy", async () => {

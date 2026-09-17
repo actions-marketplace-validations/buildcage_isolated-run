@@ -17,6 +17,7 @@ import {
   parseRulesOrThrow,
 } from "#core/lib/acl/rules.ts";
 import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
+import { annotate } from "#core/lib/actions/annotation.ts";
 import { SandboxError } from "./errors.ts";
 import { resolveProxyEngine, type ProxyEngine } from "./engine.ts";
 import { isAtOrUnder } from "./sandbox/paths.ts";
@@ -64,8 +65,8 @@ export function resolveWriteThroughInput({
     );
   }
   if (!writeThrough.trim() && writable.trim()) {
-    console.log(
-      "::notice::writable: is now called write_through:; writable: still works, but consider updating to write_through:.",
+    annotate.notice(
+      "writable: is now called write_through:; writable: still works, but consider updating to write_through:.",
     );
     return writable;
   }

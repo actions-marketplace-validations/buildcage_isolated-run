@@ -178,6 +178,26 @@ function buildComposeDownArgs({ composeFile, projectName }) {
 	];
 }
 //#endregion
+//#region src/core/lib/actions/annotation.ts
+function createAnnotation(enabled) {
+	return enabled ? {
+		notice(message) {
+			console.log(`::notice::${message}`);
+		},
+		warning(message) {
+			console.log(`::warning::${message}`);
+		},
+		error(message) {
+			console.log(`::error::${message}`);
+		}
+	} : {
+		notice() {},
+		warning() {},
+		error() {}
+	};
+}
+const annotate = createAnnotation(!0);
+//#endregion
 //#region src/core/lib/errors.ts
 var ActionError = class extends Error {
 	code;
@@ -325,7 +345,7 @@ function unmountAllUnder(dir) {
 			"pipe"
 		] });
 	} catch (e) {
-		console.log(`::warning::Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+		annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
 function removeScratchDir(dir) {
@@ -375,14 +395,14 @@ function startedByThisStep(containerName, env, readOwner) {
 }
 function planPostCleanup(state, env, { readOwner = readContainerOwner, fileExists = node_fs.existsSync, removeScratchDir = cleanupScratchDir } = {}) {
 	let { targets, problems } = resolvePostState(state);
-	for (let problem of problems) console.log(`::error::run post-cleanup: ${problem}`);
+	for (let problem of problems) annotate.error(`run post-cleanup: ${problem}`);
 	if (!targets) return null;
-	if (!startedByThisStep(targets.containerName, env, readOwner)) return console.log("::error::run post-cleanup: the proxy container named in GITHUB_STATE was started by a different step. Skipping all post-step cleanup: tearing it down would stop that step's proxy and delete its sandbox scratch directory."), null;
+	if (!startedByThisStep(targets.containerName, env, readOwner)) return annotate.error("run post-cleanup: the proxy container named in GITHUB_STATE was started by a different step. Skipping all post-step cleanup: tearing it down would stop that step's proxy and delete its sandbox scratch directory."), null;
 	try {
 		let scratchDir = scratchDirFor(targets.containerName);
 		fileExists(scratchDir) && removeScratchDir(scratchDir, targets.ephemeralRoots);
 	} catch (e) {
-		console.log(`::warning::run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
+		annotate.warning(`run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
 	}
 	return targets;
 }
