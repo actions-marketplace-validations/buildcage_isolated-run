@@ -1,6 +1,22 @@
-import { describe, it, expect } from "vitest";
-import { readFileSync, statSync } from "node:fs";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+
+// buildOciConfig probes the host three ways: existsSync for setpriv, statfsSync
+// for /dev/shm's real size, and readFileSync for /proc/*/limits. Left real, the
+// answers differ between a Linux runner and a macOS dev machine, and the suite
+// silently tests something different on each.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    existsSync: vi.fn(actual.existsSync),
+    statfsSync: vi.fn(actual.statfsSync),
+    readFileSync: vi.fn(actual.readFileSync),
+  };
+});
+import { existsSync, statfsSync, readFileSync, statSync } from "node:fs";
 import { hostname } from "node:os";
+
+const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
 
 import {
   writeRunScript,
@@ -186,6 +202,48 @@ describe("withHostShmSize", () => {
 // A minimal stand-in for what `runc spec` actually produces (see
 // runc-bootstrap.ts's generateBaseOciSpec) — only the fields buildOciConfig
 // reads/overrides are included.
+const TMPFS_MAGIC = 0x01021994;
+const SHM_BYTES = 4 * 1024 * 1024 * 1024;
+const PROC_LIMITS = [
+  "Limit                     Soft Limit           Hard Limit           Units",
+  "Max open files            65536                65536                files",
+].join("\n");
+
+/**
+ * Answers the three host probes as a GitHub-hosted Linux runner would, leaving
+ * every other path to the real filesystem so the scratch-dir writes still work.
+ * `absent` drops a probe's answer, which is what a non-Linux host looks like.
+ */
+function pinHostProbes({ absent = [] }: { absent?: ("setpriv" | "shm" | "nofile")[] } = {}) {
+  vi.mocked(existsSync).mockImplementation(
+    (p) => !absent.includes("setpriv") && p === "/usr/bin/setpriv",
+  );
+  vi.mocked(statfsSync).mockImplementation(((p: string) => {
+    if (p === "/dev/shm" && !absent.includes("shm")) {
+      return { type: TMPFS_MAGIC, bsize: 4096, blocks: SHM_BYTES / 4096 };
+    }
+    throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+  }) as unknown as typeof statfsSync);
+  vi.mocked(readFileSync).mockImplementation(((p: string, enc: BufferEncoding) => {
+    if (typeof p === "string" && p.startsWith("/proc/")) {
+      if (absent.includes("nofile")) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return p === "/proc/sys/fs/nr_open" ? "1073741816\n" : PROC_LIMITS;
+    }
+    return realFs.readFileSync(p, enc);
+  }) as typeof readFileSync);
+}
+
+function resetHostProbes() {
+  vi.mocked(existsSync).mockReset();
+  vi.mocked(statfsSync).mockReset();
+  vi.mocked(readFileSync).mockReset();
+}
+
+// Every buildOciConfig case runs against the same pinned host, so a case only
+// has to say so when it wants a different one.
+beforeEach(() => pinHostProbes());
+afterEach(resetHostProbes);
+
 function fakeBaseSpec() {
   return {
     ociVersion: "1.0.2",
@@ -263,22 +321,19 @@ describe("buildOciConfig", () => {
     expect(config.process.noNewPrivileges).toBe(true);
   });
 
-  it("replaces runc's 1024-file default with a real RLIMIT_NOFILE, or none at all", () => {
+  it("replaces runc's 1024-file default with the host's own RLIMIT_NOFILE", () => {
     const config = buildOciConfig(fakeBaseSpec(), baseArgs);
-    const rlimits = config.process.rlimits as
-      | { type: string; soft: number; hard: number }[]
-      | undefined;
-    if (rlimits === undefined) {
-      // No /proc/self/limits to read, so the unit tests are on a non-Linux
-      // machine. runc reads config.json, so the key has to be gone from the
-      // serialised form, not merely undefined on the object.
-      expect(JSON.parse(JSON.stringify(config)).process).not.toHaveProperty("rlimits");
-      return;
-    }
-    expect(rlimits).toStrictEqual([
-      { type: "RLIMIT_NOFILE", soft: expect.any(Number), hard: expect.any(Number) },
+    expect(config.process.rlimits).toStrictEqual([
+      { type: "RLIMIT_NOFILE", soft: 65536, hard: 65536 },
     ]);
-    expect(rlimits[0].soft).not.toBe(1024);
+  });
+
+  // runc reads config.json, so the key has to be gone from the serialised form,
+  // not merely undefined on the object.
+  it("drops rlimits entirely when the host exposes no limits to read", () => {
+    pinHostProbes({ absent: ["nofile"] });
+    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    expect(JSON.parse(JSON.stringify(config)).process).not.toHaveProperty("rlimits");
   });
 
   it('names the sandbox after the runner instead of runc\'s default "runc"', () => {
@@ -286,10 +341,43 @@ describe("buildOciConfig", () => {
     expect(config.hostname).toBe(hostname());
   });
 
-  it("resizes /dev/shm away from runc's 64MB container default", () => {
+  it("resizes /dev/shm to the host's own, away from runc's 64MB container default", () => {
     const config = buildOciConfig(fakeBaseSpec(), baseArgs);
     const shm = config.mounts.find((m) => m.destination === "/dev/shm");
     expect(shm?.options).not.toContain("size=65536k");
+    expect(shm?.options).toContain(`size=${SHM_BYTES}`);
+  });
+
+  // Where /dev/shm is a plain directory rather than a mount of its own, statfs
+  // answers for the containing filesystem, and sizing a tmpfs to a whole disk
+  // would let a step exhaust the host's memory.
+  it("leaves /dev/shm unsized when the host has no tmpfs mounted there", () => {
+    pinHostProbes({ absent: ["shm"] });
+    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
+    expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
+  });
+
+  it("leaves /dev/shm unsized when statfs answers for a filesystem that is not tmpfs", () => {
+    vi.mocked(statfsSync).mockImplementation((() => ({
+      type: 0xef53,
+      bsize: 4096,
+      blocks: 1e9,
+    })) as unknown as typeof statfsSync);
+    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
+    expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
+  });
+
+  it("leaves /dev/shm unsized when the reported size is not a usable number", () => {
+    vi.mocked(statfsSync).mockImplementation((() => ({
+      type: TMPFS_MAGIC,
+      bsize: 4096,
+      blocks: 0,
+    })) as unknown as typeof statfsSync);
+    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
+    expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
   });
 
   it("sets uid/gid and cwd from the given options", () => {
@@ -298,17 +386,34 @@ describe("buildOciConfig", () => {
     expect(config.process.cwd).toBe(baseArgs.writable.workdir);
   });
 
-  it("wraps the script in `setpriv --pdeathsig=KILL` (die-with-parent, see run-isolated.sh)", () => {
-    const config = buildOciConfig(fakeBaseSpec(), baseArgs);
-    // args[0] is setpriv resolved to an absolute path where it exists (e.g.
-    // /usr/bin/setpriv on Linux), falling back to bare "setpriv" otherwise.
-    expect(config.process.args[0]).toMatch(/(^|\/)setpriv$/);
-    expect(config.process.args.slice(1)).toStrictEqual([
-      "--pdeathsig=KILL",
-      "--",
-      baseArgs.runtime.envLoaderPath,
-      baseArgs.runtime.scriptPath,
-    ]);
+  describe("setpriv resolution", () => {
+    // runc resolves args[0] against the sandbox's own PATH, which the step can
+    // override, so the absolute path is what makes this reach the real binary.
+    it("wraps the script in `setpriv --pdeathsig=KILL` at the path that exists", () => {
+      vi.mocked(existsSync).mockImplementation((p) => p === "/usr/bin/setpriv");
+      const config = buildOciConfig(fakeBaseSpec(), baseArgs);
+      expect(config.process.args[0]).toBe("/usr/bin/setpriv");
+      expect(config.process.args.slice(1)).toStrictEqual([
+        "--pdeathsig=KILL",
+        "--",
+        baseArgs.runtime.envLoaderPath,
+        baseArgs.runtime.scriptPath,
+      ]);
+    });
+
+    it("takes the first candidate in the documented order", () => {
+      vi.mocked(existsSync).mockImplementation(
+        (p) => p === "/bin/setpriv" || p === "/sbin/setpriv",
+      );
+      expect(buildOciConfig(fakeBaseSpec(), baseArgs).process.args[0]).toBe("/bin/setpriv");
+    });
+
+    // run-isolated.sh has already confirmed setpriv is on root's PATH by this
+    // point, so a PATH lookup is a safe last resort.
+    it("falls back to a bare PATH lookup when no candidate exists", () => {
+      pinHostProbes({ absent: ["setpriv"] });
+      expect(buildOciConfig(fakeBaseSpec(), baseArgs).process.args[0]).toBe("setpriv");
+    });
   });
 
   it("leaves process.env empty (the step environment travels over stdin)", () => {
