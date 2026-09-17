@@ -356,11 +356,14 @@ to the old `writable:` and `allow_write:` inputs are all in
 
 ## How it works
 
+<img src="assets/diagram-overview.png" alt="How Buildcage restricts what a run: step can reach" width="1000">
+
 The step starts its own throwaway proxy container, runs the command in an isolated sandbox on the
 runner, appends its report to the Job Summary, and stops the container again, all within that one
 step. Traffic is caught at the network level rather than through proxy environment variables, so a
 tool that ignores them is covered too, and the CA the `inspect` engine needs is mounted into the
-sandbox's own view of the filesystem, never written to the runner.
+sandbox's own view of the filesystem, never written to the runner. The figure is the `inspect`
+engine; `universal` follows the same path without terminating TLS, and so needs no CA.
 
 Using the action several times in one job gives each step its own allowlist, including when the
 steps run concurrently through GitHub Actions' `background`/`wait`/`wait-all`/`parallel` keywords:
