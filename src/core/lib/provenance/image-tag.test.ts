@@ -46,6 +46,14 @@ describe("imageTagFromRef", () => {
     expect(imageTagFromRef(undefined)).toBe("");
   });
 
+  // With no ref there is no version to tag, so there is nothing for a suffix
+  // to attach to: "-inspect" alone is not a tag any image is published under,
+  // and asking the registry for it would be a lookup that cannot succeed.
+  it("returns empty string with no ref even when an engine is named", () => {
+    expect(imageTagFromRef("", "inspect")).toBe("");
+    expect(imageTagFromRef(undefined, "inspect")).toBe("");
+  });
+
   it("appends no suffix for the default (universal) engine, or when omitted", () => {
     expect(imageTagFromRef("v1.1.0", "universal")).toBe("1.1.0");
     expect(imageTagFromRef("v1.1.0")).toBe("1.1.0");
