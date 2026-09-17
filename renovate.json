@@ -29,9 +29,10 @@
   ],
   "packageRules": [
     {
-      "description": "Self-referencing actions (buildcage/isolated-run) are exempt from minimumReleaseAge.",
+      "description": "Self-referencing actions (buildcage/isolated-run) are exempt from minimumReleaseAge and from the weekly schedule, so a new release lands right away.",
       "matchPackageNames": ["/^buildcage\\/isolated-run/"],
-      "minimumReleaseAge": "0 days"
+      "minimumReleaseAge": "0 days",
+      "schedule": ["at any time"]
     }
   ]
 }
