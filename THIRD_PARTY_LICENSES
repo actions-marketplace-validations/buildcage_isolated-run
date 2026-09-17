@@ -78,3 +78,8 @@ The isolated-run source code (MIT License) is not derived from, linked to,
 or combined with the GPL-licensed components. They are independent programs
 distributed together in a Docker image as an aggregate work, consistent
 with GPL v2 Section 2.
+
+------------------------------------------------------------------------------
+
+The Action itself bundles its npm dependencies into dist/*.cjs. Those licenses
+are reproduced in full in THIRD_PARTY_LICENSES_NPM.
