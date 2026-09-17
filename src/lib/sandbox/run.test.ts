@@ -1,14 +1,22 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+
+import { runIsolated, type ExecFileOptions, type RunIsolatedOptions } from "./run.ts";
 
 // run-isolated.sh is the process under `sudo` here, so what this module can be
 // held to is the argument list it builds and how it reads the child's exit.
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
-});
-import { execFileSync } from "node:child_process";
+type Call = [string, string[], ExecFileOptions];
 
-import { runIsolated, type RunIsolatedOptions } from "./run.ts";
+/** Records what was asked to run, and answers as execFileSync would. */
+function recorder(answer: () => void = () => {}) {
+  const calls: Call[] = [];
+  return {
+    calls,
+    execFile: (command: string, args: string[], options: ExecFileOptions) => {
+      calls.push([command, args, options]);
+      answer();
+    },
+  };
+}
 
 function options(overrides: Partial<RunIsolatedOptions> = {}): RunIsolatedOptions {
   return {
@@ -27,11 +35,11 @@ function options(overrides: Partial<RunIsolatedOptions> = {}): RunIsolatedOption
 }
 
 /**
- * The flag/value pairs of the most recent sudo invocation, as a lookup.
- * Skips the leading `-n -- <script>`, whose `--` is sudo's own separator.
+ * The flag/value pairs of a sudo invocation, as a lookup. Skips the leading
+ * `-n -- <script>`, whose `--` is sudo's own separator.
  */
-function flagsOfLastCall(): Record<string, string> {
-  const args = (vi.mocked(execFileSync).mock.calls[0][1] as string[]).slice(3);
+function flagsOf(calls: Call[]): Record<string, string> {
+  const args = calls[0][1].slice(3);
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length - 1; i += 2) {
     flags[args[i]] = args[i + 1];
@@ -45,25 +53,21 @@ function execFailure(status: number | null, extra: Record<string, unknown> = {})
 }
 
 describe("runIsolated", () => {
-  beforeEach(() => {
-    vi.mocked(execFileSync).mockReset();
-  });
-
   it("runs run-isolated.sh under non-interactive sudo", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => Buffer.alloc(0));
-    runIsolated(options());
+    const { calls, execFile } = recorder();
+    runIsolated(options(), { execFile });
 
-    const [command, args] = vi.mocked(execFileSync).mock.calls[0];
+    const [command, args] = calls[0];
     expect(command).toBe("sudo");
-    expect((args as string[]).slice(0, 2)).toStrictEqual(["-n", "--"]);
-    expect((args as string[])[2]).toMatch(/\/scripts\/run-isolated\.sh$/);
+    expect(args.slice(0, 2)).toStrictEqual(["-n", "--"]);
+    expect(args[2]).toMatch(/\/scripts\/run-isolated\.sh$/);
   });
 
   it("passes every namespace and address the script needs", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => Buffer.alloc(0));
-    runIsolated(options());
+    const { calls, execFile } = recorder();
+    runIsolated(options(), { execFile });
 
-    expect(flagsOfLastCall()).toStrictEqual({
+    expect(flagsOf(calls)).toStrictEqual({
       "--proxy-netns": "buildcage-proxy-netns",
       "--runc": "/var/tmp/scratch/runc",
       "--bundle": "/var/tmp/scratch/bundle",
@@ -78,53 +82,48 @@ describe("runIsolated", () => {
 
   // The environment travels on stdin so it never reaches the runner's disk.
   it("hands the environment over on stdin rather than in argv", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => Buffer.alloc(0));
+    const { calls, execFile } = recorder();
     const envBlob = Buffer.from("SECRET=value\0");
-    runIsolated(options({ envBlob }));
+    runIsolated(options({ envBlob }), { execFile });
 
-    const opts = vi.mocked(execFileSync).mock.calls[0][2] as {
-      input: Buffer;
-      stdio: string[];
-    };
+    const [, args, opts] = calls[0];
     expect(opts.input).toBe(envBlob);
     expect(opts.stdio).toStrictEqual(["pipe", "inherit", "inherit"]);
-    expect((vi.mocked(execFileSync).mock.calls[0][1] as string[]).join(" ")).not.toContain(
-      "SECRET",
-    );
+    expect(args.join(" ")).not.toContain("SECRET");
   });
 
   it("returns 0 when the isolated command succeeds", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => Buffer.alloc(0));
-    expect(runIsolated(options())).toBe(0);
+    const { execFile } = recorder();
+    expect(runIsolated(options(), { execFile })).toBe(0);
   });
 
   it("returns the isolated command's own exit code rather than throwing", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
+    const { execFile } = recorder(() => {
       throw execFailure(42);
     });
-    expect(runIsolated(options())).toBe(42);
+    expect(runIsolated(options(), { execFile })).toBe(42);
   });
 
   // A child that exits before draining envBlob shows up here with a spurious
   // EPIPE alongside its real status, so the status is what must be read.
   it("still reports the exit code when an EPIPE rides along with it", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
+    const { execFile } = recorder(() => {
       throw execFailure(3, { code: "EPIPE", errno: -32 });
     });
-    expect(runIsolated(options())).toBe(3);
+    expect(runIsolated(options(), { execFile })).toBe(3);
   });
 
   it("falls back to 1 when the child was killed by a signal and has no status", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
+    const { execFile } = recorder(() => {
       throw execFailure(null, { signal: "SIGKILL" });
     });
-    expect(runIsolated(options())).toBe(1);
+    expect(runIsolated(options(), { execFile })).toBe(1);
   });
 
   it("falls back to 1 when the failure carries no status at all", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
+    const { execFile } = recorder(() => {
       throw new Error("spawn sudo ENOENT");
     });
-    expect(runIsolated(options())).toBe(1);
+    expect(runIsolated(options(), { execFile })).toBe(1);
   });
 });

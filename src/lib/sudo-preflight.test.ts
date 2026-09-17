@@ -1,11 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-
-// `sudo -n true` is the probe itself, so it is stubbed rather than run.
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
-});
-import { execFileSync } from "node:child_process";
+import { describe, it, expect } from "vitest";
 
 import { checkPasswordlessSudo, describeSudoFailure } from "./sudo-preflight.ts";
 import { SandboxError } from "./errors.ts";
@@ -44,28 +37,34 @@ describe("describeSudoFailure", () => {
 });
 
 describe("checkPasswordlessSudo", () => {
-  beforeEach(() => {
-    vi.mocked(execFileSync).mockReset();
-  });
+  /** Records what the probe was asked to run, and answers as sudo would. */
+  function recordingExecFile(answer: () => void = () => {}) {
+    const calls: [string, string[]][] = [];
+    return {
+      calls,
+      execFile: (command: string, args: string[]) => {
+        calls.push([command, args]);
+        answer();
+      },
+    };
+  }
 
   it("probes with a command that changes nothing", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => "");
-    checkPasswordlessSudo();
+    const { calls, execFile } = recordingExecFile();
+    checkPasswordlessSudo({ execFile });
 
-    const [command, args] = vi.mocked(execFileSync).mock.calls[0];
-    expect(command).toBe("sudo");
-    expect(args).toStrictEqual(["-n", "true"]);
+    expect(calls).toStrictEqual([["sudo", ["-n", "true"]]]);
   });
 
   it("passes silently when sudo answers without a password", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => "");
-    expect(() => checkPasswordlessSudo()).not.toThrow();
+    const { execFile } = recordingExecFile();
+    expect(() => checkPasswordlessSudo({ execFile })).not.toThrow();
   });
 
   // Fails here rather than later, so a runner without passwordless sudo is
   // never misreported as the user's own `run:` command failing.
   it("turns a refusal into PASSWORDLESS_SUDO_REQUIRED, carrying the captured stderr", () => {
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
+    const { execFile } = recordingExecFile(() => {
       throw Object.assign(new Error("Command failed"), {
         status: 1,
         stderr: "sudo: a password is required",
@@ -73,7 +72,7 @@ describe("checkPasswordlessSudo", () => {
     });
 
     try {
-      checkPasswordlessSudo();
+      checkPasswordlessSudo({ execFile });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SandboxError);

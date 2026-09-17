@@ -1,29 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-
-// `docker cp` is the whole of extractCaCert's work, so it is stubbed.
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
-});
-import { execFileSync } from "node:child_process";
-
-// existsSync/readFileSync are wrapped so the system-CA-store lookup answers the
-// same way here as it would on a GitHub-hosted Linux runner. Left real, this
-// suite reads whatever CA bundle the host happens to have -- a different answer
-// on a macOS dev machine than in CI, and a real host file read either way.
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...actual,
-    chmodSync: vi.fn(actual.chmodSync),
-    existsSync: vi.fn(actual.existsSync),
-    readFileSync: vi.fn(actual.readFileSync),
-  };
-});
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
-const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+import { describe, it, expect } from "vitest";
 
 import {
   extractCaCert,
@@ -31,8 +6,8 @@ import {
   caTrustAdditions,
   OWN_CA_DESTINATION,
   SYSTEM_CA_DESTINATION,
+  type CaTrustDeps,
 } from "./ca-trust.ts";
-import { withScratchDir } from "./scratch-dir.ts";
 
 const FAKE_CA = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----";
 
@@ -41,71 +16,78 @@ const DEBIAN_STORE = "/etc/ssl/certs/ca-certificates.crt";
 const FAKE_SYSTEM_BUNDLE = "-----BEGIN CERTIFICATE-----\nsystem\n-----END CERTIFICATE-----";
 
 /**
- * Answers the system-store lookup with `found`, leaving every other path to the
- * real filesystem so the scratch-dir writes below still work.
+ * A host whose files are exactly `files`. Nothing here touches a real
+ * filesystem: left real, this suite would read whatever CA bundle the machine
+ * running it happens to have -- a different answer on a macOS dev machine than
+ * in CI.
  */
-function systemStoreAt(found: string | undefined) {
-  vi.mocked(existsSync).mockImplementation((p) => p === found);
-  vi.mocked(readFileSync).mockImplementation(((p: string, enc: BufferEncoding) =>
-    p === found ? `${FAKE_SYSTEM_BUNDLE}\n` : realFs.readFileSync(p, enc)) as typeof readFileSync);
+function fakeHost(files: Record<string, string>) {
+  const written: Record<string, { contents: string; mode: number }> = {};
+  const exec: [string, string[]][] = [];
+  const chmod: [string, number][] = [];
+  const deps: CaTrustDeps = {
+    exec: (command, args) => {
+      exec.push([command, args]);
+    },
+    chmod: (path, mode) => {
+      chmod.push([path, mode]);
+    },
+    exists: (path) => path in files,
+    readFile: (path) => {
+      const contents = files[path] ?? written[path]?.contents;
+      if (contents === undefined) throw new Error(`ENOENT: ${path}`);
+      return contents;
+    },
+    writeFile: (path, contents, mode) => {
+      written[path] = { contents, mode };
+    },
+  };
+  return { deps, written, exec, chmod };
 }
 
 describe("writeCaTrustFiles", () => {
-  afterEach(() => {
-    vi.mocked(existsSync).mockReset();
-    vi.mocked(readFileSync).mockReset();
-  });
+  const CA_INPUT = "/scratch/input-ca.pem";
 
   it("writes the CA into its own file, trailing whitespace trimmed to one newline", () => {
-    systemStoreAt(undefined);
-    withScratchDir((dir) => {
-      const caCertPath = join(dir, "input-ca.pem");
-      writeFileSync(caCertPath, `${FAKE_CA}\n\n\n`);
-      const { ownCaPath } = writeCaTrustFiles(caCertPath, dir);
-      expect(realFs.readFileSync(ownCaPath, "utf8")).toBe(`${FAKE_CA}\n`);
-    });
+    const { deps, written } = fakeHost({ [CA_INPUT]: `${FAKE_CA}\n\n\n` });
+    const { ownCaPath } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+
+    expect(ownCaPath).toBe("/scratch/buildcage-ca.pem");
+    expect(written[ownCaPath].contents).toBe(`${FAKE_CA}\n`);
+    expect(written[ownCaPath].mode).toBe(0o644);
   });
 
   it("appends the CA to the host's system store when the runner has one", () => {
-    systemStoreAt(DEBIAN_STORE);
-    withScratchDir((dir) => {
-      const caCertPath = join(dir, "input-ca.pem");
-      writeFileSync(caCertPath, `${FAKE_CA}\n`);
-      const { systemCaPath } = writeCaTrustFiles(caCertPath, dir);
-      expect(systemCaPath).toBe(join(dir, "system-ca-bundle.pem"));
-      expect(realFs.readFileSync(systemCaPath!, "utf8")).toBe(
-        `${FAKE_SYSTEM_BUNDLE}\n${FAKE_CA}\n`,
-      );
+    const { deps, written } = fakeHost({
+      [CA_INPUT]: `${FAKE_CA}\n`,
+      [DEBIAN_STORE]: `${FAKE_SYSTEM_BUNDLE}\n`,
     });
+    const { systemCaPath } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+
+    expect(systemCaPath).toBe("/scratch/system-ca-bundle.pem");
+    expect(written[systemCaPath!].contents).toBe(`${FAKE_SYSTEM_BUNDLE}\n${FAKE_CA}\n`);
   });
 
   // A tool pointed at a replacing variable would otherwise end up trusting the
   // proxy CA and nothing else, so no system file means no system bundle.
   it("leaves systemCaPath undefined when no candidate store exists", () => {
-    systemStoreAt(undefined);
-    withScratchDir((dir) => {
-      const caCertPath = join(dir, "input-ca.pem");
-      writeFileSync(caCertPath, `${FAKE_CA}\n`);
-      const { systemCaPath } = writeCaTrustFiles(caCertPath, dir);
-      expect(systemCaPath).toBeUndefined();
-      expect(realFs.existsSync(join(dir, "system-ca-bundle.pem"))).toBe(false);
-    });
+    const { deps, written } = fakeHost({ [CA_INPUT]: `${FAKE_CA}\n` });
+    const { systemCaPath } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+
+    expect(systemCaPath).toBeUndefined();
+    expect(written["/scratch/system-ca-bundle.pem"]).toBeUndefined();
   });
 
   it("takes the first candidate that exists, in the documented order", () => {
-    vi.mocked(existsSync).mockImplementation(
-      (p) => p === "/etc/ssl/ca-bundle.pem" || p === "/etc/ssl/cert.pem",
-    );
-    vi.mocked(readFileSync).mockImplementation(((p: string, enc: BufferEncoding) =>
-      p === "/etc/ssl/ca-bundle.pem"
-        ? `${FAKE_SYSTEM_BUNDLE}\n`
-        : realFs.readFileSync(p, enc)) as typeof readFileSync);
-    withScratchDir((dir) => {
-      const caCertPath = join(dir, "input-ca.pem");
-      writeFileSync(caCertPath, `${FAKE_CA}\n`);
-      const { systemCaPath } = writeCaTrustFiles(caCertPath, dir);
-      expect(realFs.readFileSync(systemCaPath!, "utf8")).toContain(FAKE_SYSTEM_BUNDLE);
+    const { deps, written } = fakeHost({
+      [CA_INPUT]: `${FAKE_CA}\n`,
+      "/etc/ssl/ca-bundle.pem": `${FAKE_SYSTEM_BUNDLE}\n`,
+      "/etc/ssl/cert.pem": "-----BEGIN CERTIFICATE-----\nlater\n-----END CERTIFICATE-----\n",
     });
+    const { systemCaPath } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+
+    expect(written[systemCaPath!].contents).toContain(FAKE_SYSTEM_BUNDLE);
+    expect(written[systemCaPath!].contents).not.toContain("later");
   });
 });
 
@@ -188,32 +170,22 @@ describe("extractCaCert", () => {
   const containerName = "buildcage-proxy-abcd1234";
   const destDir = "/var/tmp/buildcage-0/sandbox-abcd1234";
 
-  beforeEach(() => {
-    // mockReset restores what vi.fn(impl) was given, which here is the real
-    // chmodSync, so both need an explicit no-op stub.
-    vi.mocked(execFileSync).mockReset();
-    vi.mocked(execFileSync).mockImplementation(() => Buffer.alloc(0));
-    vi.mocked(chmodSync).mockReset();
-    vi.mocked(chmodSync).mockImplementation(() => {});
-  });
-
   it("copies the proxy's own CA out of the running container", () => {
-    const path = extractCaCert(containerName, destDir);
+    const { deps, exec } = fakeHost({});
+    const path = extractCaCert(containerName, destDir, deps);
 
     expect(path).toBe(`${destDir}/proxy-ca.pem`);
-    expect(vi.mocked(execFileSync).mock.calls[0][0]).toBe("docker");
-    expect(vi.mocked(execFileSync).mock.calls[0][1]).toStrictEqual([
-      "cp",
-      `${containerName}:/opt/buildcage/ca.pem`,
-      `${destDir}/proxy-ca.pem`,
+    expect(exec).toStrictEqual([
+      ["docker", ["cp", `${containerName}:/opt/buildcage/ca.pem`, `${destDir}/proxy-ca.pem`]],
     ]);
   });
 
   // The sandboxed process runs as the unprivileged runner user and has to be
   // able to read it.
   it("leaves the copy world-readable", () => {
-    extractCaCert(containerName, destDir);
+    const { deps, chmod } = fakeHost({});
+    extractCaCert(containerName, destDir, deps);
 
-    expect(vi.mocked(chmodSync).mock.calls).toStrictEqual([[`${destDir}/proxy-ca.pem`, 0o644]]);
+    expect(chmod).toStrictEqual([[`${destDir}/proxy-ca.pem`, 0o644]]);
   });
 });

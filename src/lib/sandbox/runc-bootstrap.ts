@@ -13,9 +13,13 @@ import type { OciSpec } from "./types.ts";
  * and buildOciConfig only needs to override/extend the handful of fields
  * this sandbox actually cares about.
  */
-export function generateBaseOciSpec(runcPath: string, bundleDir: string): OciSpec {
-  execFileSync(runcPath, ["spec"], { cwd: bundleDir });
-  return JSON.parse(readFileSync(join(bundleDir, "config.json"), "utf8"));
+export function generateBaseOciSpec(
+  runcPath: string,
+  bundleDir: string,
+  { execIn = defaultExecIn, readFile = defaultReadFile }: RuncBootstrapDeps = {},
+): OciSpec {
+  execIn(runcPath, ["spec"], bundleDir);
+  return JSON.parse(readFile(join(bundleDir, "config.json")));
 }
 
 /**
@@ -36,19 +40,46 @@ export interface ExtractRuncBootstrapOptions {
   destDir: string;
 }
 
+export interface RuncBootstrapDeps {
+  /** Runs a command, returning its stdout. */
+  exec?: (command: string, args: string[]) => string;
+  /** Runs a command in `cwd`, discarding its stdout. */
+  execIn?: (command: string, args: string[], cwd: string) => void;
+  readFile?: (path: string) => string;
+  chmod?: (path: string, mode: number) => void;
+  remove?: (path: string) => void;
+}
+
+// Untested by design: the defaults behind this module's seams, which only hand
+// node:fs and node:child_process what the tested caller decided.
+/* v8 ignore start */
+function defaultExec(command: string, args: string[]): string {
+  return execFileSync(command, args, { encoding: "utf8" });
+}
+
+function defaultExecIn(command: string, args: string[], cwd: string): void {
+  execFileSync(command, args, { cwd });
+}
+
+function defaultReadFile(path: string): string {
+  return readFileSync(path, "utf8");
+}
+/* v8 ignore stop */
+
 export interface RuncBootstrap {
   runcPath: string;
   seccompProfile: unknown;
   baseSpec: OciSpec;
 }
 
-export function extractRuncBootstrap({
-  containerName,
-  destDir,
-}: ExtractRuncBootstrapOptions): RuncBootstrap {
+export function extractRuncBootstrap(
+  { containerName, destDir }: ExtractRuncBootstrapOptions,
+  deps: RuncBootstrapDeps = {},
+): RuncBootstrap {
+  const { exec = defaultExec, chmod = chmodSync, remove = rmSync } = deps;
   const runcPath = join(destDir, "runc");
   const genSeccompProfilePath = join(destDir, "gen-seccomp-profile");
-  execFileSync(
+  exec(
     "docker",
     buildDockerCpArgs({
       containerName,
@@ -56,7 +87,7 @@ export function extractRuncBootstrap({
       hostPath: runcPath,
     }),
   );
-  execFileSync(
+  exec(
     "docker",
     buildDockerCpArgs({
       containerName,
@@ -64,11 +95,11 @@ export function extractRuncBootstrap({
       hostPath: genSeccompProfilePath,
     }),
   );
-  chmodSync(runcPath, 0o755);
-  chmodSync(genSeccompProfilePath, 0o755);
-  const seccompProfile = JSON.parse(execFileSync(genSeccompProfilePath, { encoding: "utf8" }));
-  const baseSpec = generateBaseOciSpec(runcPath, destDir); // writes config.json into destDir (overwritten later by writeOciConfig)
-  rmSync(genSeccompProfilePath); // only needed to resolve seccompProfile above
+  chmod(runcPath, 0o755);
+  chmod(genSeccompProfilePath, 0o755);
+  const seccompProfile = JSON.parse(exec(genSeccompProfilePath, []));
+  const baseSpec = generateBaseOciSpec(runcPath, destDir, deps); // writes config.json into destDir (overwritten later by writeOciConfig)
+  remove(genSeccompProfilePath); // only needed to resolve seccompProfile above
 
   return { runcPath, seccompProfile, baseSpec };
 }
