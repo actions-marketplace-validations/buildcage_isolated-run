@@ -17307,6 +17307,9 @@ function logRules(label, rules) {
 	for (let r of rules) console.log(`  ${r}`);
 }
 //#endregion
+//#region src/lib/errors.ts
+var SandboxError = class extends ActionError {};
+//#endregion
 //#region src/core/lib/acl/partial-wildcard.ts
 const REGEX_META = /[.+^$()[\]{}|\\]/g, DOMAIN = {
 	across: ".+",
@@ -17566,20 +17569,14 @@ function buildUrlRules(rulesInput) {
 	return splitUrlRuleLines(rulesInput).map(convertUrlRule);
 }
 //#endregion
-//#region src/lib/errors.ts
-var SandboxError = class extends ActionError {};
-//#endregion
-//#region src/lib/engine-rule-support.ts
-function checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules }, warn) {
-	if (proxyEngine === "inspect") return;
-	let unsupported = [];
-	if (urlRules.length > 0 && unsupported.push("allowed_url_rules"), tlsRules.length > 0 && unsupported.push("allowed_tls_rules"), unsupported.length === 0) return;
-	let list = unsupported.join(" and "), reason = `${list} ${unsupported.length > 1 ? "have" : "has"} no effect with proxy_engine: ${proxyEngine} — this engine only sees the host and port, never a method or a path.`;
-	if (proxyMode === "audit") {
-		warn(`${reason} They are ignored for this run. Switch to proxy_engine: inspect if you need to enforce a method or a path.`);
-		return;
-	}
-	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced — the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
+//#region src/lib/engine.ts
+const ENGINES = ["universal", "inspect"], ENGINE_ALIASES = { transparent: "universal" };
+function resolveProxyEngine(input) {
+	let trimmed = input?.trim() || "universal", alias = ENGINE_ALIASES[trimmed];
+	alias && console.log("::notice::proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.");
+	let engine = alias ?? trimmed;
+	if (!ENGINES.includes(engine)) throw new SandboxError(`Invalid proxy_engine: ${JSON.stringify(input)}. Must be one of ${ENGINES.join(", ")}.`, "INVALID_PROXY_ENGINE");
+	return engine;
 }
 //#endregion
 //#region src/core/lib/actions/docker-error.ts
@@ -17644,53 +17641,6 @@ function getContainerNetns(containerName, { exec = node_child_process.execFileSy
 		throw new SandboxError(describeDockerFailure(e, { operation: "docker inspect" }), "DOCKER_UNAVAILABLE");
 	}
 	return out || null;
-}
-//#endregion
-//#region src/lib/host-addresses.ts
-function listHostIpv4Addresses({ networkInterfaces: list = node_os.networkInterfaces } = {}) {
-	let found = new Set();
-	for (let infos of Object.values(list())) for (let info of infos ?? []) (info.family === "IPv4" || info.family === 4) && (info.internal || found.add(info.address));
-	return [...found].sort();
-}
-//#endregion
-//#region src/lib/compose-env.ts
-function buildComposeEnv({ containerName, proxyMode, proxyEngine, imageRef, httpsRules, httpRules, ipRules, urlRules, tlsRules }, env, hostAddresses = listHostIpv4Addresses) {
-	return {
-		...env,
-		PROXY_CONTAINER_NAME: containerName,
-		BUILDCAGE_OWNER: ownerToken(env),
-		PROXY_MODE: proxyMode,
-		PROXY_ENGINE: proxyEngine,
-		ALLOWED_HTTPS_RULES: httpsRules.join("\n"),
-		ALLOWED_HTTP_RULES: httpRules.join("\n"),
-		ALLOWED_IP_RULES: ipRules.join("\n"),
-		ALLOWED_URL_RULES: urlRules.join("\n"),
-		ALLOWED_TLS_RULES: tlsRules.join("\n"),
-		BUILDCAGE_PROXY_IMAGE_REF: imageRef,
-		EXTERNAL_RESOLVER: "",
-		HOST_ADDRESSES: hostAddresses().join(" ")
-	};
-}
-//#endregion
-//#region src/lib/sudo-preflight.ts
-const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
-function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
-	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
-	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
-}
-function checkPasswordlessSudo() {
-	try {
-		(0, node_child_process.execFileSync)("sudo", ["-n", "true"], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"ignore",
-				"pipe"
-			]
-		});
-	} catch (e) {
-		throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
-	}
 }
 //#endregion
 //#region src/lib/sandbox/mountinfo.ts
@@ -17800,66 +17750,6 @@ function withScratchDir(fn, containerName, ephemeralRoots) {
 	}
 }
 //#endregion
-//#region src/lib/overlayfs-preflight.ts
-const REQUIREMENT = `filesystem_mode: ephemeral requires overlayfs support on ${SANDBOX_SCRATCH_BASE} -- an overlay mount's upperdir/workdir are placed there, and the kernel doesn't allow those to themselves sit on an overlayfs filesystem. This commonly fails when the runner process is itself running inside a container whose own root filesystem is overlayfs (e.g. many container-based self-hosted runner setups), since that puts SANDBOX_SCRATCH_BASE on overlayfs too. Use filesystem_mode: persistent instead, or run this action from a runner whose filesystem isn't overlayfs-backed.`;
-function describeOverlayFailure(e) {
-	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
-	return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
-}
-function removeProbeDir(dir, exec) {
-	for (let attempt = 1; attempt <= 5; attempt++) try {
-		exec("sudo", [
-			"-n",
-			"rm",
-			"-rf",
-			dir
-		], { stdio: [
-			"ignore",
-			"ignore",
-			"pipe"
-		] });
-		return;
-	} catch (e) {
-		if (attempt === 5) throw e;
-		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-	}
-}
-function checkOverlayfsSupport({ base = SANDBOX_SCRATCH_BASE, exec = node_child_process.execFileSync } = {}) {
-	ensureOwnScratchBase(base);
-	let probeDir = (0, node_fs.mkdtempSync)((0, node_path.join)(base, "overlay-probe-"));
-	try {
-		let lower = (0, node_path.join)(probeDir, "lower"), upper = (0, node_path.join)(probeDir, "upper"), work = (0, node_path.join)(probeDir, "work"), merged = (0, node_path.join)(probeDir, "merged");
-		for (let dir of [
-			lower,
-			upper,
-			work,
-			merged
-		]) (0, node_fs.mkdirSync)(dir);
-		exec("sudo", [
-			"-n",
-			"unshare",
-			"--mount",
-			"--propagation",
-			"private",
-			"--",
-			"sh",
-			"-c",
-			`mount -t overlay overlay -o lowerdir=${lower},upperdir=${upper},workdir=${work} ${merged}`
-		], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"ignore",
-				"pipe"
-			]
-		});
-	} catch (e) {
-		throw new SandboxError(describeOverlayFailure(e), "OVERLAYFS_UNSUPPORTED");
-	} finally {
-		removeProbeDir(probeDir, exec);
-	}
-}
-//#endregion
 //#region src/lib/sandbox/paths.ts
 function isAtOrUnder(path, ancestor) {
 	return path === ancestor || path.startsWith(ancestor.endsWith("/") ? ancestor : `${ancestor}/`);
@@ -17870,161 +17760,6 @@ function pathsOverlap(a, b) {
 function assertScratchBaseNotWritable(writableDirs) {
 	let overlapping = writableDirs.find((p) => pathsOverlap(p, SANDBOX_SCRATCH_BASE));
 	if (overlapping) throw Error(`writable path ${JSON.stringify(overlapping)} overlaps the sandbox's own scratch directory (${SANDBOX_SCRATCH_BASE}); this would re-expose the sandboxed host filesystem read-write inside the sandbox itself. Choose a writable path outside ${SANDBOX_SCRATCH_BASE}.`);
-}
-//#endregion
-//#region src/lib/sandbox/ephemeral-fs.ts
-function defaultDeviceOf(path) {
-	return (0, node_fs.statSync)(path).dev;
-}
-function determineOverlayRoots(candidates, writeThroughPaths, { exists = node_fs.existsSync, deviceOf = defaultDeviceOf } = {}) {
-	let notCoveredByWriteThrough = [...new Set(candidates)].filter((c) => exists(c)).filter((c) => !writeThroughPaths.some((a) => isAtOrUnder(c, a)));
-	return notCoveredByWriteThrough.filter((c) => {
-		let nestingParent = notCoveredByWriteThrough.find((p) => p !== c && isAtOrUnder(c, p));
-		if (!nestingParent) return !0;
-		try {
-			return deviceOf(c) !== deviceOf(nestingParent);
-		} catch {
-			return !0;
-		}
-	}).map((path) => ({ path }));
-}
-function slugify(path) {
-	return path.replace(/\//g, "_") || "_root";
-}
-function createOverlayScratchDirs(scratchDir, roots, { mkdir = node_fs.mkdirSync } = {}) {
-	return roots.map(({ path }) => {
-		let base = (0, node_path.join)(scratchDir, "ephemeral", slugify(path)), upper = (0, node_path.join)(base, "upper"), work = (0, node_path.join)(base, "work");
-		return mkdir(upper, { recursive: !0 }), mkdir(work, { recursive: !0 }), {
-			path,
-			upper,
-			work
-		};
-	});
-}
-function formatFilesystemPlanLog(mode, overlayRoots, writeThrough) {
-	if (mode !== "ephemeral") return [];
-	let lines = ["Filesystem mode: ephemeral"];
-	for (let root of overlayRoots) lines.push(`Ephemeral (writes discarded at step end): ${root}`);
-	for (let entry of writeThrough) lines.push(`Writable (persisted):                    ${entry}`);
-	return lines;
-}
-//#endregion
-//#region src/lib/sandbox/write-through.ts
-const ALLOWED_WRITE_THROUGH_VARS = [
-	"HOME",
-	"GITHUB_WORKSPACE",
-	"RUNNER_TEMP",
-	"GITHUB_OUTPUT",
-	"GITHUB_ENV",
-	"GITHUB_PATH",
-	"GITHUB_STEP_SUMMARY"
-], KNOWN_FILE_VARS = [
-	"GITHUB_OUTPUT",
-	"GITHUB_ENV",
-	"GITHUB_PATH",
-	"GITHUB_STEP_SUMMARY"
-], VAR_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
-function resolveWriteThroughEntry(rawLine, env) {
-	let expanded = rawLine.replace(VAR_PATTERN, (_match, braced, bare) => {
-		let name = braced ?? bare;
-		if (!ALLOWED_WRITE_THROUGH_VARS.includes(name)) throw Error(`write_through entry ${JSON.stringify(rawLine)} references unsupported variable $${name}; only ${ALLOWED_WRITE_THROUGH_VARS.join(", ")} may be used.`);
-		let value = env[name];
-		if (!value) throw Error(`write_through entry ${JSON.stringify(rawLine)} references $${name}, which is not set.`);
-		return value;
-	}), tildeExpanded = expanded.startsWith("~/") ? (0, node_path.join)(env.HOME || "", expanded.slice(2)) : expanded, resolved = (0, node_path.isAbsolute)(tildeExpanded) ? tildeExpanded : (0, node_path.join)(env.GITHUB_WORKSPACE || "", tildeExpanded);
-	if (!(0, node_path.isAbsolute)(resolved)) throw Error(`write_through entry ${JSON.stringify(rawLine)} is relative and $GITHUB_WORKSPACE is not set, so it can't be resolved to a host path.`);
-	let normalized = (0, node_path.normalize)(resolved);
-	if (normalized === "/" && rawLine.trim() !== "/") throw Error(`write_through entry ${JSON.stringify(rawLine)} resolves to "/", the sentinel for dropping the read-only restriction entirely. Write it as a literal "/" if that is what you meant; otherwise check the "../" count.`);
-	return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
-}
-function resolveWriteThroughPaths(input, env) {
-	let lines = input?.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) ?? [];
-	return [...new Set(lines.map((line) => resolveWriteThroughEntry(line, env)))];
-}
-var WriteThroughTargetMissingError = class extends Error {}, WriteThroughTargetUncreatableError = class extends Error {};
-function defaultStat(path) {
-	let s = (0, node_fs.statSync)(path);
-	return {
-		uid: s.uid,
-		gid: s.gid,
-		mode: s.mode
-	};
-}
-function defaultExecFile(command, args) {
-	(0, node_child_process.execFileSync)(command, args, { stdio: [
-		"ignore",
-		"ignore",
-		"pipe"
-	] });
-}
-function asOwner({ uid, gid }) {
-	return [
-		"-u",
-		`#${uid}`,
-		"-g",
-		`#${gid}`
-	];
-}
-function pathSegmentsBetween(ancestor, descendant) {
-	let segments = [], current = descendant;
-	for (; current !== ancestor;) segments.unshift(current), current = (0, node_path.dirname)(current);
-	return segments;
-}
-function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.existsSync, stat = defaultStat, execFile = defaultExecFile } = {}) {
-	let knownFileValues = new Set(KNOWN_FILE_VARS.map((name) => env[name]).filter((v) => !!v)), created = [], rollback = () => {
-		for (let dir of [...created].reverse()) try {
-			execFile("sudo", [
-				...asOwner(dir),
-				"rmdir",
-				dir.path
-			]);
-		} catch {}
-	};
-	for (let path of resolvedPaths) {
-		if (exists(path)) continue;
-		if (knownFileValues.has(path)) throw rollback(), new WriteThroughTargetMissingError(`write_through: ${JSON.stringify(path)} doesn't exist. This path is one of the runner's own generated files (GITHUB_OUTPUT/GITHUB_ENV/GITHUB_PATH/GITHUB_STEP_SUMMARY) and should already be present -- something is wrong with the environment.`);
-		let ancestor = (0, node_path.dirname)(path);
-		for (; !exists(ancestor);) {
-			let parent = (0, node_path.dirname)(ancestor);
-			if (parent === ancestor) throw rollback(), new WriteThroughTargetUncreatableError(`write_through: ${JSON.stringify(path)} has no existing ancestor directory to create it under.`);
-			ancestor = parent;
-		}
-		try {
-			let { uid, gid, mode } = stat(ancestor), modeOctal = (mode & 4095).toString(8);
-			execFile("sudo", [
-				...asOwner({
-					uid,
-					gid
-				}),
-				"mkdir",
-				"-p",
-				"-m",
-				modeOctal,
-				path
-			]), created.push(...pathSegmentsBetween(ancestor, path).map((segment) => ({
-				path: segment,
-				uid,
-				gid
-			})));
-		} catch (e) {
-			throw rollback(), new WriteThroughTargetUncreatableError(`write_through: ${JSON.stringify(path)} doesn't exist and couldn't be created: ${e instanceof Error ? e.message : String(e)}`);
-		}
-	}
-	return created;
-}
-function removeCreatedDirsIfEmpty(created, { execFile = defaultExecFile } = {}) {
-	for (let dir of [...created].reverse()) try {
-		execFile("sudo", [
-			...asOwner(dir),
-			"rmdir",
-			dir.path
-		]);
-	} catch {}
-}
-//#endregion
-//#region src/core/lib/docker/compose-project-name.ts
-function deriveProjectName(containerName) {
-	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
 }
 //#endregion
 //#region src/core/lib/docker/args.ts
@@ -18367,6 +18102,352 @@ function writeOciConfig(config, bundleDir) {
 function writeResolvConf(dns, dir) {
 	let resolvConfPath = (0, node_path.join)(dir, "resolv.conf");
 	return (0, node_fs.writeFileSync)(resolvConfPath, `nameserver ${dns}\n`, { mode: 420 }), resolvConfPath;
+}
+//#endregion
+//#region src/lib/sandbox/write-through.ts
+const ALLOWED_WRITE_THROUGH_VARS = [
+	"HOME",
+	"GITHUB_WORKSPACE",
+	"RUNNER_TEMP",
+	"GITHUB_OUTPUT",
+	"GITHUB_ENV",
+	"GITHUB_PATH",
+	"GITHUB_STEP_SUMMARY"
+], KNOWN_FILE_VARS = [
+	"GITHUB_OUTPUT",
+	"GITHUB_ENV",
+	"GITHUB_PATH",
+	"GITHUB_STEP_SUMMARY"
+], VAR_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+function resolveWriteThroughEntry(rawLine, env) {
+	let expanded = rawLine.replace(VAR_PATTERN, (_match, braced, bare) => {
+		let name = braced ?? bare;
+		if (!ALLOWED_WRITE_THROUGH_VARS.includes(name)) throw Error(`write_through entry ${JSON.stringify(rawLine)} references unsupported variable $${name}; only ${ALLOWED_WRITE_THROUGH_VARS.join(", ")} may be used.`);
+		let value = env[name];
+		if (!value) throw Error(`write_through entry ${JSON.stringify(rawLine)} references $${name}, which is not set.`);
+		return value;
+	}), tildeExpanded = expanded.startsWith("~/") ? (0, node_path.join)(env.HOME || "", expanded.slice(2)) : expanded, resolved = (0, node_path.isAbsolute)(tildeExpanded) ? tildeExpanded : (0, node_path.join)(env.GITHUB_WORKSPACE || "", tildeExpanded);
+	if (!(0, node_path.isAbsolute)(resolved)) throw Error(`write_through entry ${JSON.stringify(rawLine)} is relative and $GITHUB_WORKSPACE is not set, so it can't be resolved to a host path.`);
+	let normalized = (0, node_path.normalize)(resolved);
+	if (normalized === "/" && rawLine.trim() !== "/") throw Error(`write_through entry ${JSON.stringify(rawLine)} resolves to "/", the sentinel for dropping the read-only restriction entirely. Write it as a literal "/" if that is what you meant; otherwise check the "../" count.`);
+	return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
+}
+function resolveWriteThroughPaths(input, env) {
+	let lines = input?.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) ?? [];
+	return [...new Set(lines.map((line) => resolveWriteThroughEntry(line, env)))];
+}
+var WriteThroughTargetMissingError = class extends Error {}, WriteThroughTargetUncreatableError = class extends Error {};
+function defaultStat(path) {
+	let s = (0, node_fs.statSync)(path);
+	return {
+		uid: s.uid,
+		gid: s.gid,
+		mode: s.mode
+	};
+}
+function defaultExecFile(command, args) {
+	(0, node_child_process.execFileSync)(command, args, { stdio: [
+		"ignore",
+		"ignore",
+		"pipe"
+	] });
+}
+function asOwner({ uid, gid }) {
+	return [
+		"-u",
+		`#${uid}`,
+		"-g",
+		`#${gid}`
+	];
+}
+function pathSegmentsBetween(ancestor, descendant) {
+	let segments = [], current = descendant;
+	for (; current !== ancestor;) segments.unshift(current), current = (0, node_path.dirname)(current);
+	return segments;
+}
+function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.existsSync, stat = defaultStat, execFile = defaultExecFile } = {}) {
+	let knownFileValues = new Set(KNOWN_FILE_VARS.map((name) => env[name]).filter((v) => !!v)), created = [], rollback = () => {
+		for (let dir of [...created].reverse()) try {
+			execFile("sudo", [
+				...asOwner(dir),
+				"rmdir",
+				dir.path
+			]);
+		} catch {}
+	};
+	for (let path of resolvedPaths) {
+		if (exists(path)) continue;
+		if (knownFileValues.has(path)) throw rollback(), new WriteThroughTargetMissingError(`write_through: ${JSON.stringify(path)} doesn't exist. This path is one of the runner's own generated files (GITHUB_OUTPUT/GITHUB_ENV/GITHUB_PATH/GITHUB_STEP_SUMMARY) and should already be present -- something is wrong with the environment.`);
+		let ancestor = (0, node_path.dirname)(path);
+		for (; !exists(ancestor);) {
+			let parent = (0, node_path.dirname)(ancestor);
+			if (parent === ancestor) throw rollback(), new WriteThroughTargetUncreatableError(`write_through: ${JSON.stringify(path)} has no existing ancestor directory to create it under.`);
+			ancestor = parent;
+		}
+		try {
+			let { uid, gid, mode } = stat(ancestor), modeOctal = (mode & 4095).toString(8);
+			execFile("sudo", [
+				...asOwner({
+					uid,
+					gid
+				}),
+				"mkdir",
+				"-p",
+				"-m",
+				modeOctal,
+				path
+			]), created.push(...pathSegmentsBetween(ancestor, path).map((segment) => ({
+				path: segment,
+				uid,
+				gid
+			})));
+		} catch (e) {
+			throw rollback(), new WriteThroughTargetUncreatableError(`write_through: ${JSON.stringify(path)} doesn't exist and couldn't be created: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+	return created;
+}
+function removeCreatedDirsIfEmpty(created, { execFile = defaultExecFile } = {}) {
+	for (let dir of [...created].reverse()) try {
+		execFile("sudo", [
+			...asOwner(dir),
+			"rmdir",
+			dir.path
+		]);
+	} catch {}
+}
+//#endregion
+//#region src/lib/inputs.ts
+init_core();
+function readKnownBlockedRules(input) {
+	return parseKnownBlockedRulesOrThrow(input);
+}
+function resolveWriteThroughInput({ writeThrough, writable, allowWrite }) {
+	if (allowWrite.trim()) throw new SandboxError("allow_write: has been replaced by write_through:, which covers both filesystem modes. Rename the input -- the path syntax is unchanged.", "ALLOW_WRITE_REMOVED");
+	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
+	return !writeThrough.trim() && writable.trim() ? (console.log("::notice::writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
+}
+const FILESYSTEM_MODES = ["persistent", "ephemeral"];
+function resolveFilesystemMode(input) {
+	let trimmed = input?.trim() || "persistent";
+	if (!FILESYSTEM_MODES.includes(trimmed)) throw new SandboxError(`Invalid filesystem_mode: ${JSON.stringify(input)}. Must be one of ${FILESYSTEM_MODES.join(", ")}.`, "INVALID_FILESYSTEM_MODE");
+	return trimmed;
+}
+function splitWriteThroughInput(input) {
+	return input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+function validateFilesystemInputs(filesystemMode, writeThroughPaths) {
+	if (filesystemMode === "ephemeral" && writeThroughPaths.includes("/")) throw new SandboxError("write_through: / drops the read-only restriction wholesale, which has no meaning in filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists to prevent. List the paths that must survive instead.", "FILESYSTEM_INPUT_CONFLICT");
+	for (let path of writeThroughPaths) {
+		let reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
+		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
+	}
+}
+function readRunCommand(getInput$2 = getInput) {
+	let runInput = getInput$2("run", { trimWhitespace: !1 });
+	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
+	return runInput;
+}
+function readEngineInputs(getInput$1 = getInput) {
+	return { proxyEngine: resolveProxyEngine(getInput$1("proxy_engine")) };
+}
+function readFilesystemInputs(getInput$3 = getInput) {
+	return {
+		filesystemMode: resolveFilesystemMode(getInput$3("filesystem_mode")),
+		writeThroughInput: resolveWriteThroughInput({
+			writeThrough: getInput$3("write_through"),
+			writable: getInput$3("writable"),
+			allowWrite: getInput$3("allow_write")
+		})
+	};
+}
+function readRuleInputs(getInput$5 = getInput) {
+	let proxyMode = getInput$5("proxy_mode") || "restrict", rules = buildACLRules({
+		httpsRulesInput: getInput$5("allowed_https_rules"),
+		httpRulesInput: getInput$5("allowed_http_rules"),
+		ipRulesInput: getInput$5("allowed_ip_rules")
+	}), knownBlockedRules = readKnownBlockedRules(getInput$5("known_blocked_rules")), urlRulesInput = getInput$5("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$5("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
+	return {
+		proxyMode,
+		httpsRules: rules.httpsRules,
+		httpRules: rules.httpRules,
+		ipRules: rules.ipRules,
+		urlRules,
+		tlsRules,
+		knownBlockedRules
+	};
+}
+function readStepLabel(getInput$4 = getInput) {
+	return getInput$4("label") || void 0;
+}
+function readFailOnBlocked(getBooleanInput$1 = getBooleanInput) {
+	try {
+		return getBooleanInput$1("fail_on_blocked");
+	} catch {
+		return !0;
+	}
+}
+//#endregion
+//#region src/lib/engine-rule-support.ts
+function checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules }, warn) {
+	if (proxyEngine === "inspect") return;
+	let unsupported = [];
+	if (urlRules.length > 0 && unsupported.push("allowed_url_rules"), tlsRules.length > 0 && unsupported.push("allowed_tls_rules"), unsupported.length === 0) return;
+	let list = unsupported.join(" and "), reason = `${list} ${unsupported.length > 1 ? "have" : "has"} no effect with proxy_engine: ${proxyEngine} — this engine only sees the host and port, never a method or a path.`;
+	if (proxyMode === "audit") {
+		warn(`${reason} They are ignored for this run. Switch to proxy_engine: inspect if you need to enforce a method or a path.`);
+		return;
+	}
+	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced — the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
+}
+//#endregion
+//#region src/lib/host-addresses.ts
+function listHostIpv4Addresses({ networkInterfaces: list = node_os.networkInterfaces } = {}) {
+	let found = new Set();
+	for (let infos of Object.values(list())) for (let info of infos ?? []) (info.family === "IPv4" || info.family === 4) && (info.internal || found.add(info.address));
+	return [...found].sort();
+}
+//#endregion
+//#region src/lib/compose-env.ts
+function buildComposeEnv({ containerName, proxyMode, proxyEngine, imageRef, httpsRules, httpRules, ipRules, urlRules, tlsRules }, env, hostAddresses = listHostIpv4Addresses) {
+	return {
+		...env,
+		PROXY_CONTAINER_NAME: containerName,
+		BUILDCAGE_OWNER: ownerToken(env),
+		PROXY_MODE: proxyMode,
+		PROXY_ENGINE: proxyEngine,
+		ALLOWED_HTTPS_RULES: httpsRules.join("\n"),
+		ALLOWED_HTTP_RULES: httpRules.join("\n"),
+		ALLOWED_IP_RULES: ipRules.join("\n"),
+		ALLOWED_URL_RULES: urlRules.join("\n"),
+		ALLOWED_TLS_RULES: tlsRules.join("\n"),
+		BUILDCAGE_PROXY_IMAGE_REF: imageRef,
+		EXTERNAL_RESOLVER: "",
+		HOST_ADDRESSES: hostAddresses().join(" ")
+	};
+}
+//#endregion
+//#region src/lib/sudo-preflight.ts
+const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
+function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
+	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
+}
+function checkPasswordlessSudo() {
+	try {
+		(0, node_child_process.execFileSync)("sudo", ["-n", "true"], {
+			encoding: "utf8",
+			stdio: [
+				"ignore",
+				"ignore",
+				"pipe"
+			]
+		});
+	} catch (e) {
+		throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
+	}
+}
+//#endregion
+//#region src/lib/overlayfs-preflight.ts
+const REQUIREMENT = `filesystem_mode: ephemeral requires overlayfs support on ${SANDBOX_SCRATCH_BASE} -- an overlay mount's upperdir/workdir are placed there, and the kernel doesn't allow those to themselves sit on an overlayfs filesystem. This commonly fails when the runner process is itself running inside a container whose own root filesystem is overlayfs (e.g. many container-based self-hosted runner setups), since that puts SANDBOX_SCRATCH_BASE on overlayfs too. Use filesystem_mode: persistent instead, or run this action from a runner whose filesystem isn't overlayfs-backed.`;
+function describeOverlayFailure(e) {
+	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+	return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
+}
+function removeProbeDir(dir, exec) {
+	for (let attempt = 1; attempt <= 5; attempt++) try {
+		exec("sudo", [
+			"-n",
+			"rm",
+			"-rf",
+			dir
+		], { stdio: [
+			"ignore",
+			"ignore",
+			"pipe"
+		] });
+		return;
+	} catch (e) {
+		if (attempt === 5) throw e;
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+	}
+}
+function checkOverlayfsSupport({ base = SANDBOX_SCRATCH_BASE, exec = node_child_process.execFileSync } = {}) {
+	ensureOwnScratchBase(base);
+	let probeDir = (0, node_fs.mkdtempSync)((0, node_path.join)(base, "overlay-probe-"));
+	try {
+		let lower = (0, node_path.join)(probeDir, "lower"), upper = (0, node_path.join)(probeDir, "upper"), work = (0, node_path.join)(probeDir, "work"), merged = (0, node_path.join)(probeDir, "merged");
+		for (let dir of [
+			lower,
+			upper,
+			work,
+			merged
+		]) (0, node_fs.mkdirSync)(dir);
+		exec("sudo", [
+			"-n",
+			"unshare",
+			"--mount",
+			"--propagation",
+			"private",
+			"--",
+			"sh",
+			"-c",
+			`mount -t overlay overlay -o lowerdir=${lower},upperdir=${upper},workdir=${work} ${merged}`
+		], {
+			encoding: "utf8",
+			stdio: [
+				"ignore",
+				"ignore",
+				"pipe"
+			]
+		});
+	} catch (e) {
+		throw new SandboxError(describeOverlayFailure(e), "OVERLAYFS_UNSUPPORTED");
+	} finally {
+		removeProbeDir(probeDir, exec);
+	}
+}
+//#endregion
+//#region src/lib/sandbox/ephemeral-fs.ts
+function defaultDeviceOf(path) {
+	return (0, node_fs.statSync)(path).dev;
+}
+function determineOverlayRoots(candidates, writeThroughPaths, { exists = node_fs.existsSync, deviceOf = defaultDeviceOf } = {}) {
+	let notCoveredByWriteThrough = [...new Set(candidates)].filter((c) => exists(c)).filter((c) => !writeThroughPaths.some((a) => isAtOrUnder(c, a)));
+	return notCoveredByWriteThrough.filter((c) => {
+		let nestingParent = notCoveredByWriteThrough.find((p) => p !== c && isAtOrUnder(c, p));
+		if (!nestingParent) return !0;
+		try {
+			return deviceOf(c) !== deviceOf(nestingParent);
+		} catch {
+			return !0;
+		}
+	}).map((path) => ({ path }));
+}
+function slugify(path) {
+	return path.replace(/\//g, "_") || "_root";
+}
+function createOverlayScratchDirs(scratchDir, roots, { mkdir = node_fs.mkdirSync } = {}) {
+	return roots.map(({ path }) => {
+		let base = (0, node_path.join)(scratchDir, "ephemeral", slugify(path)), upper = (0, node_path.join)(base, "upper"), work = (0, node_path.join)(base, "work");
+		return mkdir(upper, { recursive: !0 }), mkdir(work, { recursive: !0 }), {
+			path,
+			upper,
+			work
+		};
+	});
+}
+function formatFilesystemPlanLog(mode, overlayRoots, writeThrough) {
+	if (mode !== "ephemeral") return [];
+	let lines = ["Filesystem mode: ephemeral"];
+	for (let root of overlayRoots) lines.push(`Ephemeral (writes discarded at step end): ${root}`);
+	for (let entry of writeThrough) lines.push(`Writable (persisted):                    ${entry}`);
+	return lines;
+}
+//#endregion
+//#region src/core/lib/docker/compose-project-name.ts
+function deriveProjectName(containerName) {
+	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
 }
 //#endregion
 //#region src/lib/sandbox/runc-bootstrap.ts
@@ -64669,38 +64750,6 @@ async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
 		pullPolicy: "always"
 	};
 }
-function readKnownBlockedRules(input) {
-	return parseKnownBlockedRulesOrThrow(input);
-}
-function resolveWriteThroughInput({ writeThrough, writable, allowWrite }) {
-	if (allowWrite.trim()) throw new SandboxError("allow_write: has been replaced by write_through:, which covers both filesystem modes. Rename the input -- the path syntax is unchanged.", "ALLOW_WRITE_REMOVED");
-	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
-	return !writeThrough.trim() && writable.trim() ? (console.log("::notice::writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
-}
-const ENGINES = ["universal", "inspect"], ENGINE_ALIASES = { transparent: "universal" };
-function resolveProxyEngine(input) {
-	let trimmed = input?.trim() || "universal", alias = ENGINE_ALIASES[trimmed];
-	alias && console.log("::notice::proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.");
-	let engine = alias ?? trimmed;
-	if (!ENGINES.includes(engine)) throw new SandboxError(`Invalid proxy_engine: ${JSON.stringify(input)}. Must be one of ${ENGINES.join(", ")}.`, "INVALID_PROXY_ENGINE");
-	return engine;
-}
-const FILESYSTEM_MODES = ["persistent", "ephemeral"];
-function resolveFilesystemMode(input) {
-	let trimmed = input?.trim() || "persistent";
-	if (!FILESYSTEM_MODES.includes(trimmed)) throw new SandboxError(`Invalid filesystem_mode: ${JSON.stringify(input)}. Must be one of ${FILESYSTEM_MODES.join(", ")}.`, "INVALID_FILESYSTEM_MODE");
-	return trimmed;
-}
-function splitWriteThroughInput(input) {
-	return input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-}
-function validateFilesystemInputs(filesystemMode, writeThroughPaths) {
-	if (filesystemMode === "ephemeral" && writeThroughPaths.includes("/")) throw new SandboxError("write_through: / drops the read-only restriction wholesale, which has no meaning in filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists to prevent. List the paths that must survive instead.", "FILESYSTEM_INPUT_CONFLICT");
-	for (let path of writeThroughPaths) {
-		let reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
-		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
-	}
-}
 function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}) {
 	let writeThroughPaths;
 	try {
@@ -64745,15 +64794,9 @@ function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}
 	}
 }
 async function main() {
-	let env = process.env, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = getInput("run", { trimWhitespace: !1 });
-	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
-	let proxyEngine = resolveProxyEngine(getInput("proxy_engine"));
+	let env = process.env, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs();
 	console.log(`Proxy engine: ${proxyEngine}`);
-	let filesystemMode = resolveFilesystemMode(getInput("filesystem_mode")), writeThroughInput = resolveWriteThroughInput({
-		writeThrough: getInput("write_through"),
-		writable: getInput("writable"),
-		allowWrite: getInput("allow_write")
-	});
+	let { filesystemMode, writeThroughInput } = readFilesystemInputs();
 	validateFilesystemInputs(filesystemMode, splitWriteThroughInput(writeThroughInput)), checkPasswordlessSudo(), filesystemMode === "ephemeral" && checkOverlayfsSupport();
 	let annotation = createAnnotation(!!env.GITHUB_STEP_SUMMARY), { overlayRoots, writeThroughPaths, createdDirs } = resolveFilesystemPlan(filesystemMode, writeThroughInput, env);
 	if (filesystemMode === "ephemeral") for (let line of formatFilesystemPlanLog(filesystemMode, overlayRoots.map((r) => r.path), writeThroughPaths)) info(line);
@@ -64764,17 +64807,13 @@ async function main() {
 			proxyEngine
 		});
 		console.log(`buildcage: proxy image: ${imageRef}`);
-		let composeFile = defaultComposeFile, proxyMode = getInput("proxy_mode") || "restrict", rules = buildACLRules({
-			httpsRulesInput: getInput("allowed_https_rules"),
-			httpRulesInput: getInput("allowed_http_rules"),
-			ipRulesInput: getInput("allowed_ip_rules")
-		}), knownBlockedRules = readKnownBlockedRules(getInput("known_blocked_rules")), urlRulesInput = getInput("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
+		let composeFile = defaultComposeFile, { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } = readRuleInputs();
 		checkUrlAndTlsRuleSupport({
 			proxyEngine,
 			proxyMode,
 			urlRules,
 			tlsRules
-		}, (message) => annotation.warning(message)), console.log("::group::buildcage: Configured ACL Rules"), logRules("HTTPS", rules.httpsRules), logRules("HTTP", rules.httpRules), logRules("IP", rules.ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules), console.log("::endgroup::");
+		}, (message) => annotation.warning(message)), console.log("::group::buildcage: Configured ACL Rules"), logRules("HTTPS", httpsRules), logRules("HTTP", httpRules), logRules("IP", ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules), console.log("::endgroup::");
 		let containerName = generateContainerName(), projectName = deriveProjectName(containerName);
 		env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots.map((r) => r.path))));
 		let composeEnv = buildComposeEnv({
@@ -64782,9 +64821,9 @@ async function main() {
 			proxyMode,
 			proxyEngine,
 			imageRef,
-			httpsRules: rules.httpsRules,
-			httpRules: rules.httpRules,
-			ipRules: rules.ipRules,
+			httpsRules,
+			httpRules,
+			ipRules,
 			urlRules,
 			tlsRules
 		}, env);
@@ -64813,24 +64852,18 @@ async function main() {
 			try {
 				let report = await fetchReport(containerName, {
 					mode: proxyMode,
-					allowedHttpsRules: rules.httpsRules,
-					allowedHttpRules: rules.httpRules,
-					allowedIpRules: rules.ipRules,
+					allowedHttpsRules: httpsRules,
+					allowedHttpRules: httpRules,
+					allowedIpRules: ipRules,
 					allowedTlsRules: tlsRules,
 					knownBlockedRules
-				}, proxyEngine), failOnBlocked;
-				try {
-					failOnBlocked = getBooleanInput("fail_on_blocked");
-				} catch {
-					failOnBlocked = !0;
-				}
-				let wantsArtifact = wantsTrafficArtifact();
+				}, proxyEngine), failOnBlocked = readFailOnBlocked(), wantsArtifact = wantsTrafficArtifact();
 				await writeReportSummary(report, annotation, {
 					actionRepo,
 					actionRef,
 					runCommand: runInput,
 					actionVersion: readActionVersion(containerName, proxyEngine),
-					stepLabel: getInput("label") || void 0,
+					stepLabel: readStepLabel(),
 					failOnBlocked
 				}, wantsArtifact && report.engine === "inspect"), wantsArtifact && await uploadTrafficArtifact(report, containerName, annotation);
 			} catch (e) {
@@ -64852,6 +64885,7 @@ async function main() {
 		}
 	}
 }
+//#endregion
 process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main().catch((err) => {
 	err instanceof ActionError ? console.log(`::error::${err.message}`) : console.log(`::error::Unexpected error in sandbox: ${errorMessage(err)}`), process.exit(1);
-}), exports.buildACLRules = buildACLRules, exports.readKnownBlockedRules = readKnownBlockedRules, exports.resolveFilesystemMode = resolveFilesystemMode, exports.resolveFilesystemPlan = resolveFilesystemPlan, exports.resolveProxyEngine = resolveProxyEngine, exports.resolveWriteThroughInput = resolveWriteThroughInput, exports.splitWriteThroughInput = splitWriteThroughInput, exports.validateFilesystemInputs = validateFilesystemInputs;
+}), exports.resolveFilesystemPlan = resolveFilesystemPlan;
