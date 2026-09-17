@@ -19225,12 +19225,8 @@ const REGISTRY = "ghcr.io";
 * On failure, throws VerifyImageError — the caller is responsible for printing
 * the error message.
 *
-* Untested by design: this calls the steps below in order and returns what they
-* produce. Each of them (buildVerifyOptions, imageTagFromRef, the oci-registry
-* fetches, verifyBundle, checkImageEngine) is tested directly, the fetches
-* against a stub fetch. The one thing that lives here rather than in them is the
-* ordering, including reading the labels before verifyBundle; that is held by
-* the comment below and not by a test.
+* Untested by design: every step it calls is tested directly. The order they
+* run in is not, so the reason for it is kept inline below.
 */
 /* v8 ignore start */
 async function verifyImageDigest({ actionRef, actionRepo, proxyEngine = "universal" }) {
@@ -19265,9 +19261,7 @@ function requireDigest(digest, actionRef) {
 * of the low-level VerifyImageError, so a caller gets one already-typed
 * error to catch rather than having to translate the result itself.
 *
-* Untested by design, for the same reason as verifyImageDigest above: it joins
-* that function to toProvenanceError and requireDigest, both of which are tested
-* directly. A test here would only re-reach those two through a longer path.
+* Untested by design: toProvenanceError and requireDigest are tested directly.
 */
 /* v8 ignore start */
 async function verifyImageDigestOrThrow({ actionRef, actionRepo, proxyEngine }) {

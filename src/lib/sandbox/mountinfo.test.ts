@@ -13,8 +13,7 @@ const SAMPLE_MOUNTINFO = [
 ].join("\n");
 
 describe("parseMountinfo", () => {
-  // A line with no "-" separator makes indexOf return -1, so the fsType lookup
-  // lands on fields[0]; a truncated one runs off the end. Neither should throw.
+  // No "-" separator, so the fsType lookup lands on fields[0].
   it("yields empty strings for a line too malformed to have the fields", () => {
     expect(parseMountinfo("1 0 0:1 /")).toStrictEqual([{ mountPoint: "", fsType: "1" }]);
   });

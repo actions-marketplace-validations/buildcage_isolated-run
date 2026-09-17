@@ -3,9 +3,8 @@
  *
  * Usage: echo "*.example.com:443 other.com:80" | qjs --std -m convert-rule.js
  *
- * Untested by design: a QuickJS entrypoint reading qjs:std's stdin and writing
- * its stdout. buildRules below holds the conversion and is covered under both
- * Node and real QuickJS by wildcard-rules.test.ts.
+ * Untested by design: buildRules holds the conversion and is covered under both
+ * Node and real QuickJS.
  */
 /* v8 ignore file */
 import * as std from "qjs:std";

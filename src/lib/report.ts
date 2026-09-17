@@ -21,9 +21,7 @@ const COREDNS_LOG_DIR = "/var/log/coredns";
  * read and which builder to call depends on which proxy image ran --
  * inspect's has a second (CoreDNS) log the universal image does not.
  */
-// Untested by design: this only picks which of two builders to call and hands
-// them a log. readRotatedLog, buildUniversalReportData and buildInspectReportData
-// are each tested directly, so nothing of this function's own is left to assert.
+// Untested by design: the log reader and both builders are tested directly.
 /* v8 ignore start */
 export function fetchReport(
   containerName: string,
