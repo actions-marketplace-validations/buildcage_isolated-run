@@ -105,6 +105,13 @@ export interface HostProbes {
 // machine's own /proc and /dev/shm, which is what the seam exists to avoid.
 // Every judgement they feed -- the candidate order, the limits parse, the
 // tmpfs check and the size arithmetic -- is a pure function above.
+//
+// What no unit test can check is the wiring itself: a typo in a /proc path or
+// the wrong predicate would leave the pure functions correct and still produce
+// the wrong spec. test/integration-test-host-parity.sh is what covers that,
+// asserting from inside a real sandbox that RLIMIT_NOFILE, the hostname and
+// /dev/shm's size all match the runner's own. A wrong setprivPath needs no
+// assertion: it wraps the step's script, so nothing would start at all.
 /* v8 ignore start */
 function readOptionalFile(path: string): string | undefined {
   try {
