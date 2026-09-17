@@ -452,8 +452,8 @@ reported as blocked; see
 
 ### Inside the sandbox
 
-- **The isolated command cannot use Docker.** If `docker`, or another container or VM runtime group,
-  is the runner's primary group, it is substituted for a safe one before the command runs, and the
+- The isolated command cannot use Docker. If `docker`, or another container or VM runtime group, is
+  the runner's primary group, it is substituted for a safe one before the command runs, and the
   runtime sockets themselves are masked. See
   [Isolation Mechanisms](docs/security.md#isolation-mechanisms).
 - `/dev` holds the standard container device set, so a command needing a host device node such as
