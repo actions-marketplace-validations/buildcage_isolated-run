@@ -39,6 +39,7 @@ Docker build's `RUN` steps rather than a workflow step, use
 - [Scope](#scope)
 - [Limitations](#limitations)
 - [FAQ](#faq)
+- [GitHub's native egress firewall](#githubs-native-egress-firewall)
 - [Documentation](#documentation)
 
 ## Requirements
@@ -521,6 +522,24 @@ generated allowlist already has them.
 `$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH` and `$GITHUB_STEP_SUMMARY` live under
 `$RUNNER_TEMP`, which the overlay discards. Name the ones the command writes to in
 `write_through:`. See [Filesystem access](#filesystem-access).
+
+## GitHub's native egress firewall
+
+GitHub is building an egress firewall directly into Actions runners
+([technical preview](https://github.com/github-early-access/actions-native-egress-firewall) as of
+September 2026): opt a job into a firewall-enabled runner image and its traffic is inspected outside
+the runner VM, in `log` or `enforce` mode, from a single `.github/egress-firewall.yaml` in the
+repository. Because it sits outside the VM, a workflow that gains root inside the runner cannot
+switch it off. Firewall-enabled images are GitHub-hosted and Linux only.
+
+One policy for the whole run is one allowlist for every step in it: the destinations
+`actions/checkout`, the caches and the setup actions need stay open to every other step as well.
+Buildcage writes a separate allowlist for the one step you don't trust, so it gets the hosts its
+command needs and nothing else, and a rule there can name a method and a URL rather than only a
+host. The two compose: a perimeter the job can't switch off, and a tighter policy inside it.
+
+Buildcage also runs on any Linux runner with Docker, self-hosted included, rather than on a
+firewall-enabled runner image.
 
 ## Documentation
 
