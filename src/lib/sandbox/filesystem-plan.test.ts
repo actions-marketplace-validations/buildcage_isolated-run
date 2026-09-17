@@ -1,13 +1,13 @@
 /**
- * Unit tests for main.ts
+ * Unit tests for filesystem-plan.ts
  *
- * Run with: vp test run src/main.test.ts
+ * Run with: vp test run src/lib/sandbox/filesystem-plan.test.ts
  */
 import { describe, it, expect, vi } from "vitest";
 
-import { resolveFilesystemPlan } from "./main.ts";
-import { SandboxError } from "./lib/errors.ts";
-import { SANDBOX_SCRATCH_BASE } from "./lib/sandbox/scratch-dir.ts";
+import { resolveFilesystemPlan } from "./filesystem-plan.ts";
+import { SandboxError } from "../errors.ts";
+import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 
 describe("resolveFilesystemPlan", () => {
   const ENV = {

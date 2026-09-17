@@ -1,4 +1,3 @@
-Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 //#region \0rolldown/runtime.js
 var __create = Object.create, __defProp = Object.defineProperty, __getOwnPropDesc = Object.getOwnPropertyDescriptor, __getOwnPropNames = Object.getOwnPropertyNames, __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty, __esmMin = (fn, res, err) => () => {
 	if (err) throw err[0];
@@ -18453,6 +18452,51 @@ function formatFilesystemPlanLog(mode, overlayRoots, writeThrough) {
 	for (let root of overlayRoots) lines.push(`Ephemeral (writes discarded at step end): ${root}`);
 	for (let entry of writeThrough) lines.push(`Writable (persisted):                    ${entry}`);
 	return lines;
+}
+//#endregion
+//#region src/lib/sandbox/filesystem-plan.ts
+function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}) {
+	let writeThroughPaths;
+	try {
+		writeThroughPaths = resolveWriteThroughPaths(writeThroughInput, env);
+	} catch (e) {
+		throw new SandboxError(`Invalid write_through: ${errorMessage(e)}`, "INVALID_WRITE_THROUGH_PATH");
+	}
+	if (validateFilesystemInputs(filesystemMode, writeThroughPaths), writeThroughPaths.includes("/")) return {
+		overlayRoots: [],
+		writeThroughPaths,
+		createdDirs: []
+	};
+	try {
+		assertScratchBaseNotWritable(writeThroughPaths);
+	} catch (e) {
+		throw new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT");
+	}
+	let createdDirs;
+	try {
+		createdDirs = ensureWriteThroughTargetsExist(writeThroughPaths, env, deps);
+	} catch (e) {
+		throw e instanceof WriteThroughTargetMissingError ? new SandboxError(e.message, "WRITE_THROUGH_TARGET_MISSING") : e instanceof WriteThroughTargetUncreatableError ? new SandboxError(e.message, "WRITE_THROUGH_TARGET_UNCREATABLE") : new SandboxError(`Invalid write_through: ${errorMessage(e)}`, "INVALID_WRITE_THROUGH_PATH");
+	}
+	if (filesystemMode !== "ephemeral") return {
+		overlayRoots: [],
+		writeThroughPaths,
+		createdDirs
+	};
+	try {
+		return {
+			overlayRoots: determineOverlayRoots([
+				env.HOME,
+				env.RUNNER_TEMP,
+				"/tmp",
+				env.GITHUB_WORKSPACE
+			].filter((p) => !!p), writeThroughPaths, deps),
+			writeThroughPaths,
+			createdDirs
+		};
+	} catch (e) {
+		throw new SandboxError(`Failed to determine filesystem_mode: ephemeral's overlay roots: ${errorMessage(e)}`, "FILESYSTEM_PLAN_FAILED");
+	}
 }
 //#endregion
 //#region src/core/lib/docker/compose-project-name.ts
@@ -64764,49 +64808,6 @@ async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
 		pullPolicy: "always"
 	};
 }
-function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}) {
-	let writeThroughPaths;
-	try {
-		writeThroughPaths = resolveWriteThroughPaths(writeThroughInput, env);
-	} catch (e) {
-		throw new SandboxError(`Invalid write_through: ${errorMessage(e)}`, "INVALID_WRITE_THROUGH_PATH");
-	}
-	if (validateFilesystemInputs(filesystemMode, writeThroughPaths), writeThroughPaths.includes("/")) return {
-		overlayRoots: [],
-		writeThroughPaths,
-		createdDirs: []
-	};
-	try {
-		assertScratchBaseNotWritable(writeThroughPaths);
-	} catch (e) {
-		throw new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT");
-	}
-	let createdDirs;
-	try {
-		createdDirs = ensureWriteThroughTargetsExist(writeThroughPaths, env, deps);
-	} catch (e) {
-		throw e instanceof WriteThroughTargetMissingError ? new SandboxError(e.message, "WRITE_THROUGH_TARGET_MISSING") : e instanceof WriteThroughTargetUncreatableError ? new SandboxError(e.message, "WRITE_THROUGH_TARGET_UNCREATABLE") : new SandboxError(`Invalid write_through: ${errorMessage(e)}`, "INVALID_WRITE_THROUGH_PATH");
-	}
-	if (filesystemMode !== "ephemeral") return {
-		overlayRoots: [],
-		writeThroughPaths,
-		createdDirs
-	};
-	try {
-		return {
-			overlayRoots: determineOverlayRoots([
-				env.HOME,
-				env.RUNNER_TEMP,
-				"/tmp",
-				env.GITHUB_WORKSPACE
-			].filter((p) => !!p), writeThroughPaths, deps),
-			writeThroughPaths,
-			createdDirs
-		};
-	} catch (e) {
-		throw new SandboxError(`Failed to determine filesystem_mode: ephemeral's overlay roots: ${errorMessage(e)}`, "FILESYSTEM_PLAN_FAILED");
-	}
-}
 async function main() {
 	let env = process.env, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs();
 	console.log(`Proxy engine: ${proxyEngine}`);
@@ -64901,5 +64902,5 @@ async function main() {
 		}
 	}
 }
+process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main().catch(exitOnFatalError("sandbox"));
 //#endregion
-process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main().catch(exitOnFatalError("sandbox")), exports.resolveFilesystemPlan = resolveFilesystemPlan;
