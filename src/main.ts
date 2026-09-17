@@ -51,7 +51,6 @@ const LOCAL_IMAGE_OVERRIDE_ENABLED = process.env.BUILDCAGE_BUILD_TEST_HOOKS === 
 /**
  * Verifies image provenance and resolves the digest-pinned image ref for
  * isolated-run's (buildkitd-less) proxy image.
- *
  */
 async function resolveVerifiedImage({
   actionRef,
