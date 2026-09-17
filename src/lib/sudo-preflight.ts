@@ -36,6 +36,18 @@ export function describeSudoFailure(
   return `'sudo' is not available without a password on this runner.${slimNote} ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
 
+export interface CheckPasswordlessSudoOptions {
+  execFile?: (command: string, args: string[]) => void;
+}
+
+// Untested by design: the default behind checkPasswordlessSudo's seam, which
+// only hands node:child_process what the tested caller decided to run.
+/* v8 ignore start */
+function defaultExecFile(command: string, args: string[]): void {
+  execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+}
+/* v8 ignore stop */
+
 /**
  * Fails fast, before spinning up the proxy container, so a missing
  * passwordless-sudo setup is never misattributed to the user's own `run:`
@@ -43,9 +55,11 @@ export function describeSudoFailure(
  * a specific command (rather than blanket NOPASSWD:ALL) can pass this probe
  * yet still fail runIsolated()'s later, differently-shaped invocation.
  */
-export function checkPasswordlessSudo(): void {
+export function checkPasswordlessSudo({
+  execFile = defaultExecFile,
+}: CheckPasswordlessSudoOptions = {}): void {
   try {
-    execFileSync("sudo", ["-n", "true"], { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+    execFile("sudo", ["-n", "true"]);
   } catch (e) {
     throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
   }

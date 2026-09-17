@@ -36,18 +36,41 @@ export interface RunIsolatedOptions {
   envBlob: Buffer;
 }
 
-export function runIsolated({
-  runcPath,
-  proxyNetns,
-  bundleDir,
-  containerId,
-  netnsName,
-  rootfsBindDir,
-  gateway,
-  dns,
-  targetIp,
-  envBlob,
-}: RunIsolatedOptions): number {
+/** What execFileSync needs for this call, named so the seam can carry it. */
+export interface ExecFileOptions {
+  input: Buffer;
+  stdio: ["pipe", "inherit", "inherit"];
+}
+
+export interface RunIsolatedDeps {
+  /** Throws on a non-zero exit, carrying it as `status` -- the shape
+   *  execFileSync already has, which is what the exit-code read below wants. */
+  execFile?: (command: string, args: string[], options: ExecFileOptions) => void;
+}
+
+// Untested by design: the default behind runIsolated's seam, which only hands
+// node:child_process what the tested caller assembled.
+/* v8 ignore start */
+function defaultExecFile(command: string, args: string[], options: ExecFileOptions): void {
+  execFileSync(command, args, options);
+}
+/* v8 ignore stop */
+
+export function runIsolated(
+  {
+    runcPath,
+    proxyNetns,
+    bundleDir,
+    containerId,
+    netnsName,
+    rootfsBindDir,
+    gateway,
+    dns,
+    targetIp,
+    envBlob,
+  }: RunIsolatedOptions,
+  { execFile = defaultExecFile }: RunIsolatedDeps = {},
+): number {
   const runIsolatedShPath = join(__dirname, "..", "scripts", "run-isolated.sh");
 
   const args = [
@@ -75,7 +98,7 @@ export function runIsolated({
   ];
 
   try {
-    execFileSync("sudo", args, { input: envBlob, stdio: ["pipe", "inherit", "inherit"] });
+    execFile("sudo", args, { input: envBlob, stdio: ["pipe", "inherit", "inherit"] });
     return 0;
   } catch (e) {
     // A non-zero exit from the isolated command (or run-isolated.sh itself)

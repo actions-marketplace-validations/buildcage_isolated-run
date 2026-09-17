@@ -17829,21 +17829,30 @@ const SYSTEM_CA_CANDIDATES = [
 	"/etc/pki/tls/cacert.pem",
 	"/etc/ssl/cert.pem"
 ], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem", SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
-function extractCaCert(containerName, destDir) {
+function defaultExec$1(command, args) {
+	(0, node_child_process.execFileSync)(command, args);
+}
+function defaultReadFile$1(path) {
+	return (0, node_fs.readFileSync)(path, "utf8");
+}
+function defaultWriteFile(path, contents, mode) {
+	(0, node_fs.writeFileSync)(path, contents, { mode });
+}
+function extractCaCert(containerName, destDir, { exec = defaultExec$1, chmod = node_fs.chmodSync } = {}) {
 	let caCertPath = (0, node_path.join)(destDir, "proxy-ca.pem");
-	return (0, node_child_process.execFileSync)("docker", buildDockerCpArgs({
+	return exec("docker", buildDockerCpArgs({
 		containerName,
 		containerPath: "/opt/buildcage/ca.pem",
 		hostPath: caCertPath
-	})), (0, node_fs.chmodSync)(caCertPath, 420), caCertPath;
+	})), chmod(caCertPath, 420), caCertPath;
 }
-function writeCaTrustFiles(caCertPath, dir) {
-	let ca = (0, node_fs.readFileSync)(caCertPath, "utf8").trimEnd(), ownCaPath = (0, node_path.join)(dir, "buildcage-ca.pem");
-	(0, node_fs.writeFileSync)(ownCaPath, `${ca}\n`, { mode: 420 });
-	let systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => (0, node_fs.existsSync)(p)), systemCaPath;
+function writeCaTrustFiles(caCertPath, dir, { readFile = defaultReadFile$1, writeFile = defaultWriteFile, exists = node_fs.existsSync } = {}) {
+	let ca = readFile(caCertPath).trimEnd(), ownCaPath = (0, node_path.join)(dir, "buildcage-ca.pem");
+	writeFile(ownCaPath, `${ca}\n`, 420);
+	let systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCaPath;
 	if (systemStoreSource) {
-		let existing = (0, node_fs.readFileSync)(systemStoreSource, "utf8").trimEnd();
-		systemCaPath = (0, node_path.join)(dir, "system-ca-bundle.pem"), (0, node_fs.writeFileSync)(systemCaPath, `${existing}\n${ca}\n`, { mode: 420 });
+		let existing = readFile(systemStoreSource).trimEnd();
+		systemCaPath = (0, node_path.join)(dir, "system-ca-bundle.pem"), writeFile(systemCaPath, `${existing}\n${ca}\n`, 420);
 	}
 	return {
 		ownCaPath,
@@ -18154,7 +18163,7 @@ function defaultStat(path) {
 		mode: s.mode
 	};
 }
-function defaultExecFile(command, args) {
+function defaultExecFile$2(command, args) {
 	(0, node_child_process.execFileSync)(command, args, { stdio: [
 		"ignore",
 		"ignore",
@@ -18174,7 +18183,7 @@ function pathSegmentsBetween(ancestor, descendant) {
 	for (; current !== ancestor;) segments.unshift(current), current = (0, node_path.dirname)(current);
 	return segments;
 }
-function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.existsSync, stat = defaultStat, execFile = defaultExecFile } = {}) {
+function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.existsSync, stat = defaultStat, execFile = defaultExecFile$2 } = {}) {
 	let knownFileValues = new Set(KNOWN_FILE_VARS.map((name) => env[name]).filter((v) => !!v)), created = [], rollback = () => {
 		for (let dir of [...created].reverse()) try {
 			execFile("sudo", [
@@ -18216,7 +18225,7 @@ function ensureWriteThroughTargetsExist(resolvedPaths, env, { exists = node_fs.e
 	}
 	return created;
 }
-function removeCreatedDirsIfEmpty(created, { execFile = defaultExecFile } = {}) {
+function removeCreatedDirsIfEmpty(created, { execFile = defaultExecFile$2 } = {}) {
 	for (let dir of [...created].reverse()) try {
 		execFile("sudo", [
 			...asOwner(dir),
@@ -18342,16 +18351,19 @@ function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync
 	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
 	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
 }
-function checkPasswordlessSudo() {
+function defaultExecFile$1(command, args) {
+	(0, node_child_process.execFileSync)(command, args, {
+		encoding: "utf8",
+		stdio: [
+			"ignore",
+			"ignore",
+			"pipe"
+		]
+	});
+}
+function checkPasswordlessSudo({ execFile = defaultExecFile$1 } = {}) {
 	try {
-		(0, node_child_process.execFileSync)("sudo", ["-n", "true"], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"ignore",
-				"pipe"
-			]
-		});
+		execFile("sudo", ["-n", "true"]);
 	} catch (e) {
 		throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
 	}
@@ -18505,22 +18517,31 @@ function deriveProjectName(containerName) {
 }
 //#endregion
 //#region src/lib/sandbox/runc-bootstrap.ts
-function generateBaseOciSpec(runcPath, bundleDir) {
-	return (0, node_child_process.execFileSync)(runcPath, ["spec"], { cwd: bundleDir }), JSON.parse((0, node_fs.readFileSync)((0, node_path.join)(bundleDir, "config.json"), "utf8"));
+function generateBaseOciSpec(runcPath, bundleDir, { execIn = defaultExecIn, readFile = defaultReadFile } = {}) {
+	return execIn(runcPath, ["spec"], bundleDir), JSON.parse(readFile((0, node_path.join)(bundleDir, "config.json")));
 }
-function extractRuncBootstrap({ containerName, destDir }) {
-	let runcPath = (0, node_path.join)(destDir, "runc"), genSeccompProfilePath = (0, node_path.join)(destDir, "gen-seccomp-profile");
-	(0, node_child_process.execFileSync)("docker", buildDockerCpArgs({
+function defaultExec(command, args) {
+	return (0, node_child_process.execFileSync)(command, args, { encoding: "utf8" });
+}
+function defaultExecIn(command, args, cwd) {
+	(0, node_child_process.execFileSync)(command, args, { cwd });
+}
+function defaultReadFile(path) {
+	return (0, node_fs.readFileSync)(path, "utf8");
+}
+function extractRuncBootstrap({ containerName, destDir }, deps = {}) {
+	let { exec = defaultExec, chmod = node_fs.chmodSync, remove = node_fs.rmSync } = deps, runcPath = (0, node_path.join)(destDir, "runc"), genSeccompProfilePath = (0, node_path.join)(destDir, "gen-seccomp-profile");
+	exec("docker", buildDockerCpArgs({
 		containerName,
 		containerPath: "/opt/buildcage/bin/runc",
 		hostPath: runcPath
-	})), (0, node_child_process.execFileSync)("docker", buildDockerCpArgs({
+	})), exec("docker", buildDockerCpArgs({
 		containerName,
 		containerPath: "/opt/buildcage/bin/gen-seccomp-profile",
 		hostPath: genSeccompProfilePath
-	})), (0, node_fs.chmodSync)(runcPath, 493), (0, node_fs.chmodSync)(genSeccompProfilePath, 493);
-	let seccompProfile = JSON.parse((0, node_child_process.execFileSync)(genSeccompProfilePath, { encoding: "utf8" })), baseSpec = generateBaseOciSpec(runcPath, destDir);
-	return (0, node_fs.rmSync)(genSeccompProfilePath), {
+	})), chmod(runcPath, 493), chmod(genSeccompProfilePath, 493);
+	let seccompProfile = JSON.parse(exec(genSeccompProfilePath, [])), baseSpec = generateBaseOciSpec(runcPath, destDir, deps);
+	return remove(genSeccompProfilePath), {
 		runcPath,
 		seccompProfile,
 		baseSpec
@@ -18539,11 +18560,14 @@ const PRIVILEGED_GROUP_NAMES = new Set([
 	"kvm",
 	"sudo",
 	"wheel"
-]), FALLBACK_GROUP_NAMES = ["nogroup", "nobody"], FALLBACK_GID = 65534;
-function readGroupNamesByGid(groupFile) {
+]), FALLBACK_GROUP_NAMES = ["nogroup", "nobody"], FALLBACK_GID = 65534, realHost = {
+	readGroupFile: (path) => (0, node_fs.readFileSync)(path, "utf8"),
+	gidOf: (path) => (0, node_fs.statSync)(path).gid
+};
+function readGroupNamesByGid(groupFile, host) {
 	let content;
 	try {
-		content = (0, node_fs.readFileSync)(groupFile, "utf8");
+		content = host.readGroupFile(groupFile);
 	} catch {
 		return null;
 	}
@@ -18557,15 +18581,15 @@ function readGroupNamesByGid(groupFile) {
 	}
 	return map;
 }
-function ownerGids(paths) {
+function ownerGids(paths, host) {
 	let gids = new Set();
 	for (let p of paths) try {
-		gids.add((0, node_fs.statSync)(p).gid);
+		gids.add(host.gidOf(p));
 	} catch {}
 	return gids;
 }
 function resolveSandboxGid(primaryGid, env, options = {}) {
-	let groupFile = options.groupFile ?? "/etc/group", runtimeSocketPaths = options.runtimeSocketPaths ?? [...extra_masked_runtime_paths_default, ...rootlessRuntimeSocketPaths(env)], groupNamesByGid = readGroupNamesByGid(groupFile), socketOwnerGids = ownerGids(runtimeSocketPaths), isPrivileged = (gid) => gid === 0 || socketOwnerGids.has(gid) ? !0 : groupNamesByGid?.get(gid)?.some((name) => PRIVILEGED_GROUP_NAMES.has(name)) ?? !1;
+	let groupFile = options.groupFile ?? "/etc/group", runtimeSocketPaths = options.runtimeSocketPaths ?? [...extra_masked_runtime_paths_default, ...rootlessRuntimeSocketPaths(env)], host = options.host ?? realHost, groupNamesByGid = readGroupNamesByGid(groupFile, host), socketOwnerGids = ownerGids(runtimeSocketPaths, host), isPrivileged = (gid) => gid === 0 || socketOwnerGids.has(gid) ? !0 : groupNamesByGid?.get(gid)?.some((name) => PRIVILEGED_GROUP_NAMES.has(name)) ?? !1;
 	if (!isPrivileged(primaryGid)) return { gid: primaryGid };
 	let gidForName = (name) => {
 		if (groupNamesByGid) {
@@ -18655,7 +18679,10 @@ function writeEnvLoader(execDir) {
 //#endregion
 //#region src/lib/sandbox/run.ts
 const __dirname$2 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href));
-function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, rootfsBindDir, gateway, dns, targetIp, envBlob }) {
+function defaultExecFile(command, args, options) {
+	(0, node_child_process.execFileSync)(command, args, options);
+}
+function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, rootfsBindDir, gateway, dns, targetIp, envBlob }, { execFile = defaultExecFile } = {}) {
 	let args = [
 		"-n",
 		"--",
@@ -18680,7 +18707,7 @@ function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, 
 		targetIp
 	];
 	try {
-		return (0, node_child_process.execFileSync)("sudo", args, {
+		return execFile("sudo", args, {
 			input: envBlob,
 			stdio: [
 				"pipe",

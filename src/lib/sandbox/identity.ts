@@ -21,13 +21,35 @@ const PRIVILEGED_GROUP_NAMES = new Set([
 const FALLBACK_GROUP_NAMES = ["nogroup", "nobody"];
 const FALLBACK_GID = 65534;
 
+/**
+ * What this module needs to know about the host: its group database and who
+ * owns a path. Injected as one collaborator rather than as loose callbacks --
+ * both answers come from the same place, and a test that supplies one without
+ * the other would be describing a host that cannot exist.
+ */
+export interface HostGroups {
+  /** Contents of a /etc/group-formatted file. Throws if unreadable. */
+  readGroupFile(path: string): string;
+  /** Owning GID of a path. Throws if it does not exist. */
+  gidOf(path: string): number;
+}
+
+// Untested by design: the default behind resolveSandboxGid's seam, which only
+// hands node:fs the paths the tested caller decided to look at.
+/* v8 ignore start */
+const realHost: HostGroups = {
+  readGroupFile: (path) => readFileSync(path, "utf8"),
+  gidOf: (path) => statSync(path).gid,
+};
+/* v8 ignore stop */
+
 /** Parses a /etc/group-formatted file into gid -> group name(s). null if the
  *  file can't be read at all (missing, permission denied) -- callers fall
  *  back to the runtime-socket-ownership check alone in that case. */
-function readGroupNamesByGid(groupFile: string): Map<number, string[]> | null {
+function readGroupNamesByGid(groupFile: string, host: HostGroups): Map<number, string[]> | null {
   let content: string;
   try {
-    content = readFileSync(groupFile, "utf8");
+    content = host.readGroupFile(groupFile);
   } catch {
     return null;
   }
@@ -46,11 +68,11 @@ function readGroupNamesByGid(groupFile: string): Map<number, string[]> | null {
 
 /** GIDs owning any of `paths` on this host, regardless of group name.
  *  A path that doesn't exist is skipped, not an error. */
-function ownerGids(paths: string[]): Set<number> {
+function ownerGids(paths: string[], host: HostGroups): Set<number> {
   const gids = new Set<number>();
   for (const p of paths) {
     try {
-      gids.add(statSync(p).gid);
+      gids.add(host.gidOf(p));
     } catch {
       // Doesn't exist on this host -- nothing to protect against here.
     }
@@ -69,6 +91,8 @@ export interface ResolveSandboxGidOptions {
   groupFile?: string;
   /** @default EXTRA_MASKED_RUNTIME_PATHS + rootlessRuntimeSocketPaths(env) -- overridable for tests. */
   runtimeSocketPaths?: string[];
+  /** @default the real host's /etc/group and stat. */
+  host?: HostGroups;
 }
 
 /**
@@ -88,8 +112,13 @@ export function resolveSandboxGid(
     ...EXTRA_MASKED_RUNTIME_PATHS,
     ...rootlessRuntimeSocketPaths(env),
   ];
-  const groupNamesByGid = readGroupNamesByGid(groupFile);
-  const socketOwnerGids = ownerGids(runtimeSocketPaths);
+  // Untested by design: the real host behind this seam. Reaching for it in a
+  // test would mean reading the machine's own /etc/group, which is the thing
+  // the seam exists to avoid.
+  /* v8 ignore next */
+  const host = options.host ?? realHost;
+  const groupNamesByGid = readGroupNamesByGid(groupFile, host);
+  const socketOwnerGids = ownerGids(runtimeSocketPaths, host);
 
   const isPrivileged = (gid: number): boolean => {
     if (gid === 0) return true;

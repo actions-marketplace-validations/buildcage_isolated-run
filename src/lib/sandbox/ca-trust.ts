@@ -69,9 +69,37 @@ export const SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
  * extractRuncBootstrap pulls runc and gen-seccomp-profile: `docker cp`, run
  * once per `run:` step, into this run's own scratch dir.
  */
-export function extractCaCert(containerName: string, destDir: string): string {
+export interface CaTrustDeps {
+  exec?: (command: string, args: string[]) => void;
+  readFile?: (path: string) => string;
+  writeFile?: (path: string, contents: string, mode: number) => void;
+  exists?: (path: string) => boolean;
+  chmod?: (path: string, mode: number) => void;
+}
+
+// Untested by design: the defaults behind this module's seams, which only hand
+// node:fs and node:child_process what the tested caller decided.
+/* v8 ignore start */
+function defaultExec(command: string, args: string[]): void {
+  execFileSync(command, args);
+}
+
+function defaultReadFile(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+function defaultWriteFile(path: string, contents: string, mode: number): void {
+  writeFileSync(path, contents, { mode });
+}
+/* v8 ignore stop */
+
+export function extractCaCert(
+  containerName: string,
+  destDir: string,
+  { exec = defaultExec, chmod = chmodSync }: CaTrustDeps = {},
+): string {
   const caCertPath = join(destDir, "proxy-ca.pem");
-  execFileSync(
+  exec(
     "docker",
     buildDockerCpArgs({
       containerName,
@@ -79,7 +107,7 @@ export function extractCaCert(containerName: string, destDir: string): string {
       hostPath: caCertPath,
     }),
   );
-  chmodSync(caCertPath, 0o644);
+  chmod(caCertPath, 0o644);
   return caCertPath;
 }
 
@@ -88,18 +116,26 @@ export function extractCaCert(containerName: string, destDir: string): string {
  * (this run's own scratch directory). `caCertPath` is the proxy's own CA,
  * already `docker cp`'d onto the host -- see extractCaCert.
  */
-export function writeCaTrustFiles(caCertPath: string, dir: string): CaTrustFiles {
-  const ca = readFileSync(caCertPath, "utf8").trimEnd();
+export function writeCaTrustFiles(
+  caCertPath: string,
+  dir: string,
+  {
+    readFile = defaultReadFile,
+    writeFile = defaultWriteFile,
+    exists = existsSync,
+  }: CaTrustDeps = {},
+): CaTrustFiles {
+  const ca = readFile(caCertPath).trimEnd();
 
   const ownCaPath = join(dir, "buildcage-ca.pem");
-  writeFileSync(ownCaPath, `${ca}\n`, { mode: 0o644 });
+  writeFile(ownCaPath, `${ca}\n`, 0o644);
 
-  const systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => existsSync(p));
+  const systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => exists(p));
   let systemCaPath: string | undefined;
   if (systemStoreSource) {
-    const existing = readFileSync(systemStoreSource, "utf8").trimEnd();
+    const existing = readFile(systemStoreSource).trimEnd();
     systemCaPath = join(dir, "system-ca-bundle.pem");
-    writeFileSync(systemCaPath, `${existing}\n${ca}\n`, { mode: 0o644 });
+    writeFile(systemCaPath, `${existing}\n${ca}\n`, 0o644);
   }
 
   return { ownCaPath, systemCaPath };
