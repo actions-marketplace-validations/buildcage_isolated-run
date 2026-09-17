@@ -274,9 +274,12 @@ native `run:` step.
 
 ## Filesystem access
 
+<img src="assets/diagram-filesystem.png" alt="The layers the run command's filesystem is made of" width="1000">
+
 Only `$GITHUB_WORKSPACE`, `$HOME`, `/tmp`, and `$RUNNER_TEMP` are writable by default. Every other
 path is remounted read-only for the duration of the `run` command. What the command can _read_ is
-not restricted.
+not restricted. The build CA in the figure is the `inspect` engine's, and it is mounted after every
+writable path, so a `write_through:` entry cannot take the sandbox's CA trust with it.
 
 `filesystem_mode` controls what happens to those writes once the step ends:
 
