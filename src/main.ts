@@ -20,27 +20,13 @@ import {
   readStepLabel,
   splitWriteThroughInput,
   validateFilesystemInputs,
-  type FilesystemMode,
 } from "./lib/inputs.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
 import { buildComposeEnv } from "./lib/compose-env.ts";
 import { checkPasswordlessSudo } from "./lib/sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./lib/overlayfs-preflight.ts";
-import {
-  determineOverlayRoots,
-  formatFilesystemPlanLog,
-  type OverlayRoot,
-} from "./lib/sandbox/ephemeral-fs.ts";
-import {
-  resolveWriteThroughPaths,
-  ensureWriteThroughTargetsExist,
-  removeCreatedDirsIfEmpty,
-  WriteThroughTargetMissingError,
-  WriteThroughTargetUncreatableError,
-  WRITE_THROUGH_ALL,
-  type CreatedDir,
-} from "./lib/sandbox/write-through.ts";
-import { assertScratchBaseNotWritable } from "./lib/sandbox/paths.ts";
+import { removeCreatedDirsIfEmpty } from "./lib/sandbox/write-through.ts";
+import { formatFilesystemPlanLog, resolveFilesystemPlan } from "./lib/sandbox/filesystem-plan.ts";
 import { generateContainerName, getContainerNetns } from "./lib/container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
 import { runSandboxedCommand } from "./lib/sandbox/sandboxed-command.ts";
@@ -48,6 +34,11 @@ import { startSandboxProxy, stopSandboxProxy } from "./lib/proxy-lifecycle.ts";
 import { uploadTrafficArtifact, wantsTrafficArtifact } from "./lib/traffic-artifact.ts";
 import { fetchReport, readActionVersion, writeReportSummary } from "./lib/report.ts";
 
+// Untested by design, down to the end of the file: what is left here is the
+// entry point's own wiring -- the compose file path, the local-image gate, the
+// docker/runc invocations main() sequences, and the self-invocation guard a
+// test can never be inside. Every unit main() calls is tested directly.
+/* v8 ignore start */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
 
@@ -60,11 +51,7 @@ const LOCAL_IMAGE_OVERRIDE_ENABLED = process.env.BUILDCAGE_BUILD_TEST_HOOKS === 
 /**
  * Verifies image provenance and resolves the digest-pinned image ref for
  * isolated-run's (buildkitd-less) proxy image.
- *
- * Untested by design: verifyImageDigestOrThrow and resolveBuildcageImageRef
- * are tested directly.
  */
-/* v8 ignore start */
 async function resolveVerifiedImage({
   actionRef,
   actionRepo,
@@ -80,114 +67,6 @@ async function resolveVerifiedImage({
   };
 }
 
-/**
- * Never sent to the container's ACL — used only for report-time annotation
- * of expected vs. unexpected blocked connections.
- */ /* v8 ignore stop */
-
-export interface FilesystemPlan {
-  /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots). [] in persistent mode. */
-  overlayRoots: OverlayRoot[];
-  /** Already resolved (resolveWriteThroughPaths) and pre-created
-   *  (ensureWriteThroughTargetsExist), in either filesystem mode. */
-  writeThroughPaths: string[];
-  /** The directory segments pre-creating those paths actually created, for
-   *  removeCreatedDirsIfEmpty to give back once the step is done. */
-  createdDirs: CreatedDir[];
-}
-
-/** Test-only seam onto ensureWriteThroughTargetsExist/determineOverlayRoots's
- *  own filesystem/sudo dependencies -- see write-through.ts / ephemeral-fs.ts. */
-export interface ResolveFilesystemPlanDeps {
-  exists?: (path: string) => boolean;
-  stat?: (path: string) => { uid: number; gid: number; mode: number };
-  execFile?: (command: string, args: string[]) => void;
-  deviceOf?: (path: string) => number;
-}
-
-/**
- * Resolves + pre-creates the write_through targets (write-through.ts) and, in
- * ephemeral mode, folds the overlay-root candidates down to what's actually
- * needed (ephemeral-fs.ts). Throws SandboxError, never those modules' own
- * error classes directly, so a caller doesn't need to know about those.
- */
-export function resolveFilesystemPlan(
-  filesystemMode: FilesystemMode,
-  writeThroughInput: string,
-  env: NodeJS.ProcessEnv,
-  deps: ResolveFilesystemPlanDeps = {},
-): FilesystemPlan {
-  let writeThroughPaths: string[];
-  try {
-    writeThroughPaths = resolveWriteThroughPaths(writeThroughInput, env);
-  } catch (e) {
-    throw new SandboxError(
-      `Invalid write_through: ${errorMessage(e)}`,
-      "INVALID_WRITE_THROUGH_PATH",
-    );
-  }
-
-  // The authoritative call, ahead of the early return below: reaching that
-  // with the sentinel under ephemeral would leave the run with no overlay.
-  validateFilesystemInputs(filesystemMode, writeThroughPaths);
-
-  // `/` drops the read-only restriction wholesale (persistent only, see
-  // validateFilesystemInputs), so no path is bind-mounted individually --
-  // nothing to create, and buildOciConfig skips the scratch-base guard for
-  // the same reason.
-  if (writeThroughPaths.includes(WRITE_THROUGH_ALL)) {
-    return { overlayRoots: [], writeThroughPaths, createdDirs: [] };
-  }
-
-  // Before anything is created: buildOciConfig rejects a path overlapping the
-  // sandbox's own scratch base outright, so checking it here keeps a doomed
-  // input from leaving freshly-created directories behind. Its own check
-  // stays as the authoritative one -- this is the early copy.
-  try {
-    assertScratchBaseNotWritable(writeThroughPaths);
-  } catch (e) {
-    throw new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT");
-  }
-
-  let createdDirs: CreatedDir[];
-  try {
-    createdDirs = ensureWriteThroughTargetsExist(writeThroughPaths, env, deps);
-  } catch (e) {
-    if (e instanceof WriteThroughTargetMissingError) {
-      throw new SandboxError(e.message, "WRITE_THROUGH_TARGET_MISSING");
-    }
-    if (e instanceof WriteThroughTargetUncreatableError) {
-      throw new SandboxError(e.message, "WRITE_THROUGH_TARGET_UNCREATABLE");
-    }
-    throw new SandboxError(
-      `Invalid write_through: ${errorMessage(e)}`,
-      "INVALID_WRITE_THROUGH_PATH",
-    );
-  }
-
-  if (filesystemMode !== "ephemeral") return { overlayRoots: [], writeThroughPaths, createdDirs };
-
-  // Separate try/catch from the above: this only touches the fixed
-  // $HOME/$RUNNER_TEMP//tmp/$GITHUB_WORKSPACE candidates, not write_through's
-  // own input, so a failure here (e.g. a permissions error reading one of
-  // those paths) must not be mislabeled as a write_through syntax problem.
-  try {
-    const overlayCandidates = [env.HOME, env.RUNNER_TEMP, "/tmp", env.GITHUB_WORKSPACE].filter(
-      (p): p is string => Boolean(p),
-    );
-    const overlayRoots = determineOverlayRoots(overlayCandidates, writeThroughPaths, deps);
-    return { overlayRoots, writeThroughPaths, createdDirs };
-  } catch (e) {
-    throw new SandboxError(
-      `Failed to determine filesystem_mode: ephemeral's overlay roots: ${errorMessage(e)}`,
-      "FILESYSTEM_PLAN_FAILED",
-    );
-  }
-}
-
-// Untested by design, down to the end of the file: every step main() calls is
-// tested directly, and what it adds is the docker/runc invocations themselves.
-/* v8 ignore start */
 async function main(): Promise<void> {
   const env = process.env;
   // Empty (not `??`-catchable) for local-path `uses: ./` invocations.
