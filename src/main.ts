@@ -6,8 +6,9 @@ import { resolveBuildcageImageRef } from "#core/lib/provenance/image-ref.ts";
 import { verifyImageDigestOrThrow, type ResolvedImage } from "#core/lib/provenance/verify-image.ts";
 import type { VerifyImageIdentity } from "#core/lib/provenance/verify-policy.ts";
 import { createAnnotation } from "#core/lib/actions/annotation.ts";
-import { logRules } from "#core/lib/actions/log.ts";
-import { ActionError, errorMessage } from "#core/lib/errors.ts";
+import { logRules, withLogGroup } from "#core/lib/actions/log.ts";
+import { errorMessage } from "#core/lib/errors.ts";
+import { exitOnFatalError } from "#core/lib/actions/fatal.ts";
 import { SandboxError } from "./lib/errors.ts";
 import type { ProxyEngine } from "./lib/engine.ts";
 import {
@@ -261,14 +262,14 @@ async function main(): Promise<void> {
       annotation.warning(message),
     );
 
-    console.log("::group::buildcage: Configured ACL Rules");
-    logRules("HTTPS", httpsRules);
-    logRules("HTTP", httpRules);
-    logRules("IP", ipRules);
-    logRules("URL", urlRules);
-    logRules("TLS", tlsRules);
-    logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
-    console.log("::endgroup::");
+    withLogGroup("buildcage: Configured ACL Rules", () => {
+      logRules("HTTPS", httpsRules);
+      logRules("HTTP", httpRules);
+      logRules("IP", ipRules);
+      logRules("URL", urlRules);
+      logRules("TLS", tlsRules);
+      logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
+    });
 
     // Each `run` step gets its own throwaway proxy container — start, run
     // the isolated command, report, and stop, all within this one step —
@@ -381,13 +382,6 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().catch((err) => {
-    if (err instanceof ActionError) {
-      console.log(`::error::${err.message}`);
-    } else {
-      console.log(`::error::Unexpected error in sandbox: ${errorMessage(err)}`);
-    }
-    process.exit(1);
-  });
+  main().catch(exitOnFatalError("sandbox"));
 }
 /* v8 ignore stop */

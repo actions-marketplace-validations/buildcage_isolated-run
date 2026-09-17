@@ -1,3 +1,4 @@
+import { withLogGroupAsync } from "#core/lib/actions/log.ts";
 import { execFileSync } from "node:child_process";
 
 import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/docker-error.ts";
@@ -44,22 +45,6 @@ const printDockerViaExec = (args: string[], env: NodeJS.ProcessEnv): void => {
 };
 /* v8 ignore stop */
 
-/**
- * Wraps buildcage's own (non-user) log output in a collapsed
- * `::group::`/`::endgroup::` block, so a step's default (collapsed) view
- * shows only the user's own `run:` output — matching a plain `run:` step's
- * look. Always closes the group, even if `fn` throws, so a failure mid-group
- * can't leave it open for the rest of the step's output.
- */
-export async function withGroup<T>(label: string, fn: () => T | Promise<T>): Promise<T> {
-  console.log(`::group::${label}`);
-  try {
-    return await fn();
-  } finally {
-    console.log("::endgroup::");
-  }
-}
-
 export interface StartSandboxProxyOptions {
   composeFile: string;
   projectName: string;
@@ -74,7 +59,7 @@ export async function startSandboxProxy(
   deps: ProxyLifecycleDeps = {},
 ): Promise<void> {
   const { printDocker = printDockerViaExec } = deps;
-  await withGroup("buildcage: starting sandbox proxy", () => {
+  await withLogGroupAsync("buildcage: starting sandbox proxy", () => {
     try {
       printDocker(buildComposeUpArgs({ composeFile, projectName, pullPolicy }), composeEnv);
     } catch (e) {
@@ -165,7 +150,7 @@ export async function stopSandboxProxy(
   { composeFile, projectName, composeEnv, annotation }: StopSandboxProxyOptions,
   { printDocker = printDockerViaExec }: ProxyLifecycleDeps = {},
 ): Promise<void> {
-  await withGroup("buildcage: stopping sandbox proxy", () => {
+  await withLogGroupAsync("buildcage: stopping sandbox proxy", () => {
     try {
       printDocker(buildComposeDownArgs({ composeFile, projectName }), composeEnv);
     } catch (e) {

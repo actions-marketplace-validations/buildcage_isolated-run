@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 
+import { annotate } from "#core/lib/actions/annotation.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { ownerToken, readContainerOwner } from "./container.ts";
 import { resolvePostState, type PostCleanupTargets } from "./post-state.ts";
@@ -54,13 +55,13 @@ export function planPostCleanup(
 ): PostCleanupTargets | null {
   const { targets, problems } = resolvePostState(state);
   for (const problem of problems) {
-    console.log(`::error::run post-cleanup: ${problem}`);
+    annotate.error(`run post-cleanup: ${problem}`);
   }
   if (!targets) return null;
 
   if (!startedByThisStep(targets.containerName, env, readOwner)) {
-    console.log(
-      `::error::run post-cleanup: the proxy container named in GITHUB_STATE was started by a ` +
+    annotate.error(
+      `run post-cleanup: the proxy container named in GITHUB_STATE was started by a ` +
         `different step. Skipping all post-step cleanup: tearing it down would stop that step's ` +
         `proxy and delete its sandbox scratch directory.`,
     );
@@ -80,9 +81,7 @@ export function planPostCleanup(
       removeScratchDir(scratchDir, targets.ephemeralRoots);
     }
   } catch (e) {
-    console.log(
-      `::warning::run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`,
-    );
+    annotate.warning(`run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
   }
 
   return targets;

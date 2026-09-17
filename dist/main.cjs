@@ -17300,11 +17300,35 @@ function createAnnotation(enabled) {
 		error() {}
 	};
 }
+const annotate = createAnnotation(!0);
 //#endregion
 //#region src/core/lib/actions/log.ts
 function logRules(label, rules) {
 	console.log(`${label} rules:${rules.length === 0 ? " (none)" : ""}`);
 	for (let r of rules) console.log(`  ${r}`);
+}
+function withLogGroup(title, fn) {
+	console.log(`::group::${title}`);
+	try {
+		return fn();
+	} finally {
+		console.log("::endgroup::");
+	}
+}
+async function withLogGroupAsync(title, fn) {
+	console.log(`::group::${title}`);
+	try {
+		return await fn();
+	} finally {
+		console.log("::endgroup::");
+	}
+}
+//#endregion
+//#region src/core/lib/actions/fatal.ts
+function exitOnFatalError(context) {
+	return (err) => {
+		err instanceof ActionError ? annotate.error(err.message) : annotate.error(`Unexpected error in ${context}: ${errorMessage(err)}`), process.exit(1);
+	};
 }
 //#endregion
 //#region src/lib/errors.ts
@@ -17573,7 +17597,7 @@ function buildUrlRules(rulesInput) {
 const ENGINES = ["universal", "inspect"], ENGINE_ALIASES = { transparent: "universal" };
 function resolveProxyEngine(input) {
 	let trimmed = input?.trim() || "universal", alias = ENGINE_ALIASES[trimmed];
-	alias && console.log("::notice::proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.");
+	alias && annotate.notice("proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.");
 	let engine = alias ?? trimmed;
 	if (!ENGINES.includes(engine)) throw new SandboxError(`Invalid proxy_engine: ${JSON.stringify(input)}. Must be one of ${ENGINES.join(", ")}.`, "INVALID_PROXY_ENGINE");
 	return engine;
@@ -17685,7 +17709,7 @@ function unmountAllUnder(dir) {
 			"pipe"
 		] });
 	} catch (e) {
-		console.log(`::warning::Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+		annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
 function removeScratchDir(dir) {
@@ -18225,7 +18249,7 @@ function readKnownBlockedRules(input) {
 function resolveWriteThroughInput({ writeThrough, writable, allowWrite }) {
 	if (allowWrite.trim()) throw new SandboxError("allow_write: has been replaced by write_through:, which covers both filesystem modes. Rename the input -- the path syntax is unchanged.", "ALLOW_WRITE_REMOVED");
 	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
-	return !writeThrough.trim() && writable.trim() ? (console.log("::notice::writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
+	return !writeThrough.trim() && writable.trim() ? (annotate.notice("writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
 }
 const FILESYSTEM_MODES = ["persistent", "ephemeral"];
 function resolveFilesystemMode(input) {
@@ -18243,13 +18267,13 @@ function validateFilesystemInputs(filesystemMode, writeThroughPaths) {
 		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
 	}
 }
-function readRunCommand(getInput$2 = getInput) {
-	let runInput = getInput$2("run", { trimWhitespace: !1 });
+function readRunCommand(getInput$1 = getInput) {
+	let runInput = getInput$1("run", { trimWhitespace: !1 });
 	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
 	return runInput;
 }
-function readEngineInputs(getInput$1 = getInput) {
-	return { proxyEngine: resolveProxyEngine(getInput$1("proxy_engine")) };
+function readEngineInputs(getInput$2 = getInput) {
+	return { proxyEngine: resolveProxyEngine(getInput$2("proxy_engine")) };
 }
 function readFilesystemInputs(getInput$3 = getInput) {
 	return {
@@ -18261,12 +18285,12 @@ function readFilesystemInputs(getInput$3 = getInput) {
 		})
 	};
 }
-function readRuleInputs(getInput$5 = getInput) {
-	let proxyMode = getInput$5("proxy_mode") || "restrict", rules = buildACLRules({
-		httpsRulesInput: getInput$5("allowed_https_rules"),
-		httpRulesInput: getInput$5("allowed_http_rules"),
-		ipRulesInput: getInput$5("allowed_ip_rules")
-	}), knownBlockedRules = readKnownBlockedRules(getInput$5("known_blocked_rules")), urlRulesInput = getInput$5("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$5("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
+function readRuleInputs(getInput$4 = getInput) {
+	let proxyMode = getInput$4("proxy_mode") || "restrict", rules = buildACLRules({
+		httpsRulesInput: getInput$4("allowed_https_rules"),
+		httpRulesInput: getInput$4("allowed_http_rules"),
+		ipRulesInput: getInput$4("allowed_ip_rules")
+	}), knownBlockedRules = readKnownBlockedRules(getInput$4("known_blocked_rules")), urlRulesInput = getInput$4("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$4("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
 	return {
 		proxyMode,
 		httpsRules: rules.httpsRules,
@@ -18277,8 +18301,8 @@ function readRuleInputs(getInput$5 = getInput) {
 		knownBlockedRules
 	};
 }
-function readStepLabel(getInput$4 = getInput) {
-	return getInput$4("label") || void 0;
+function readStepLabel(getInput$5 = getInput) {
+	return getInput$5("label") || void 0;
 }
 function readFailOnBlocked(getBooleanInput$1 = getBooleanInput) {
 	try {
@@ -18567,7 +18591,7 @@ function resolveSandboxEnv(env, caTrust) {
 		...caTrust ? caTrustAdditions(caTrust, env).env : void 0
 	}, resolved = {}, skipped = [];
 	for (let [key, value] of Object.entries(merged)) value !== void 0 && (isRunnerOnly(key) || (ENV_KEY.test(key) ? resolved[key] = value : skipped.push(key)));
-	return skipped.length > 0 && console.log(`::warning::Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`), resolved;
+	return skipped.length > 0 && annotate.warning(`Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`), resolved;
 }
 function buildEnvBlob(resolved) {
 	let records = [...Object.entries(resolved).map(([k, v]) => `${k}=${v}`), ENV_BLOB_TERMINATOR];
@@ -18759,17 +18783,9 @@ const captureDockerViaExec = (args, env) => (0, node_child_process.execFileSync)
 		env
 	});
 };
-async function withGroup(label, fn) {
-	console.log(`::group::${label}`);
-	try {
-		return await fn();
-	} finally {
-		console.log("::endgroup::");
-	}
-}
 async function startSandboxProxy({ composeFile, projectName, containerName, pullPolicy, composeEnv }, deps = {}) {
 	let { printDocker = printDockerViaExec } = deps;
-	await withGroup("buildcage: starting sandbox proxy", () => {
+	await withLogGroupAsync("buildcage: starting sandbox proxy", () => {
 		try {
 			printDocker(buildComposeUpArgs({
 				composeFile,
@@ -18820,7 +18836,7 @@ function printProxyLog({ composeFile, projectName, composeEnv }, { printDocker =
 	}
 }
 async function stopSandboxProxy({ composeFile, projectName, composeEnv, annotation }, { printDocker = printDockerViaExec } = {}) {
-	await withGroup("buildcage: stopping sandbox proxy", () => {
+	await withLogGroupAsync("buildcage: stopping sandbox proxy", () => {
 		try {
 			printDocker(buildComposeDownArgs({
 				composeFile,
@@ -64813,7 +64829,9 @@ async function main() {
 			proxyMode,
 			urlRules,
 			tlsRules
-		}, (message) => annotation.warning(message)), console.log("::group::buildcage: Configured ACL Rules"), logRules("HTTPS", httpsRules), logRules("HTTP", httpRules), logRules("IP", ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules), console.log("::endgroup::");
+		}, (message) => annotation.warning(message)), withLogGroup("buildcage: Configured ACL Rules", () => {
+			logRules("HTTPS", httpsRules), logRules("HTTP", httpRules), logRules("IP", ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
+		});
 		let containerName = generateContainerName(), projectName = deriveProjectName(containerName);
 		env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots.map((r) => r.path))));
 		let composeEnv = buildComposeEnv({
@@ -64886,6 +64904,4 @@ async function main() {
 	}
 }
 //#endregion
-process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main().catch((err) => {
-	err instanceof ActionError ? console.log(`::error::${err.message}`) : console.log(`::error::Unexpected error in sandbox: ${errorMessage(err)}`), process.exit(1);
-}), exports.resolveFilesystemPlan = resolveFilesystemPlan;
+process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main().catch(exitOnFatalError("sandbox")), exports.resolveFilesystemPlan = resolveFilesystemPlan;

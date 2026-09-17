@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { annotate } from "#core/lib/actions/annotation.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import { isValidContainerName } from "../container.ts";
@@ -64,7 +65,7 @@ function unmountAllUnder(dir: string): void {
         stdio: ["ignore", "ignore", "pipe"],
       });
     } catch (e) {
-      console.log(`::warning::Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+      annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
     }
   }
 }
