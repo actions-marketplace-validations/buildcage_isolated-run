@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Buildcage filesystem</title>
+    <!--
+      Source for ../diagram-filesystem.png. Render it at 2x with headless
+      Chrome, from the repository root:
+
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
+          --force-device-scale-factor=2 --window-size=1000,293 --hide-scrollbars \
+          --screenshot=assets/diagram-filesystem.png assets/diagrams/filesystem.html
+
+      Palette and fonts are the landing page's, so the figure reads as the same
+      product. The rendering is dark at every setting and carries its own
+      background, which keeps it legible under both GitHub themes.
+
+      The stack reads bottom to top, in the order the mounts are applied: the
+      runner's own files, the read-only root, the writable exceptions, the
+      overlay `filesystem_mode: ephemeral` puts over those, and the sandbox's
+      own mounts last of all. The build CA is the `inspect` engine's.
+
+      A layer sits over the paths it covers, so each one spans its group's
+      columns: the read-only root and the overlay cover their whole group, the
+      CA covers the column `/etc` is in.
+    -->
+    <style>
+      @font-face {
+        font-family: "Outfit";
+        font-style: normal;
+        font-weight: 400 500;
+        src: url("./fonts/outfit.woff2") format("woff2");
+      }
+
+      @font-face {
+        font-family: "Rubik";
+        font-style: normal;
+        font-weight: 300 500;
+        src: url("./fonts/rubik.woff2") format("woff2");
+      }
+
+      :root {
+        --bg: #223133;
+        --card: #1d2a2b;
+        --rule: #2c3b3c;
+        --fg: #e6eeec;
+        --muted: #9aabab;
+        --cyan: #53b1bd;
+        --mint: #88ebb9;
+        --coral: #e8917f;
+        --hairline: rgba(154, 171, 171, 0.5);
+        --head: "Outfit", ui-sans-serif, system-ui, sans-serif;
+        --body: "Rubik", ui-sans-serif, system-ui, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        width: 1000px;
+        height: 293px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--body);
+        font-weight: 300;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .frame {
+        width: 100%;
+        height: 100%;
+        padding: 20px 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+
+      /* Shared text styles */
+
+      .eyebrow,
+      .layer-label {
+        font-family: var(--head);
+        font-weight: 500;
+        font-size: 10.5px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--cyan);
+      }
+
+      .mono {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--fg);
+      }
+
+      .note {
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      /* The command, and what it sees */
+
+      .command {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: var(--card);
+        border: 1px solid var(--cyan);
+        border-radius: 10px;
+        padding: 10px 16px;
+      }
+
+      .sees {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--cyan);
+      }
+
+      .sees .note {
+        color: var(--cyan);
+      }
+
+      /* The stack of mounts, bracketed by two hairlines that take their width
+         from the stack itself. */
+
+      .mounts {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .boundary,
+      .floor {
+        border-top: 1px solid var(--hairline);
+      }
+
+      .stack {
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 0 26px;
+      }
+
+      .group {
+        display: grid;
+        grid-template-columns: repeat(4, auto);
+        align-items: end;
+        gap: 5px;
+      }
+
+      /* Equal columns, so the CA layer over one of them cannot widen it. */
+      .system {
+        grid-template-columns: repeat(4, 1fr);
+      }
+
+      .path {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--fg);
+        background: rgba(29, 42, 43, 0.6);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 8px 10px;
+        text-align: center;
+      }
+
+      .layer {
+        background: var(--card);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 7px 12px;
+      }
+
+      .layer .note {
+        margin-top: 2px;
+        font-size: 11px;
+      }
+
+      .cover {
+        grid-column: 1 / 5;
+      }
+
+      /* The runner's own state is grey, what the step gets on top of it is
+         coloured, and the optional overlay is the one drawn dashed. */
+
+      .readonly,
+      .readonly .layer-label {
+        border-color: var(--muted);
+        color: var(--muted);
+      }
+
+      .ca {
+        grid-column: 2 / 3;
+        border-color: var(--mint);
+      }
+
+      .ca .layer-label {
+        color: var(--mint);
+      }
+
+      .ephemeral {
+        border-style: dashed;
+        border-color: var(--coral);
+      }
+
+      .ephemeral .layer-label {
+        color: var(--coral);
+      }
+
+      .floor {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 12px;
+        padding-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <div class="command">
+        <div class="eyebrow">The run command</div>
+        <div class="mono">npm ci</div>
+      </div>
+
+      <div class="sees">
+        <svg width="12" height="20" viewBox="0 0 12 20" fill="none" aria-hidden="true">
+          <path d="M6 0V13" stroke="currentColor" stroke-width="1.5" />
+          <path d="M1.5 12L6 18.5L10.5 12Z" fill="currentColor" />
+        </svg>
+        <div class="note">sees one filesystem, made of these layers</div>
+      </div>
+
+      <div class="mounts">
+        <div class="boundary"></div>
+
+        <div class="stack">
+          <div class="group system">
+            <div class="layer ca">
+              <div class="layer-label">Build CA</div>
+              <div class="note">mounted last</div>
+            </div>
+
+            <div class="layer readonly cover">
+              <div class="layer-label">Read-only root</div>
+              <div class="note">everything stays visible, nothing changes</div>
+            </div>
+
+            <div class="path">/usr</div>
+            <div class="path">/etc</div>
+            <div class="path">/opt</div>
+            <div class="path">/var</div>
+          </div>
+
+          <div class="group writable">
+            <div class="layer ephemeral cover">
+              <div class="layer-label">filesystem_mode: ephemeral</div>
+              <div class="note">writes discarded when the step ends, except the paths you list</div>
+            </div>
+
+            <div class="layer cover">
+              <div class="layer-label">Writable</div>
+              <div class="note">writes land on the runner, plus anything in write_through</div>
+            </div>
+
+            <div class="path">$GITHUB_WORKSPACE</div>
+            <div class="path">$HOME</div>
+            <div class="path">/tmp</div>
+            <div class="path">$RUNNER_TEMP</div>
+          </div>
+        </div>
+
+        <div class="floor">
+          <div class="eyebrow">The runner's filesystem</div>
+          <div class="note">the real files, as any other step sees them</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
