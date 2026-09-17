@@ -453,7 +453,7 @@ behavior, see [Inspect Proxy Engine](./security.md#inspect-proxy-engine) in Secu
   own scratch directory and mounted over the sandbox's view of those paths in its OCI
   `config.json`, so nothing is written to the runner and `run-isolated.sh`'s teardown removes them
   with the rest of the mount namespace. Which variables get set, and when, is in
-  [CA trust and compatibility](../README.md#ca-trust-and-compatibility).
+  [CA trust variables](./reference.md#ca-trust-variables).
 - The `allowed_url_rules` compiler enumerates hosts rather than generalizing them
   (`a.example.com`/`b.example.com` never becomes `*.example.com`), because CoreDNS's own allow/deny
   view is generated from the same host patterns. Widening a host widens what's logged as allowed
