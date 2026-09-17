@@ -1,4 +1,4 @@
-import type { ProxyEngine } from "../main.ts";
+import type { ProxyEngine } from "./engine.ts";
 import { ownerToken } from "./container.ts";
 import { listHostIpv4Addresses } from "./host-addresses.ts";
 

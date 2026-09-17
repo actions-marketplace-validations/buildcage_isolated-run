@@ -8,13 +8,19 @@ import type { VerifyImageIdentity } from "#core/lib/provenance/verify-policy.ts"
 import { createAnnotation } from "#core/lib/actions/annotation.ts";
 import { logRules } from "#core/lib/actions/log.ts";
 import { ActionError, errorMessage } from "#core/lib/errors.ts";
-import {
-  buildACLRules,
-  parseKnownBlockedRulesOrThrow,
-  parseRulesOrThrow,
-} from "#core/lib/acl/rules.ts";
-import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
 import { SandboxError } from "./lib/errors.ts";
+import type { ProxyEngine } from "./lib/engine.ts";
+import {
+  readEngineInputs,
+  readFailOnBlocked,
+  readFilesystemInputs,
+  readRuleInputs,
+  readRunCommand,
+  readStepLabel,
+  splitWriteThroughInput,
+  validateFilesystemInputs,
+  type FilesystemMode,
+} from "./lib/inputs.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
 import { buildComposeEnv } from "./lib/compose-env.ts";
 import { checkPasswordlessSudo } from "./lib/sudo-preflight.ts";
@@ -33,16 +39,13 @@ import {
   WRITE_THROUGH_ALL,
   type CreatedDir,
 } from "./lib/sandbox/write-through.ts";
-import { assertScratchBaseNotWritable, isAtOrUnder } from "./lib/sandbox/paths.ts";
+import { assertScratchBaseNotWritable } from "./lib/sandbox/paths.ts";
 import { generateContainerName, getContainerNetns } from "./lib/container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
-import { RESERVED_INTERNAL_DESTINATIONS } from "./lib/sandbox/oci-config.ts";
 import { runSandboxedCommand } from "./lib/sandbox/sandboxed-command.ts";
 import { startSandboxProxy, stopSandboxProxy } from "./lib/proxy-lifecycle.ts";
 import { uploadTrafficArtifact, wantsTrafficArtifact } from "./lib/traffic-artifact.ts";
 import { fetchReport, readActionVersion, writeReportSummary } from "./lib/report.ts";
-
-export { buildACLRules };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
@@ -81,95 +84,6 @@ async function resolveVerifiedImage({
  * of expected vs. unexpected blocked connections.
  */ /* v8 ignore stop */
 
-export function readKnownBlockedRules(input: string | undefined): string[] {
-  return parseKnownBlockedRulesOrThrow(input);
-}
-
-export interface WriteThroughInputs {
-  writeThrough: string;
-  /** Pre-rename spelling of write_through, still accepted. */
-  writable: string;
-  /** Removed input, only read so it can be rejected with a migration hint. */
-  allowWrite: string;
-}
-
-/**
- * Pick the effective write_through: input. `writable:` is the same input under
- * its old name and still works; `allow_write:` (the ephemeral-only input this
- * replaced) is rejected rather than ignored, since ignoring it would silently
- * discard writes the step asked to keep.
- */
-export function resolveWriteThroughInput({
-  writeThrough,
-  writable,
-  allowWrite,
-}: WriteThroughInputs): string {
-  if (allowWrite.trim()) {
-    throw new SandboxError(
-      "allow_write: has been replaced by write_through:, which covers both filesystem modes. " +
-        "Rename the input -- the path syntax is unchanged.",
-      "ALLOW_WRITE_REMOVED",
-    );
-  }
-  if (writeThrough.trim() && writable.trim()) {
-    throw new SandboxError(
-      "write_through: and writable: are the same input under two names. Set only write_through:.",
-      "FILESYSTEM_INPUT_CONFLICT",
-    );
-  }
-  if (!writeThrough.trim() && writable.trim()) {
-    console.log(
-      "::notice::writable: is now called write_through:; writable: still works, but consider updating to write_through:.",
-    );
-    return writable;
-  }
-  return writeThrough;
-}
-
-const ENGINES = ["universal", "inspect"] as const;
-export type ProxyEngine = (typeof ENGINES)[number];
-
-// `transparent` was this engine's name before `inspect` existed, when it
-// only had to contrast with a hypothetical decrypting engine by not being
-// one. Both intercept at the network level, so that name stopped
-// distinguishing anything once `inspect` shipped -- `universal` names what
-// actually sets this engine apart instead (no CA trust needed, works with
-// any tool). Kept working permanently as an alias, normalized here so
-// nothing downstream ever has to know it existed.
-const ENGINE_ALIASES: Record<string, ProxyEngine> = { transparent: "universal" };
-
-export function resolveProxyEngine(input: string | undefined): ProxyEngine {
-  const trimmed = input?.trim() || "universal";
-  const alias = ENGINE_ALIASES[trimmed];
-  if (alias) {
-    console.log(
-      `::notice::proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.`,
-    );
-  }
-  const engine = alias ?? trimmed;
-  if (!(ENGINES as readonly string[]).includes(engine)) {
-    throw new SandboxError(
-      `Invalid proxy_engine: ${JSON.stringify(input)}. Must be one of ${ENGINES.join(", ")}.`,
-      "INVALID_PROXY_ENGINE",
-    );
-  }
-  return engine as ProxyEngine;
-}
-
-const FILESYSTEM_MODES = ["persistent", "ephemeral"] as const;
-export type FilesystemMode = (typeof FILESYSTEM_MODES)[number];
-
-export function resolveFilesystemMode(input: string | undefined): FilesystemMode {
-  const trimmed = input?.trim() || "persistent";
-  if (!(FILESYSTEM_MODES as readonly string[]).includes(trimmed)) {
-    throw new SandboxError(
-      `Invalid filesystem_mode: ${JSON.stringify(input)}. Must be one of ${FILESYSTEM_MODES.join(", ")}.`,
-      "INVALID_FILESYSTEM_MODE",
-    );
-  }
-  return trimmed as FilesystemMode;
-}
-
 export interface FilesystemPlan {
   /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots). [] in persistent mode. */
   overlayRoots: OverlayRoot[];
@@ -188,53 +102,6 @@ export interface ResolveFilesystemPlanDeps {
   stat?: (path: string) => { uid: number; gid: number; mode: number };
   execFile?: (command: string, args: string[]) => void;
   deviceOf?: (path: string) => number;
-}
-
-/** The write_through: input as bare lines, for the pre-resolution check in
- *  main(). Resolution proper (variables, ~/, relative paths) is
- *  resolveWriteThroughPaths' job. */
-export function splitWriteThroughInput(input: string): string[] {
-  return input
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-/**
- * Validates write_through: paths against the filesystem mode. Pure, no I/O --
- * deliberately called on its own, ahead of
- * checkPasswordlessSudo()/checkOverlayfsSupport() in main(), so a plain input
- * mistake is rejected immediately rather than only after those privileged
- * preflight checks have already run. That early call passes the raw lines;
- * resolveFilesystemPlan calls it again on the resolved paths, which is the
- * authoritative one. Both see the same sentinel: resolveWriteThroughEntry
- * rejects a spelling that merely normalizes to "/", so only a literal one
- * reaches either call.
- */
-export function validateFilesystemInputs(
-  filesystemMode: FilesystemMode,
-  writeThroughPaths: string[],
-): void {
-  if (filesystemMode === "ephemeral" && writeThroughPaths.includes(WRITE_THROUGH_ALL)) {
-    throw new SandboxError(
-      "write_through: / drops the read-only restriction wholesale, which has no meaning in " +
-        "filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists " +
-        "to prevent. List the paths that must survive instead.",
-      "FILESYSTEM_INPUT_CONFLICT",
-    );
-  }
-
-  for (const path of writeThroughPaths) {
-    const reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
-    if (reserved) {
-      throw new SandboxError(
-        `write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} ` +
-          "itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. " +
-          "Name a containing directory instead to persist writes around it.",
-        "FILESYSTEM_INPUT_CONFLICT",
-      );
-    }
-  }
 }
 
 /**
@@ -326,20 +193,12 @@ async function main(): Promise<void> {
   const actionRef = env.GITHUB_ACTION_REF || "v1";
   const actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run";
 
-  const runInput = core.getInput("run", { trimWhitespace: false });
-  if (!runInput.trim()) {
-    throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
-  }
+  const runInput = readRunCommand();
 
-  const proxyEngine = resolveProxyEngine(core.getInput("proxy_engine"));
+  const { proxyEngine } = readEngineInputs();
   console.log(`Proxy engine: ${proxyEngine}`);
 
-  const filesystemMode = resolveFilesystemMode(core.getInput("filesystem_mode"));
-  const writeThroughInput = resolveWriteThroughInput({
-    writeThrough: core.getInput("write_through"),
-    writable: core.getInput("writable"),
-    allowWrite: core.getInput("allow_write"),
-  });
+  const { filesystemMode, writeThroughInput } = readFilesystemInputs();
 
   // Cheap, pure input check first, so a plain mistake (e.g. write_through: /
   // under filesystem_mode: ephemeral) is rejected immediately rather than only
@@ -396,27 +255,16 @@ async function main(): Promise<void> {
     console.log(`buildcage: proxy image: ${imageRef}`);
     const composeFile = localOverride?.composeFile ?? defaultComposeFile;
 
-    const proxyMode = core.getInput("proxy_mode") || "restrict";
-
-    const rules = buildACLRules({
-      httpsRulesInput: core.getInput("allowed_https_rules"),
-      httpRulesInput: core.getInput("allowed_http_rules"),
-      ipRulesInput: core.getInput("allowed_ip_rules"),
-    });
-    const knownBlockedRules = readKnownBlockedRules(core.getInput("known_blocked_rules"));
-    // Only inspect can enforce on a method or a path, so these are compiled here
-    // purely to fail on a typo at setup rather than inside the container.
-    const urlRulesInput = core.getInput("allowed_url_rules");
-    const tlsRules = parseRulesOrThrow(core.getInput("allowed_tls_rules"));
-    const urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
+    const { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } =
+      readRuleInputs();
     checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules }, (message) =>
       annotation.warning(message),
     );
 
     console.log("::group::buildcage: Configured ACL Rules");
-    logRules("HTTPS", rules.httpsRules);
-    logRules("HTTP", rules.httpRules);
-    logRules("IP", rules.ipRules);
+    logRules("HTTPS", httpsRules);
+    logRules("HTTP", httpRules);
+    logRules("IP", ipRules);
     logRules("URL", urlRules);
     logRules("TLS", tlsRules);
     logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
@@ -442,9 +290,9 @@ async function main(): Promise<void> {
         proxyMode,
         proxyEngine,
         imageRef,
-        httpsRules: rules.httpsRules,
-        httpRules: rules.httpRules,
-        ipRules: rules.ipRules,
+        httpsRules: httpsRules,
+        httpRules: httpRules,
+        ipRules: ipRules,
         urlRules,
         tlsRules,
       },
@@ -479,23 +327,15 @@ async function main(): Promise<void> {
           containerName,
           {
             mode: proxyMode,
-            allowedHttpsRules: rules.httpsRules,
-            allowedHttpRules: rules.httpRules,
-            allowedIpRules: rules.ipRules,
+            allowedHttpsRules: httpsRules,
+            allowedHttpRules: httpRules,
+            allowedIpRules: ipRules,
             allowedTlsRules: tlsRules,
             knownBlockedRules,
           },
           proxyEngine,
         );
-        // Several integration scripts invoke this action directly without
-        // setting fail_on_blocked, unlike a real workflow where action.yml's
-        // own default always supplies it — fall back to that same default.
-        let failOnBlocked: boolean;
-        try {
-          failOnBlocked = core.getBooleanInput("fail_on_blocked");
-        } catch {
-          failOnBlocked = true;
-        }
+        const failOnBlocked = readFailOnBlocked();
         const wantsArtifact = wantsTrafficArtifact();
         await writeReportSummary(
           report,
@@ -505,7 +345,7 @@ async function main(): Promise<void> {
             actionRef,
             runCommand: runInput,
             actionVersion: readActionVersion(containerName, proxyEngine),
-            stepLabel: core.getInput("label") || undefined,
+            stepLabel: readStepLabel(),
             failOnBlocked,
           },
           wantsArtifact && report.engine === "inspect",

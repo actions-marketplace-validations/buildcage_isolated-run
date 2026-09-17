@@ -4,7 +4,8 @@ import * as core from "@actions/core";
 
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
-import type { ProxyEngine, FilesystemMode } from "../../main.ts";
+import type { ProxyEngine } from "../engine.ts";
+import type { FilesystemMode } from "../inputs.ts";
 import { createOverlayScratchDirs, type OverlayRoot } from "./ephemeral-fs.ts";
 import { extractRuncBootstrap } from "./runc-bootstrap.ts";
 import { extractCaCert, writeCaTrustFiles } from "./ca-trust.ts";

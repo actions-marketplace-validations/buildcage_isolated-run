@@ -10,9 +10,10 @@ import { buildUniversalReportData } from "#core/lib/report/build/universal.ts";
 import { buildInspectReportData } from "#core/lib/report/build/inspect.ts";
 import { applyOutcomeAnnotation } from "#core/lib/report/outcome/annotate.ts";
 import type { GenReportParameters, ReportData } from "#core/lib/report/types.ts";
+import type { ProxyEngine } from "./engine.ts";
 
 export type Report = ReportData;
-export type ProxyEngine = "universal" | "inspect";
+export type { ProxyEngine };
 
 const HAPROXY_LOG_DIR = "/var/log/haproxy";
 /** inspect-only: the resolver's own log, the sole trace of a name that was

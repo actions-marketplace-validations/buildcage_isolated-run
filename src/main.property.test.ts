@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 
-import { buildACLRules } from "./main.ts";
+import { buildACLRules } from "#core/lib/acl/rules.ts";
 
 describe("buildACLRules – properties", () => {
   it("empty / whitespace-only inputs always return empty arrays", () => {
