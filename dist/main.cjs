@@ -18422,15 +18422,15 @@ function readGroupNamesByGid(groupFile) {
 	}
 	return map;
 }
-function ownerGids(paths, gidOf) {
+function ownerGids(paths) {
 	let gids = new Set();
 	for (let p of paths) try {
-		gids.add(gidOf(p));
+		gids.add((0, node_fs.statSync)(p).gid);
 	} catch {}
 	return gids;
 }
 function resolveSandboxGid(primaryGid, env, options = {}) {
-	let groupFile = options.groupFile ?? "/etc/group", runtimeSocketPaths = options.runtimeSocketPaths ?? [...extra_masked_runtime_paths_default, ...rootlessRuntimeSocketPaths(env)], gidOf = options.gidOf ?? ((path) => (0, node_fs.statSync)(path).gid), groupNamesByGid = readGroupNamesByGid(groupFile), socketOwnerGids = ownerGids(runtimeSocketPaths, gidOf), isPrivileged = (gid) => gid === 0 || socketOwnerGids.has(gid) ? !0 : groupNamesByGid?.get(gid)?.some((name) => PRIVILEGED_GROUP_NAMES.has(name)) ?? !1;
+	let groupFile = options.groupFile ?? "/etc/group", runtimeSocketPaths = options.runtimeSocketPaths ?? [...extra_masked_runtime_paths_default, ...rootlessRuntimeSocketPaths(env)], groupNamesByGid = readGroupNamesByGid(groupFile), socketOwnerGids = ownerGids(runtimeSocketPaths), isPrivileged = (gid) => gid === 0 || socketOwnerGids.has(gid) ? !0 : groupNamesByGid?.get(gid)?.some((name) => PRIVILEGED_GROUP_NAMES.has(name)) ?? !1;
 	if (!isPrivileged(primaryGid)) return { gid: primaryGid };
 	let gidForName = (name) => {
 		if (groupNamesByGid) {
