@@ -10,7 +10,7 @@ var __create = Object.create, __defProp = Object.defineProperty, __getOwnPropDes
 	enumerable: !0
 }) : target, mod));
 //#endregion
-let node_child_process = require("node:child_process"), node_fs = require("node:fs"), node_path = require("node:path"), node_url = require("node:url"), os = require("os");
+let node_child_process = require("node:child_process"), node_path = require("node:path"), node_url = require("node:url"), os = require("os");
 os = __toESM(os, 1);
 let fs = require("fs");
 fs = __toESM(fs, 1);
@@ -20,6 +20,7 @@ let events = require("events");
 events = __toESM(events, 1);
 let node_crypto = require("node:crypto"), child_process = require("child_process");
 child_process = __toESM(child_process, 1), require("timers");
+let node_fs = require("node:fs");
 //#endregion
 //#region node_modules/.pnpm/@actions+core@3.0.1/node_modules/@actions/core/lib/summary.js
 var __awaiter$6 = function(thisArg, _arguments, P, generator) {
@@ -176,6 +177,17 @@ function buildComposeDownArgs({ composeFile, projectName }) {
 		"down"
 	];
 }
+//#endregion
+//#region src/core/lib/errors.ts
+var ActionError = class extends Error {
+	code;
+	constructor(message, code) {
+		super(message), this.name = new.target.name, this.code = code;
+	}
+};
+function errorMessage(e) {
+	return e instanceof Error ? e.message : String(e);
+}
 function describeDockerFailure(e, { operation = "docker", env = process.env, exists = node_fs.existsSync } = {}) {
 	let err = e && typeof e == "object" ? e : {}, slimNote = isLikelySlimRunner(env, exists) ? " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\") — these ship a Docker client with no daemon and are not supported for this action." : "", whatHappened;
 	if (err.code === "ENOENT") whatHappened = `The "docker" command was not found on this runner's PATH while running ${operation}.`;
@@ -187,17 +199,6 @@ function describeDockerFailure(e, { operation = "docker", env = process.env, exi
 }
 function isLikelySlimRunner(_env = process.env, _exists = node_fs.existsSync) {
 	return _env.ImageOS === "Linux" && _exists("/run/.containerenv");
-}
-//#endregion
-//#region src/core/lib/errors.ts
-var ActionError = class extends Error {
-	code;
-	constructor(message, code) {
-		super(message), this.name = new.target.name, this.code = code;
-	}
-};
-function errorMessage(e) {
-	return e instanceof Error ? e.message : String(e);
 }
 //#endregion
 //#region src/lib/errors.ts
@@ -247,6 +248,42 @@ function readContainerOwner(containerName, { exec = node_child_process.execFileS
 		throw new SandboxError(describeDockerFailure(e, { operation: "docker inspect" }), "DOCKER_UNAVAILABLE");
 	}
 	return out === "<no value>" ? "" : out;
+}
+//#endregion
+//#region src/core/lib/docker/compose-project-name.ts
+function deriveProjectName(containerName) {
+	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
+}
+//#endregion
+//#region src/lib/post-state.ts
+function resolvePostState(state) {
+	let problems = [], { containerName, ephemeralRoots } = state;
+	if (!containerName) return {
+		targets: null,
+		problems
+	};
+	if (!isValidContainerName(containerName)) return problems.push(`container_name in GITHUB_STATE is ${JSON.stringify(containerName)}, which is not a name this action generates. Skipping all post-step cleanup: the sandboxed command can append to GITHUB_STATE, so this value cannot be trusted to name a path to unmount or delete. A proxy container and a scratch directory under /var/tmp may need manual removal.`), {
+		targets: null,
+		problems
+	};
+	let targets = {
+		containerName,
+		projectName: deriveProjectName(containerName)
+	}, roots = parseEphemeralRoots(ephemeralRoots);
+	return roots ? targets.ephemeralRoots = roots : ephemeralRoots && problems.push("ephemeral_overlay_roots in GITHUB_STATE is malformed; not logging discarded paths."), {
+		targets,
+		problems
+	};
+}
+function parseEphemeralRoots(raw) {
+	if (!raw) return;
+	let parsed;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return;
+	}
+	if (Array.isArray(parsed)) return parsed.every((p) => typeof p == "string" && (0, node_path.isAbsolute)(p) && !/[\x00-\x1f\x7f]/.test(p)) ? parsed : void 0;
 }
 //#endregion
 //#region src/lib/sandbox/mountinfo.ts
@@ -331,62 +368,28 @@ function scratchDirFor(containerName) {
 	return (0, node_path.join)(SANDBOX_SCRATCH_BASE, containerName.replace(/^buildcage-proxy-/, "sandbox-"));
 }
 //#endregion
-//#region src/core/lib/docker/compose-project-name.ts
-function deriveProjectName(containerName) {
-	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
+//#region src/lib/post-cleanup.ts
+function startedByThisStep(containerName, env, readOwner) {
+	let owner = readOwner(containerName);
+	return owner === null || owner === ownerToken(env);
 }
-//#endregion
-//#region src/lib/post-state.ts
-function resolvePostState(state) {
-	let problems = [], { containerName, ephemeralRoots } = state;
-	if (!containerName) return {
-		targets: null,
-		problems
-	};
-	if (!isValidContainerName(containerName)) return problems.push(`container_name in GITHUB_STATE is ${JSON.stringify(containerName)}, which is not a name this action generates. Skipping all post-step cleanup: the sandboxed command can append to GITHUB_STATE, so this value cannot be trusted to name a path to unmount or delete. A proxy container and a scratch directory under /var/tmp may need manual removal.`), {
-		targets: null,
-		problems
-	};
-	let targets = {
-		containerName,
-		projectName: deriveProjectName(containerName)
-	}, roots = parseEphemeralRoots(ephemeralRoots);
-	return roots ? targets.ephemeralRoots = roots : ephemeralRoots && problems.push("ephemeral_overlay_roots in GITHUB_STATE is malformed; not logging discarded paths."), {
-		targets,
-		problems
-	};
-}
-function parseEphemeralRoots(raw) {
-	if (!raw) return;
-	let parsed;
+function planPostCleanup(state, env, { readOwner = readContainerOwner, fileExists = node_fs.existsSync, removeScratchDir = cleanupScratchDir } = {}) {
+	let { targets, problems } = resolvePostState(state);
+	for (let problem of problems) console.log(`::error::run post-cleanup: ${problem}`);
+	if (!targets) return null;
+	if (!startedByThisStep(targets.containerName, env, readOwner)) return console.log("::error::run post-cleanup: the proxy container named in GITHUB_STATE was started by a different step. Skipping all post-step cleanup: tearing it down would stop that step's proxy and delete its sandbox scratch directory."), null;
 	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return;
+		let scratchDir = scratchDirFor(targets.containerName);
+		fileExists(scratchDir) && removeScratchDir(scratchDir, targets.ephemeralRoots);
+	} catch (e) {
+		console.log(`::warning::run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
 	}
-	if (Array.isArray(parsed)) return parsed.every((p) => typeof p == "string" && (0, node_path.isAbsolute)(p) && !/[\x00-\x1f\x7f]/.test(p)) ? parsed : void 0;
+	return targets;
 }
 //#endregion
 //#region src/post.ts
-const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href)), defaultComposeFile = (0, node_path.join)(__dirname$1, "../docker/compose.action.yaml"), { targets, problems } = resolvePostState({
-	containerName: getState("container_name"),
-	ephemeralRoots: getState("ephemeral_overlay_roots")
-});
-for (let problem of problems) console.log(`::error::run post-cleanup: ${problem}`);
-function startedByThisStep(containerName) {
-	let owner = readContainerOwner(containerName);
-	return owner === null || owner === ownerToken(process.env);
-}
-let owned = !0;
-if (targets && (owned = startedByThisStep(targets.containerName), owned || console.log("::error::run post-cleanup: the proxy container named in GITHUB_STATE was started by a different step. Skipping all post-step cleanup: tearing it down would stop that step's proxy and delete its sandbox scratch directory.")), targets && owned) try {
-	let scratchDir = scratchDirFor(targets.containerName);
-	(0, node_fs.existsSync)(scratchDir) && cleanupScratchDir(scratchDir, targets.ephemeralRoots);
-} catch (e) {
-	console.log(`::warning::run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
-}
-async function stopProxyContainer() {
-	if (!targets || !owned) return;
-	let { containerName, projectName } = targets;
+const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href)), defaultComposeFile = (0, node_path.join)(__dirname$1, "../docker/compose.action.yaml");
+async function stopProxyContainer({ containerName, projectName }) {
 	(0, node_child_process.execFileSync)("docker", buildComposeDownArgs({
 		composeFile: defaultComposeFile,
 		projectName
@@ -398,5 +401,12 @@ async function stopProxyContainer() {
 		}
 	});
 }
-stopProxyContainer();
+function main() {
+	let targets = planPostCleanup({
+		containerName: getState("container_name"),
+		ephemeralRoots: getState("ephemeral_overlay_roots")
+	}, process.env);
+	targets && stopProxyContainer(targets);
+}
+process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main();
 //#endregion

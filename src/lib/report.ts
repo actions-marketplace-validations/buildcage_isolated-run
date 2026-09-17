@@ -1,9 +1,14 @@
+import { appendFileSync } from "node:fs";
+
+import type { Annotation } from "#core/lib/actions/annotation.ts";
+import { writeStepSummary } from "#core/lib/actions/write-step-summary.ts";
 import { createDocker } from "#core/lib/docker/client.ts";
 import { readRotatedLog } from "#core/lib/docker/rotated-log.ts";
 import { describeBlockedOutcome } from "#core/lib/report/outcome/blocked-outcome.ts";
 import { renderReportMarkdown } from "#core/lib/report/render/render-report-markdown.ts";
 import { buildUniversalReportData } from "#core/lib/report/build/universal.ts";
 import { buildInspectReportData } from "#core/lib/report/build/inspect.ts";
+import { applyOutcomeAnnotation } from "#core/lib/report/outcome/annotate.ts";
 import type { GenReportParameters, ReportData } from "#core/lib/report/types.ts";
 
 export type Report = ReportData;
@@ -112,4 +117,31 @@ export function computeReportOutcome(
   });
 
   return { markdown, message, level, shouldFail };
+}
+
+/**
+ * Side-effecting half of the report step: computeReportOutcome() decides
+ * what to say, this writes it to the Job Summary/annotations/exit code.
+ * `artifactAvailable` only affects the wording of a truncation notice if the
+ * report turns out to be too large for GitHub's own per-step limit -- it
+ * does not gate whether truncation happens.
+ */
+export async function writeReportSummary(
+  report: Report,
+  annotation: Annotation,
+  options: ComputeReportOutcomeOptions,
+  artifactAvailable: boolean,
+): Promise<void> {
+  const outcome = computeReportOutcome(report, options);
+
+  await writeStepSummary(outcome.markdown, artifactAvailable);
+
+  // Debug-only mirror: GITHUB_STEP_SUMMARY is unique per step and can't be
+  // reassigned, so a later step has no way to read this step's copy back.
+  const debugSummaryFile = process.env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
+  if (debugSummaryFile) {
+    appendFileSync(debugSummaryFile, outcome.markdown);
+  }
+
+  applyOutcomeAnnotation(annotation, outcome);
 }
