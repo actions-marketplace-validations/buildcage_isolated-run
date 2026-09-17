@@ -21,6 +21,8 @@ const COREDNS_LOG_DIR = "/var/log/coredns";
  * read and which builder to call depends on which proxy image ran --
  * inspect's has a second (CoreDNS) log the universal image does not.
  */
+// Untested by design: the log reader and both builders are tested directly.
+/* v8 ignore start */
 export function fetchReport(
   containerName: string,
   parameters: GenReportParameters,
@@ -39,6 +41,7 @@ export function fetchReport(
     parameters,
   );
 }
+/* v8 ignore stop */
 
 /**
  * Best-effort `org.opencontainers.image.version` label read, converted back

@@ -44,6 +44,9 @@ function unescapeField(field: string | undefined): string {
  * moment later (see buildOciConfig's readonlyPaths handling for why this
  * matters).
  */
+// Untested by design: parseMountinfo holds the logic and is tested directly.
+/* v8 ignore start */
 export function listHostMounts(): HostMount[] {
   return parseMountinfo(readFileSync("/proc/self/mountinfo", "utf8"));
 }
+/* v8 ignore stop */

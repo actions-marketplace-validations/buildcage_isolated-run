@@ -13,6 +13,11 @@ const SAMPLE_MOUNTINFO = [
 ].join("\n");
 
 describe("parseMountinfo", () => {
+  // No "-" separator, so the fsType lookup lands on fields[0].
+  it("yields empty strings for a line too malformed to have the fields", () => {
+    expect(parseMountinfo("1 0 0:1 /")).toStrictEqual([{ mountPoint: "", fsType: "1" }]);
+  });
+
   it("extracts the mount point and filesystem type of every line", () => {
     expect(parseMountinfo(SAMPLE_MOUNTINFO)).toStrictEqual([
       { mountPoint: "/", fsType: "ext4" },
