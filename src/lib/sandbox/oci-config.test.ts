@@ -1,162 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync, statSync } from "node:fs";
 
 import { parseNofileLimit, type HostProbes } from "./host-probes.ts";
 import type { BuildOciConfigOptions } from "./oci-config.ts";
 import type { OciSpec } from "./types.ts";
-import {
-  writeRunScript,
-  writeResolvConf,
-  computeReadonlyHostMounts,
-  freshMountDestinationsFrom,
-  withHostShmSize,
-  buildOciConfig,
-  writeOciConfig,
-  RESOLV_CONF_DESTINATION,
-} from "./oci-config.ts";
-import { parseMountinfo } from "./mountinfo.ts";
-import { withScratchDir, SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
+import { buildOciConfig } from "./oci-config.ts";
+import { RESOLV_CONF_DESTINATION } from "./oci-mounts.ts";
+import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
-
-describe("writeRunScript", () => {
-  it("wraps plain commands in a #!/bin/sh + set -e preamble", () => {
-    withScratchDir((dir) => {
-      const path = writeRunScript("echo hello", dir);
-      const content = readFileSync(path, "utf8");
-      expect(content).toBe("#!/bin/sh\nset -e\necho hello\n");
-    });
-  });
-
-  it("leaves an input that already starts with a shebang untouched", () => {
-    withScratchDir((dir) => {
-      const script = "#!/usr/bin/env bash\necho custom-shebang\n";
-      const path = writeRunScript(script, dir);
-      expect(readFileSync(path, "utf8")).toBe(script);
-    });
-  });
-
-  it("writes the script as executable", () => {
-    withScratchDir((dir) => {
-      const path = writeRunScript("echo hi", dir);
-      const mode = statSync(path).mode & 0o777;
-      expect(mode).toBe(0o700);
-    });
-  });
-});
-
-describe("writeResolvConf", () => {
-  it("writes a single nameserver line", () => {
-    withScratchDir((dir) => {
-      const path = writeResolvConf("172.20.0.1", dir);
-      expect(readFileSync(path, "utf8")).toBe("nameserver 172.20.0.1\n");
-    });
-  });
-});
-
-// Realistic /proc/self/mountinfo lines (see parseMountinfo's doc comment
-// for the field layout). Each has one optional field ("shared:N") before
-// the "-" separator, matching what a systemd-managed host typically shows.
-const SAMPLE_MOUNTINFO = [
-  "1 0 0:1 / / rw,relatime shared:1 - ext4 /dev/root rw",
-  "2 1 0:2 / /proc rw,relatime shared:2 - proc proc rw",
-  "3 1 0:3 / /run rw,nosuid,relatime shared:3 - tmpfs tmpfs rw,size=100k",
-  "4 3 0:4 / /run/user/1000 rw,nosuid,relatime shared:4 - tmpfs tmpfs rw",
-  "5 1 0:5 / /mnt rw,relatime shared:5 - ext4 /dev/sdb1 rw",
-].join("\n");
-
-describe("computeReadonlyHostMounts", () => {
-  const hostMounts = parseMountinfo(SAMPLE_MOUNTINFO);
-  const freshMountDestinations = new Set(["/proc"]);
-
-  it("excludes '/' itself (already covered by root.readonly)", () => {
-    const result = computeReadonlyHostMounts(hostMounts, new Set(), freshMountDestinations);
-    expect(!result.includes("/")).toBeTruthy();
-  });
-
-  it("excludes paths runc's own base spec already mounts fresh", () => {
-    const result = computeReadonlyHostMounts(hostMounts, new Set(), freshMountDestinations);
-    expect(!result.includes("/proc")).toBeTruthy();
-  });
-
-  it("excludes explicitly protected (writable) paths", () => {
-    const result = computeReadonlyHostMounts(hostMounts, new Set(["/run"]), freshMountDestinations);
-    expect(!result.includes("/run")).toBeTruthy();
-    expect(
-      result.includes("/run/user/1000"),
-      "a nested mount under a protected path is still its own separate mount point",
-    ).toBeTruthy();
-  });
-
-  it("includes real, non-pseudo, non-protected host mounts (e.g. a separate disk at /mnt)", () => {
-    const result = computeReadonlyHostMounts(hostMounts, new Set(), freshMountDestinations);
-    expect(result.includes("/mnt")).toBeTruthy();
-    expect(result.includes("/run")).toBeTruthy();
-    expect(result.includes("/run/user/1000")).toBeTruthy();
-  });
-
-  it("includes a pseudo-filesystem-like mount whose path isn't one of runc's own fresh destinations", () => {
-    // e.g. securityfs at /sys/kernel/security: it looks like the same
-    // "kernel pseudo-fs" class as /proc, but runc's default spec never
-    // declares a mount for it, so the host-swept copy must be forced
-    // read-only just like any other real mount point.
-    const withSecurityfs = [
-      ...hostMounts,
-      { mountPoint: "/sys/kernel/security", fsType: "securityfs" },
-    ];
-    const result = computeReadonlyHostMounts(withSecurityfs, new Set(), freshMountDestinations);
-    expect(result.includes("/sys/kernel/security")).toBeTruthy();
-  });
-});
-
-describe("freshMountDestinationsFrom", () => {
-  it("collects every mounts[].destination from the base spec", () => {
-    const baseSpec = {
-      mounts: [{ destination: "/proc" }, { destination: "/sys" }, { destination: "/dev/pts" }],
-    };
-    expect(freshMountDestinationsFrom(baseSpec)).toStrictEqual(
-      new Set(["/proc", "/sys", "/dev/pts"]),
-    );
-  });
-});
-
-describe("withHostShmSize", () => {
-  const shm = {
-    destination: "/dev/shm",
-    type: "tmpfs",
-    source: "shm",
-    options: ["nosuid", "noexec", "nodev", "mode=1777", "size=65536k"],
-  };
-  const other = { destination: "/dev", type: "tmpfs", source: "tmpfs", options: ["size=65536k"] };
-
-  it("replaces runc's 64MB cap with the host's own /dev/shm size", () => {
-    const [rewritten] = withHostShmSize([shm], 4 * 1024 * 1024 * 1024);
-    expect(rewritten.options).toStrictEqual([
-      "nosuid",
-      "noexec",
-      "nodev",
-      "mode=1777",
-      "size=4294967296",
-    ]);
-  });
-
-  it("drops the cap entirely when the host's size is unknown, leaving the kernel default", () => {
-    const [rewritten] = withHostShmSize([shm], undefined);
-    expect(rewritten.options).toStrictEqual(["nosuid", "noexec", "nodev", "mode=1777"]);
-  });
-
-  it("adds the size to a /dev/shm entry that carries no options at all", () => {
-    const [rewritten] = withHostShmSize(
-      [{ destination: "/dev/shm", type: "tmpfs", source: "shm" }],
-      1024,
-    );
-    expect(rewritten.options).toStrictEqual(["size=1024"]);
-  });
-
-  it("leaves every other mount alone, size= included", () => {
-    // /dev is a separate tmpfs holding device nodes only; 64MB is ample there.
-    expect(withHostShmSize([other], 1024)).toStrictEqual([other]);
-  });
-});
 
 // A minimal stand-in for what `runc spec` actually produces (see
 // runc-bootstrap.ts's generateBaseOciSpec) — only the fields buildOciConfig
@@ -952,23 +802,5 @@ describe("buildOciConfig — caTrust", () => {
     for (const ca of [OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION]) {
       expect(destinations.indexOf(ca)).toBeGreaterThan(destinations.indexOf("/etc"));
     }
-  });
-});
-
-describe("writeOciConfig", () => {
-  it("writes valid JSON matching the given config", () => {
-    withScratchDir((dir) => {
-      const config = { ociVersion: "1.0.2", process: { args: ["/bin/true"] } };
-      const path = writeOciConfig(config, dir);
-      expect(JSON.parse(readFileSync(path, "utf8"))).toStrictEqual(config);
-    });
-  });
-
-  it("writes config.json 0600 (nothing but runc has any business reading it)", () => {
-    withScratchDir((dir) => {
-      const path = writeOciConfig({ process: { env: ["SECRET=s3cr3t"] } }, dir);
-      const mode = statSync(path).mode & 0o777;
-      expect(mode).toBe(0o600);
-    });
   });
 });

@@ -21,7 +21,7 @@ import {
   ensureOwnScratchBase,
   SANDBOX_SCRATCH_BASE,
 } from "./scratch-dir.ts";
-import { writeRunScript } from "./oci-config.ts";
+import { writeRunScript } from "./oci-files.ts";
 import { SandboxError } from "../errors.ts";
 
 describe("scratchDirFor", () => {

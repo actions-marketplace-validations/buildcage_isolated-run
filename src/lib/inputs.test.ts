@@ -20,7 +20,7 @@ import {
 } from "./inputs.ts";
 import { buildACLRules, InvalidRulesError } from "#core/lib/acl/rules.ts";
 import { SandboxError } from "./errors.ts";
-import { RESERVED_INTERNAL_DESTINATIONS } from "./sandbox/oci-config.ts";
+import { RESERVED_INTERNAL_DESTINATIONS } from "./sandbox/oci-mounts.ts";
 
 describe("resolveFilesystemMode", () => {
   it("defaults to persistent for undefined", () => {

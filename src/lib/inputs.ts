@@ -21,7 +21,7 @@ import { annotate } from "#core/lib/actions/annotation.ts";
 import { SandboxError } from "./errors.ts";
 import { resolveProxyEngine, type ProxyEngine } from "./engine.ts";
 import { isAtOrUnder } from "./sandbox/paths.ts";
-import { RESERVED_INTERNAL_DESTINATIONS } from "./sandbox/oci-config.ts";
+import { RESERVED_INTERNAL_DESTINATIONS } from "./sandbox/oci-mounts.ts";
 import { WRITE_THROUGH_ALL } from "./sandbox/write-through.ts";
 
 /** Narrowed to what this module needs, so a test can pass a plain lookup. */

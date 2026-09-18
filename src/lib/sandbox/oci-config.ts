@@ -1,217 +1,17 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { HasMounts, MountEntry, OciSpec, BuiltOciSpec, HostMount } from "./types.ts";
-import { assertScratchBaseNotWritable, isAtOrUnder } from "./paths.ts";
+import type { OciSpec, BuiltOciSpec, HostMount } from "./types.ts";
+import { resolveProtectedPaths } from "./oci-protected-paths.ts";
 import {
-  realHostProbes,
-  SHM_DESTINATION,
-  type HostProbes,
-  type NofileLimit,
-} from "./host-probes.ts";
-import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
-import {
-  caTrustAdditions,
-  OWN_CA_DESTINATION,
-  SYSTEM_CA_DESTINATION,
-  type CaTrustFiles,
-} from "./ca-trust.ts";
-// Sensitive /proc paths masked with /dev/null. runc's own `runc spec`
-// default already masks /proc/kcore, /proc/keys, and /proc/timer_list
-// (among others) and leaves /proc/sysrq-trigger merely read-only —
-// buildOciConfig upgrades sysrq-trigger to fully masked (moving it out of
-// readonlyPaths) and adds kallsyms/kmsg, which runc's default doesn't
-// cover at all.
-//
-// Imported from a shared JSON file (rather than a JS literal) so
-// dev/build-test-bundle.sh — a bash/jq stand-in for this same function, used
-// by the Mac dev loop — has a single source of truth to read the same
-// list from instead of hand-duplicating it.
-import EXTRA_MASKED_PROC_PATHS from "../../../scripts/extra-masked-proc-paths.json" with { type: "json" };
-// A read-only bind mount doesn't stop connect(2) on a still-live socket;
-// masking replaces the path with /dev/null in this mount namespace, so
-// there's no socket left to connect to. See identity.ts for the
-// complementary GID-based layer.
-import {
-  EXTRA_MASKED_RUNTIME_PATHS,
-  rootlessRuntimeSocketPaths,
-  perUserRuntimeDirs,
-} from "./runtime-sockets.ts";
-
-/**
- * Write the user-supplied `run:` input to an executable script file.
- * Routing through a file (rather than passing the command inline to a
- * shell) avoids any shell-injection surface from the input string.
- *
- * Goes in `execDir` because the sandbox has to exec it; buildOciConfig
- * hides the rest of the scratch dir from other runs, and this file needs
- * the same protection: Actions expands a `${{ secrets.X }}` written inline
- * in `run:` before the input ever reaches here.
- */
-export function writeRunScript(runInput: string, execDir: string): string {
-  const scriptPath = join(execDir, "run-script.sh");
-  const content = runInput.startsWith("#!") ? runInput : `#!/bin/sh\nset -e\n${runInput}\n`;
-  writeFileSync(scriptPath, content, { mode: 0o700 });
-  return scriptPath;
-}
-
-/**
- * Pure: given the host's real mount table, the set of paths that must stay
- * writable, and the destinations runc's own base spec already declares a
- * fresh mount for (see freshMountDestinationsFrom), return the host mount
- * points that need to be explicitly forced read-only. This exists because
- * `root.readonly` in OCI/runc only remounts the top-level rootfs mount
- * point — it does *not* recursively apply to separate mount points that
- * `mount --rbind /` duplicates into the sandbox's rootfs. A host mount
- * point is skipped only when it exactly matches one of
- * `freshMountDestinations`: runc will mount fresh content there when it
- * sets up the sandbox's own further-nested namespaces, shadowing whatever
- * the rbind copy swept in from the host at that path, so forcing that
- * (about-to-be-overridden) copy read-only would be pointless -- and some
- * pseudo-filesystems reject a read-only remount outright. Any other real
- * host mount point not covered would otherwise remain fully writable
- * despite the sandbox's documented read-only-outside-workdir/home/tmp/
- * writable guarantee. "/" itself is excluded since root.readonly already
- * covers it directly.
- */
-export function computeReadonlyHostMounts(
-  hostMounts: HostMount[],
-  protectedPaths: Set<string>,
-  freshMountDestinations: Set<string>,
-): string[] {
-  return hostMounts
-    .filter(
-      ({ mountPoint }) =>
-        mountPoint !== "/" &&
-        !freshMountDestinations.has(mountPoint) &&
-        !protectedPaths.has(mountPoint),
-    )
-    .map(({ mountPoint }) => mountPoint);
-}
-
-/**
- * Pure: the set of destination paths `baseSpec.mounts` already declares a
- * mount for. Derived directly from the actual `runc spec` output already
- * being used to build config.json (see generateBaseOciSpec), rather than a
- * hardcoded list of filesystem types -- this stays correct automatically
- * if a future runc version changes its own default mounts, and sidesteps
- * fstype ambiguity (e.g. runc's default spec declares a `cgroup`-type
- * mount at /sys/fs/cgroup that transparently resolves to the host's real
- * cgroup v1 or v2 hierarchy, so matching by destination path covers both
- * without needing to special-case a literal "cgroup2" fstype name).
- */
-export function freshMountDestinationsFrom(baseSpec: HasMounts): Set<string> {
-  return new Set(baseSpec.mounts.map((m) => m.destination));
-}
-
-// `ip netns add` leaves its name as a real file under the host's own /run,
-// which the rootfs rbind carries into every sandbox -- so a step could list
-// the netns names of the other steps running beside it, and the proxy
-// container name each one is derived from with it. Nothing inside the
-// sandbox has a reason to read them, and nothing here is built on their
-// staying unknown -- this only removes an easy way to enumerate them.
-// Both spellings: /var/run is a symlink to /run on most hosts, a real
-// directory on a few. A path that doesn't exist is a no-op -- runc's
-// maskPath ignores ENOENT.
-const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
-
-/**
- * Pure: rewrite runc's 64MB /dev/shm cap to the host's own size, so a step
- * gets the shared memory it would have unwrapped. Chromium, and so Playwright
- * and every headless-Chrome runner, sizes its shared memory to the machine and
- * crashes under the container default. With the host size unknown, drop the
- * option and let the kernel apply its own.
- */
-export function withHostShmSize(mounts: MountEntry[], hostShmBytes?: number): MountEntry[] {
-  return mounts.map((m) => {
-    if (m.destination !== SHM_DESTINATION) return m;
-    const options = (m.options ?? []).filter((o) => !o.startsWith("size="));
-    return { ...m, options: hostShmBytes ? [...options, `size=${hostShmBytes}`] : options };
-  });
-}
-
-/** Where the proxy's nameserver is mounted inside the sandbox. */
-export const RESOLV_CONF_DESTINATION = "/etc/resolv.conf";
-
-/**
- * Paths this action mounts for its own use. A `write_through:` entry naming
- * one of them, or something under it, is rejected rather than silently
- * overridden: the mount carrying DNS or CA trust has to win, so honoring such
- * an entry is not an option. Naming an ancestor (`write_through: /etc`) stays
- * allowed, since these mounts are applied last and shadow only the paths
- * themselves.
- *
- * The CA destinations are reserved for every engine, not just inspect, so the
- * same input isn't accepted under one engine and refused under another.
- */
-export const RESERVED_INTERNAL_DESTINATIONS = [
+  ephemeralLayers,
+  freshMountDestinationsFrom,
+  persistentLayers,
+  scratchBaseLayers,
+  withHostShmSize,
+  writableDirsOf,
   RESOLV_CONF_DESTINATION,
-  OWN_CA_DESTINATION,
-  SYSTEM_CA_DESTINATION,
-];
-
-/**
- * Fail closed if a writable bind would land on a destination runc mounts fresh
- * content at. Those come first in `mounts`, so the bind would shadow them:
- * `write_through: /proc` would hand the sandbox the host's real procfs and
- * undo the PID-namespace separation.
- */
-function assertNoFreshMountDestinations(
-  writableDirs: string[],
-  freshMountDestinations: Set<string>,
-): void {
-  for (const dir of writableDirs) {
-    const shadowed = [...freshMountDestinations].find((d) => isAtOrUnder(dir, d));
-    if (shadowed) {
-      throw new Error(
-        `writable path ${JSON.stringify(dir)} is inside ${JSON.stringify(shadowed)}, which the sandbox mounts itself; ` +
-          "bind-mounting the host's copy there would expose it inside the sandbox. Choose a path outside it.",
-      );
-    }
-  }
-}
-
-/**
- * Build the final OCI Runtime Spec (config.json) for the isolated command,
- * starting from runc's own `baseSpec` (see generateBaseOciSpec) and
- * overriding only what this sandbox needs to control:
- *
- * - root: a bind-mounted copy of the host's own `/` (rootfsBindDir, set up
- *   by run-isolated.sh before invoking runc — pivot_root can't target `/`
- *   itself), made read-only via `root.readonly` plus an explicit
- *   `linux.readonlyPaths` entry per real host mount point `--rbind`
- *   duplicated in (see computeReadonlyHostMounts — root.readonly alone
- *   only covers the top-level mount), except workdir/home/tmp/runnerTemp/
- *   writablePaths. rootfsBindDir itself lives under SANDBOX_SCRATCH_BASE,
- *   which is never one of those writable exceptions, so the recursive
- *   writable rbinds don't re-expose the host-`/` rootfs as a second, writable
- *   copy inside the sandbox (see assertScratchBaseNotWritable, which fails
- *   closed if a `writable:` input would break that invariant).
- * - linux.namespaces: same six namespace types runc's own default spec
- *   already requests (no user namespace — see docs/security.md's
- *   rationale for preserving the real UID/GID), just adding `path` to the
- *   network entry so it joins the netns run-isolated.sh already wired a
- *   veth into, instead of creating a fresh, unconnected one.
- * - process.capabilities: fully cleared (all five sets empty) plus
- *   noNewPrivileges — runc applies this natively, no setpriv needed.
- * - process.env: emptied. The step's real environment (and, inspect engine
- *   only, the CA-trust variables ca-trust.ts adds) is handed to the sandbox
- *   over stdin instead. See env-loader.ts.
- * - linux.seccomp: the Docker-default-profile-derived filter (see
- *   gen-seccomp-profile), resolved against this same empty capability
- *   set.
- * - process.rlimits, hostname, /dev/shm size: matched to the runner rather
- *   than left at runc's container defaults. This sandbox restricts network
- *   and filesystem writes, not resources.
- * - mounts: the writable/overlay layers first, then this action's own mounts
- *   (RESERVED_INTERNAL_DESTINATIONS, which have to win over any
- *   `write_through` entry containing them), then a tmpfs over
- *   SANDBOX_SCRATCH_BASE hiding every other run's scratch directory the
- *   host-`/` rbind swept in, with this run's own execDir bound back on top.
- *
- * `writablePaths` containing "/" is a sentinel meaning "disable the
- * read-only restriction entirely" (see README.md's `writable`
- * input).
- */
+  type OverlayDirs,
+} from "./oci-mounts.ts";
+import { realHostProbes, type HostProbes, type NofileLimit } from "./host-probes.ts";
+import { caTrustAdditions, type CaTrustFiles } from "./ca-trust.ts";
 /** Linux-level identity the sandboxed process runs as. */
 export interface SandboxIdentity {
   uid: number;
@@ -246,7 +46,7 @@ export interface SandboxRuntimeWiring {
  *  ephemeral-fs.ts and main.ts before this is called -- buildOciConfig does
  *  no path resolution of its own here, only mount assembly and ordering. */
 export interface EphemeralPolicy {
-  overlayRoots: { path: string; upper: string; work: string }[];
+  overlayRoots: OverlayDirs[];
   allowWrite: string[];
 }
 
@@ -271,13 +71,52 @@ export interface BuildOciConfigOptions {
   caTrust?: CaTrustFiles;
 }
 
+/**
+ * Build the final OCI Runtime Spec (config.json) for the isolated command,
+ * starting from runc's own `baseSpec` (see generateBaseOciSpec) and
+ * overriding only what this sandbox needs to control:
+ *
+ * - root: a bind-mounted copy of the host's own `/` (rootfsBindDir, set up
+ *   by run-isolated.sh before invoking runc — pivot_root can't target `/`
+ *   itself), made read-only via `root.readonly` plus an explicit
+ *   `linux.readonlyPaths` entry per real host mount point `--rbind`
+ *   duplicated in (see oci-protected-paths.ts — root.readonly alone only
+ *   covers the top-level mount), except workdir/home/tmp/runnerTemp/
+ *   writablePaths. rootfsBindDir itself lives under SANDBOX_SCRATCH_BASE,
+ *   which is never one of those writable exceptions, so the recursive
+ *   writable rbinds don't re-expose the host-`/` rootfs as a second, writable
+ *   copy inside the sandbox (see assertScratchBaseNotWritable, which fails
+ *   closed if a `writable:` input would break that invariant).
+ * - linux.namespaces: same six namespace types runc's own default spec
+ *   already requests (no user namespace — see docs/security.md's
+ *   rationale for preserving the real UID/GID), just adding `path` to the
+ *   network entry so it joins the netns run-isolated.sh already wired a
+ *   veth into, instead of creating a fresh, unconnected one.
+ * - process.capabilities: fully cleared (all five sets empty) plus
+ *   noNewPrivileges — runc applies this natively, no setpriv needed.
+ * - process.env: emptied. The step's real environment (and, inspect engine
+ *   only, the CA-trust variables ca-trust.ts adds) is handed to the sandbox
+ *   over stdin instead. See env-loader.ts.
+ * - linux.seccomp: the Docker-default-profile-derived filter (see
+ *   gen-seccomp-profile), resolved against this same empty capability
+ *   set.
+ * - process.rlimits, hostname, /dev/shm size: matched to the runner rather
+ *   than left at runc's container defaults. This sandbox restricts network
+ *   and filesystem writes, not resources.
+ * - mounts: assembled here in the order the comment on that assembly gives;
+ *   each mode's own layers come from oci-mounts.ts.
+ *
+ * `writablePaths` containing "/" is a sentinel meaning "disable the
+ * read-only restriction entirely" (see README.md's `writable`
+ * input).
+ */
 export function buildOciConfig(
   baseSpec: OciSpec,
   { identity, writable, ephemeral, runtime, env, caTrust }: BuildOciConfigOptions,
   probes: HostProbes = realHostProbes,
 ): BuiltOciSpec {
   const { uid, gid } = identity;
-  const { workdir, home, runnerTemp, writablePaths = [] } = writable;
+  const { workdir, writablePaths = [] } = writable;
   const {
     netnsPath,
     rootfsBindDir,
@@ -303,118 +142,31 @@ export function buildOciConfig(
     },
     ...(caAdditions?.mounts ?? []),
   ];
-  const mounts = withHostShmSize(baseSpec.mounts, probes.shmSizeBytes());
   const nofile: NofileLimit | undefined = probes.nofileRlimit();
   const freshMountDestinations = freshMountDestinationsFrom(baseSpec);
-
-  let protectedPaths: Set<string>;
-  if (ephemeral) {
-    const { overlayRoots, allowWrite } = ephemeral;
-    const overlayPaths = overlayRoots.map((r) => r.path);
-    // Defense in depth: by construction (determineOverlayRoots never
-    // proposes a candidate under SANDBOX_SCRATCH_BASE) this can't actually
-    // fire, but keep the same fail-closed guard persistent mode has.
-    assertScratchBaseNotWritable([...overlayPaths, ...allowWrite]);
-    assertNoFreshMountDestinations(allowWrite, freshMountDestinations);
-    protectedPaths = new Set([...overlayPaths, ...allowWrite]);
-
-    // Layer 2: overlay roots, shallow-first -- lower is the untouched host
-    // path (readable/writable during the step, discarded after); upper/work
-    // live under this run's own scratch dir (createOverlayScratchDirs).
-    for (const root of [...overlayRoots].sort((a, b) => a.path.length - b.path.length)) {
-      mounts.push({
-        destination: root.path,
-        type: "overlay",
-        source: "overlay",
-        options: [`lowerdir=${root.path}`, `upperdir=${root.upper}`, `workdir=${root.work}`],
-      });
-    }
-    // Layer 3: write_through entries, shallow-first. ensureWriteThroughTargetsExist
-    // has already guaranteed every one of these exists on the host before
-    // this runs, so runc never has to synthesize a root-owned placeholder
-    // for any of them (see that function's own doc comment for why).
-    for (const p of [...allowWrite].sort((a, b) => a.length - b.length))
-      mounts.push({ destination: p, type: "none", source: p, options: ["rbind", "rw"] });
-  } else {
-    // Paths kept writable on top of the read-only root. RUNNER_TEMP is included
-    // because many actions/tools write there and it isn't always under $HOME
-    // (self-hosted runners can place it elsewhere), so the $HOME exception
-    // wouldn't otherwise cover it. Deduped so an overlapping entry (RUNNER_TEMP
-    // nested under $HOME, or a writablePaths duplicate) isn't bind-mounted twice.
-    const writableDirs = [
-      ...new Set(
-        [workdir, home, "/tmp", runnerTemp, ...writablePaths].filter((p): p is string =>
-          Boolean(p),
-        ),
-      ),
-    ];
-    protectedPaths = new Set(writableDirs);
-    if (!disableReadonly) {
-      // `writable: /` (disableReadonly) is an intentional, documented full
-      // opt-out of the read-only restriction, so it's exempt from this guard.
-      assertScratchBaseNotWritable(writableDirs);
-      assertNoFreshMountDestinations(writableDirs, freshMountDestinations);
-      for (const p of writableDirs)
-        mounts.push({ destination: p, type: "none", source: p, options: ["rbind", "rw"] });
-    }
-  }
-
-  mounts.push(...internalMounts);
-
-  // The rootfs rbind sweeps in every *other* concurrent (or leftover) run's
-  // scratch dir, and their 0700/0600 modes separate nothing: without a user
-  // namespace every sandbox on the host shares one real UID. An empty tmpfs
-  // does. Kept last so the mounts above still resolve against the real
-  // scratch base, and root-owned/unwritable so the sandbox can only traverse
-  // it. Not maskedPaths: runc applies those after every mount, which would
-  // undo the reveal below.
-  mounts.push(
-    {
-      destination: SANDBOX_SCRATCH_BASE,
-      type: "tmpfs",
-      source: "tmpfs",
-      options: ["nosuid", "nodev", "mode=0555"],
-    },
-    // `bind`, never `rbind`: the scratch dir also holds the live
-    // `mount --rbind /` rootfs by now, and a recursive bind would pull that
-    // in as a second copy of the whole host `/`, read-write at that, since
-    // `ro` covers only the top mount. execDir has no submounts of its own.
-    { destination: execDir, type: "none", source: execDir, options: ["bind", "ro"] },
-  );
-
-  const extraMaskedHostPaths = [
-    ...EXTRA_MASKED_RUNTIME_PATHS,
-    ...rootlessRuntimeSocketPaths(env),
-    ...perUserRuntimeDirs(uid, env),
-    ...EXTRA_MASKED_NETNS_PATHS,
+  // Order is the policy: runc's own mounts, then whichever mode's writable
+  // layers, then this action's own (which have to win over a write_through
+  // entry containing them), then the scratch base last of all.
+  const layers = ephemeral
+    ? ephemeralLayers(ephemeral, freshMountDestinations)
+    : persistentLayers(writableDirsOf(writable), freshMountDestinations, { disableReadonly });
+  const mounts = [
+    ...withHostShmSize(baseSpec.mounts, probes.shmSizeBytes()),
+    ...layers.mounts,
+    ...internalMounts,
+    ...scratchBaseLayers(execDir),
   ];
-  const maskedPaths = [
-    ...(baseSpec.linux.maskedPaths ?? []),
-    ...EXTRA_MASKED_PROC_PATHS,
-    ...extraMaskedHostPaths,
-  ];
-  // EXTRA_MASKED_PROC_PATHS are files runc's base spec already lists in
-  // readonlyPaths (sysrq-trigger). The runtime-socket paths don't come from
-  // the base spec, but perUserRuntimeDirs's `/run/user/<uid>` is a real
-  // host mount point (a tmpfs), so computeReadonlyHostMounts below would
-  // otherwise re-add it: masked and readonly on the same path is
-  // unnecessary and, in the order runc applies them, would make the mask
-  // pointless. Filtering both sources here (the base spec's own list, and
-  // the host-mount sweep) keeps every masked path out of readonlyPaths
-  // regardless of which of the two ways it could have entered it.
-  const isExtraMasked = (p: string): boolean =>
-    EXTRA_MASKED_PROC_PATHS.includes(p) || extraMaskedHostPaths.includes(p);
-  const baseReadonlyPaths = (baseSpec.linux.readonlyPaths ?? []).filter((p) => !isExtraMasked(p));
-  const readonlyPaths = disableReadonly
-    ? baseReadonlyPaths
-    : Array.from(
-        new Set([
-          ...baseReadonlyPaths,
-          ...computeReadonlyHostMounts(hostMounts, protectedPaths, freshMountDestinations).filter(
-            (p) => !isExtraMasked(p),
-          ),
-        ]),
-      );
+
+  const { maskedPaths, readonlyPaths } = resolveProtectedPaths({
+    baseMaskedPaths: baseSpec.linux.maskedPaths ?? [],
+    baseReadonlyPaths: baseSpec.linux.readonlyPaths ?? [],
+    uid,
+    env,
+    hostMounts,
+    writablePaths: layers.writablePaths,
+    freshMountDestinations,
+    disableReadonly,
+  });
 
   const namespaces = baseSpec.linux.namespaces.map((ns) =>
     ns.type === "network" ? { ...ns, path: netnsPath } : ns,
@@ -468,23 +220,4 @@ export function buildOciConfig(
       readonlyPaths,
     },
   };
-}
-
-/**
- * Write the final OCI config to `bundleDir/config.json` (overwriting the
- * `runc spec` placeholder generateBaseOciSpec left there). Still 0600 now
- * that the step environment has moved out of it (see env-loader.ts): it
- * describes this sandbox's whole isolation policy, and only runc reads it.
- */
-export function writeOciConfig(config: unknown, bundleDir: string): string {
-  const configPath = join(bundleDir, "config.json");
-  writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
-  return configPath;
-}
-
-/** Write the resolv.conf bind-mount source referenced by buildOciConfig. */
-export function writeResolvConf(dns: string, dir: string): string {
-  const resolvConfPath = join(dir, "resolv.conf");
-  writeFileSync(resolvConfPath, `nameserver ${dns}\n`, { mode: 0o644 });
-  return resolvConfPath;
 }
