@@ -10,7 +10,7 @@
  */
 
 import type { HasMounts, MountEntry } from "./types.ts";
-import { assertScratchBaseNotWritable, isAtOrUnder } from "./paths.ts";
+import { assertScratchBaseNotWritable, isAtOrUnder, WritablePathConflictError } from "./paths.ts";
 import { SHM_DESTINATION } from "./host-probes.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
@@ -78,7 +78,7 @@ function assertNoFreshMountDestinations(
   for (const dir of writableDirs) {
     const shadowed = [...freshMountDestinations].find((d) => isAtOrUnder(dir, d));
     if (shadowed) {
-      throw new Error(
+      throw new WritablePathConflictError(
         `writable path ${JSON.stringify(dir)} is inside ${JSON.stringify(shadowed)}, which the sandbox mounts itself; ` +
           "bind-mounting the host's copy there would expose it inside the sandbox. Choose a path outside it.",
       );

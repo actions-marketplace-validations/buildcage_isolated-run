@@ -12,6 +12,7 @@ import { extractCaCert, writeCaTrustFiles } from "./ca-trust.ts";
 import { resolveSandboxGid } from "./identity.ts";
 import { listHostMounts } from "./mountinfo.ts";
 import { buildOciConfig } from "./oci-config.ts";
+import { WritablePathConflictError } from "./paths.ts";
 import { writeRunScript, writeResolvConf, writeOciConfig } from "./oci-files.ts";
 import { buildEnvBlob, resolveSandboxEnv, writeEnvLoader } from "./env-loader.ts";
 import { runIsolated } from "./run.ts";
@@ -133,6 +134,7 @@ export function runSandboxedCommand(
           destDir: dir,
         }));
       } catch (e) {
+        if (e instanceof SandboxError) throw e;
         throw new SandboxError(
           `Failed to extract runc/gen-seccomp-profile from the proxy image: ${errorMessage(e)}`,
           "RUNC_EXTRACT_FAILED",
@@ -148,6 +150,7 @@ export function runSandboxedCommand(
           const caCertPath = extractCaCert(containerName, dir);
           caTrust = writeCaTrustFiles(caCertPath, dir);
         } catch (e) {
+          if (e instanceof SandboxError) throw e;
           throw new SandboxError(
             `Failed to extract the proxy's CA from the proxy image: ${errorMessage(e)}`,
             "CA_EXTRACT_FAILED",
@@ -223,6 +226,14 @@ export function runSandboxedCommand(
           caTrust,
         });
       } catch (e) {
+        // A step in here that already speaks to the user keeps its own words:
+        // resolveSandboxGid's UNSAFE_PRIMARY_GID, and the writable-path guards
+        // buildOciConfig runs, which resolveFilesystemPlan reports under the
+        // same code when its own early copy catches the input first.
+        if (e instanceof SandboxError) throw e;
+        if (e instanceof WritablePathConflictError) {
+          throw new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT");
+        }
         throw new SandboxError(
           `Failed to build the sandbox's OCI bundle: ${errorMessage(e)}`,
           "OCI_CONFIG_BUILD_FAILED",

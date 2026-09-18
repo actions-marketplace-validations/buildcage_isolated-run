@@ -19,6 +19,15 @@ export function pathsOverlap(a: string, b: string): boolean {
 }
 
 /**
+ * Thrown by the guards that reject a writable path conflicting with something
+ * the sandbox needs for itself -- this one and oci-mounts.ts's
+ * assertNoFreshMountDestinations. Both run twice, once early over the
+ * write_through input and once authoritatively while the OCI bundle is built,
+ * so both callers can turn it into the same FILESYSTEM_INPUT_CONFLICT code.
+ */
+export class WritablePathConflictError extends Error {}
+
+/**
  * Fail closed if any writable-exception directory is, or contains, or is
  * contained in, SANDBOX_SCRATCH_BASE. That directory holds the run's own
  * `mount --rbind /` rootfs (see rootfsBindDir in main.ts); the writable
@@ -34,7 +43,7 @@ export function pathsOverlap(a: string, b: string): boolean {
 export function assertScratchBaseNotWritable(writableDirs: string[]): void {
   const overlapping = writableDirs.find((p) => pathsOverlap(p, SANDBOX_SCRATCH_BASE));
   if (overlapping) {
-    throw new Error(
+    throw new WritablePathConflictError(
       `writable path ${JSON.stringify(overlapping)} overlaps the sandbox's own scratch directory (${SANDBOX_SCRATCH_BASE}); ` +
         `this would re-expose the sandboxed host filesystem read-write inside the sandbox itself. Choose a writable path outside ${SANDBOX_SCRATCH_BASE}.`,
     );

@@ -17774,9 +17774,10 @@ function isAtOrUnder(path, ancestor) {
 function pathsOverlap(a, b) {
 	return isAtOrUnder(a, b) || isAtOrUnder(b, a);
 }
+var WritablePathConflictError = class extends Error {};
 function assertScratchBaseNotWritable(writableDirs) {
 	let overlapping = writableDirs.find((p) => pathsOverlap(p, SANDBOX_SCRATCH_BASE));
-	if (overlapping) throw Error(`writable path ${JSON.stringify(overlapping)} overlaps the sandbox's own scratch directory (${SANDBOX_SCRATCH_BASE}); this would re-expose the sandboxed host filesystem read-write inside the sandbox itself. Choose a writable path outside ${SANDBOX_SCRATCH_BASE}.`);
+	if (overlapping) throw new WritablePathConflictError(`writable path ${JSON.stringify(overlapping)} overlaps the sandbox's own scratch directory (${SANDBOX_SCRATCH_BASE}); this would re-expose the sandboxed host filesystem read-write inside the sandbox itself. Choose a writable path outside ${SANDBOX_SCRATCH_BASE}.`);
 }
 //#endregion
 //#region src/lib/sandbox/host-probes.ts
@@ -17971,7 +17972,7 @@ const RESOLV_CONF_DESTINATION = "/etc/resolv.conf", RESERVED_INTERNAL_DESTINATIO
 function assertNoFreshMountDestinations(writableDirs, freshMountDestinations) {
 	for (let dir of writableDirs) {
 		let shadowed = [...freshMountDestinations].find((d) => isAtOrUnder(dir, d));
-		if (shadowed) throw Error(`writable path ${JSON.stringify(dir)} is inside ${JSON.stringify(shadowed)}, which the sandbox mounts itself; bind-mounting the host's copy there would expose it inside the sandbox. Choose a path outside it.`);
+		if (shadowed) throw new WritablePathConflictError(`writable path ${JSON.stringify(dir)} is inside ${JSON.stringify(shadowed)}, which the sandbox mounts itself; bind-mounting the host's copy there would expose it inside the sandbox. Choose a path outside it.`);
 	}
 }
 function ephemeralLayers({ overlayRoots, allowWrite }, freshMountDestinations) {
@@ -18814,14 +18815,14 @@ function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThrough
 				destDir: dir
 			}));
 		} catch (e) {
-			throw new SandboxError(`Failed to extract runc/gen-seccomp-profile from the proxy image: ${errorMessage(e)}`, "RUNC_EXTRACT_FAILED");
+			throw e instanceof SandboxError ? e : new SandboxError(`Failed to extract runc/gen-seccomp-profile from the proxy image: ${errorMessage(e)}`, "RUNC_EXTRACT_FAILED");
 		}
 		let caTrust;
 		if (proxyEngine === "inspect") try {
 			let caCertPath = extractCaCert(containerName, dir);
 			caTrust = writeCaTrustFiles(caCertPath, dir);
 		} catch (e) {
-			throw new SandboxError(`Failed to extract the proxy's CA from the proxy image: ${errorMessage(e)}`, "CA_EXTRACT_FAILED");
+			throw e instanceof SandboxError ? e : new SandboxError(`Failed to extract the proxy's CA from the proxy image: ${errorMessage(e)}`, "CA_EXTRACT_FAILED");
 		}
 		let workdir = env.GITHUB_WORKSPACE || "", home = env.HOME || "", netnsName = containerName.replace(/^buildcage-proxy-/, "buildcage-sandbox-"), rootfsBindDir = (0, node_path.join)(dir, "rootfs"), config;
 		try {
@@ -18857,7 +18858,7 @@ function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThrough
 				caTrust
 			});
 		} catch (e) {
-			throw new SandboxError(`Failed to build the sandbox's OCI bundle: ${errorMessage(e)}`, "OCI_CONFIG_BUILD_FAILED");
+			throw e instanceof SandboxError ? e : e instanceof WritablePathConflictError ? new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT") : new SandboxError(`Failed to build the sandbox's OCI bundle: ${errorMessage(e)}`, "OCI_CONFIG_BUILD_FAILED");
 		}
 		return writeOciConfig(config, dir), runIsolated({
 			envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust)),

@@ -6,6 +6,7 @@ import type { OciSpec } from "./types.ts";
 import { buildOciConfig } from "./oci-config.ts";
 import { RESOLV_CONF_DESTINATION } from "./oci-mounts.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
+import { WritablePathConflictError } from "./paths.ts";
 import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
 
 // A minimal stand-in for what `runc spec` actually produces (see
@@ -462,12 +463,15 @@ describe("buildOciConfig", () => {
 
   it("fails closed when a writable path names a destination runc mounts itself", () => {
     for (const path of ["/proc", "/sys", "/proc/self"]) {
-      expect(() =>
+      const attempt = () =>
         build(fakeBaseSpec(), {
           ...baseArgs,
           writable: { ...baseArgs.writable, writablePaths: [path] },
-        }),
-      ).toThrow(/the sandbox mounts itself/);
+        });
+      expect(attempt).toThrow(/the sandbox mounts itself/);
+      // The class is what keeps the misconfiguration reportable under its own
+      // code rather than a generic build failure -- see sandboxed-command.ts.
+      expect(attempt).toThrow(WritablePathConflictError);
     }
   });
 
