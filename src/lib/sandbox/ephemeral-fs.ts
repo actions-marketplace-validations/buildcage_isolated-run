@@ -2,10 +2,7 @@ import { existsSync, statSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { isAtOrUnder } from "./paths.ts";
-
-export interface OverlayRoot {
-  path: string;
-}
+import type { OverlayDirs } from "./types.ts";
 
 // Untested by design: the default behind determineOverlayRoots' deviceOf
 // seam, which only hands node:fs what the tested caller decided.
@@ -57,7 +54,7 @@ export function determineOverlayRoots(
   candidates: string[],
   writeThroughPaths: string[],
   { exists = existsSync, deviceOf = defaultDeviceOf }: DetermineOverlayRootsOptions = {},
-): OverlayRoot[] {
+): string[] {
   const existing = [...new Set(candidates)].filter((c) => exists(c));
 
   const notCoveredByWriteThrough = existing.filter(
@@ -76,13 +73,7 @@ export function determineOverlayRoots(
     }
   });
 
-  return notNested.map((path) => ({ path }));
-}
-
-export interface OverlayScratchPaths {
-  path: string;
-  upper: string;
-  work: string;
+  return notNested;
 }
 
 /** Filesystem-safe subdirectory name for a host path. */
@@ -100,10 +91,10 @@ function slugify(path: string): string {
  */
 export function createOverlayScratchDirs(
   scratchDir: string,
-  roots: OverlayRoot[],
+  roots: string[],
   { mkdir = mkdirSync }: { mkdir?: typeof mkdirSync } = {},
-): OverlayScratchPaths[] {
-  return roots.map(({ path }) => {
+): OverlayDirs[] {
+  return roots.map((path) => {
     const base = join(scratchDir, "ephemeral", slugify(path));
     const upper = join(base, "upper");
     const work = join(base, "work");

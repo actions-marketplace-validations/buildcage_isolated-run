@@ -8,6 +8,11 @@
  * inputs before the privileged preflight checks, the rules only after the
  * image is verified. Folding them together would reorder validation against
  * those steps and change which error a run with more than one problem reports.
+ *
+ * Nothing here imports `sandbox/`. What a value may be is a question about the
+ * sandbox's own mounts, so it belongs to the module that makes them -- and a
+ * unit test of any reader here would otherwise run `sandbox/scratch-dir.ts`'s
+ * uid-dependent top-level setup on the way in.
  */
 import * as core from "@actions/core";
 
@@ -20,9 +25,7 @@ import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
 import { annotate } from "#core/lib/actions/annotation.ts";
 import { SandboxError } from "./errors.ts";
 import { resolveProxyEngine, type ProxyEngine } from "./engine.ts";
-import { isAtOrUnder } from "./sandbox/paths.ts";
-import { RESERVED_INTERNAL_DESTINATIONS } from "./sandbox/oci-mounts.ts";
-import { WRITE_THROUGH_ALL } from "./sandbox/write-through.ts";
+import { resolveFilesystemMode, type FilesystemMode } from "./filesystem-mode.ts";
 
 /** Narrowed to what this module needs, so a test can pass a plain lookup. */
 export type GetInput = (name: string, options?: { trimWhitespace?: boolean }) => string;
@@ -73,20 +76,6 @@ export function resolveWriteThroughInput({
   return writeThrough;
 }
 
-const FILESYSTEM_MODES = ["persistent", "ephemeral"] as const;
-export type FilesystemMode = (typeof FILESYSTEM_MODES)[number];
-
-export function resolveFilesystemMode(input: string | undefined): FilesystemMode {
-  const trimmed = input?.trim() || "persistent";
-  if (!(FILESYSTEM_MODES as readonly string[]).includes(trimmed)) {
-    throw new SandboxError(
-      `Invalid filesystem_mode: ${JSON.stringify(input)}. Must be one of ${FILESYSTEM_MODES.join(", ")}.`,
-      "INVALID_FILESYSTEM_MODE",
-    );
-  }
-  return trimmed as FilesystemMode;
-}
-
 /** The write_through: input as bare lines, for the pre-resolution check in
  *  main(). Resolution proper (variables, ~/, relative paths) is
  *  resolveWriteThroughPaths' job. */
@@ -95,43 +84,6 @@ export function splitWriteThroughInput(input: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-}
-
-/**
- * Validates write_through: paths against the filesystem mode. Pure, no I/O --
- * deliberately called on its own, ahead of
- * checkPasswordlessSudo()/checkOverlayfsSupport() in main(), so a plain input
- * mistake is rejected immediately rather than only after those privileged
- * preflight checks have already run. That early call passes the raw lines;
- * resolveFilesystemPlan calls it again on the resolved paths, which is the
- * authoritative one. Both see the same sentinel: resolveWriteThroughEntry
- * rejects a spelling that merely normalizes to "/", so only a literal one
- * reaches either call.
- */
-export function validateFilesystemInputs(
-  filesystemMode: FilesystemMode,
-  writeThroughPaths: string[],
-): void {
-  if (filesystemMode === "ephemeral" && writeThroughPaths.includes(WRITE_THROUGH_ALL)) {
-    throw new SandboxError(
-      "write_through: / drops the read-only restriction wholesale, which has no meaning in " +
-        "filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists " +
-        "to prevent. List the paths that must survive instead.",
-      "FILESYSTEM_INPUT_CONFLICT",
-    );
-  }
-
-  for (const path of writeThroughPaths) {
-    const reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
-    if (reserved) {
-      throw new SandboxError(
-        `write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} ` +
-          "itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. " +
-          "Name a containing directory instead to persist writes around it.",
-        "FILESYSTEM_INPUT_CONFLICT",
-      );
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

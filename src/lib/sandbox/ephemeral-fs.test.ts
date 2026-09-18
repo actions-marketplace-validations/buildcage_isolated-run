@@ -23,8 +23,8 @@ describe("determineOverlayRoots", () => {
   it("folds RUNNER_TEMP and GITHUB_WORKSPACE into HOME when both are nested under it", () => {
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP, "/tmp", ENV.GITHUB_WORKSPACE];
     expect(determineOverlayRoots(candidates, [], { exists, deviceOf: sameDevice })).toStrictEqual([
-      { path: ENV.HOME },
-      { path: "/tmp" },
+      ENV.HOME,
+      "/tmp",
     ]);
   });
 
@@ -32,21 +32,21 @@ describe("determineOverlayRoots", () => {
     const candidates = [ENV.HOME, "/tmp"];
     expect(
       determineOverlayRoots(candidates, [ENV.HOME], { exists, deviceOf: sameDevice }),
-    ).toStrictEqual([{ path: "/tmp" }]);
+    ).toStrictEqual(["/tmp"]);
   });
 
   it("keeps a candidate that is only an ancestor of a narrower write_through entry (the entry's own rw bind persists just that subtree on top -- see buildOciConfig's mount ordering)", () => {
     const candidates = [ENV.HOME, "/tmp"];
     expect(
       determineOverlayRoots(candidates, [`${ENV.HOME}/.npmrc`], { exists, deviceOf: sameDevice }),
-    ).toStrictEqual([{ path: ENV.HOME }, { path: "/tmp" }]);
+    ).toStrictEqual([ENV.HOME, "/tmp"]);
   });
 
   it("excludes a candidate that is a descendant of a broader write_through entry", () => {
     const candidates = [`${ENV.HOME}/.cache`, "/tmp"];
     expect(
       determineOverlayRoots(candidates, [ENV.HOME], { exists, deviceOf: sameDevice }),
-    ).toStrictEqual([{ path: "/tmp" }]);
+    ).toStrictEqual(["/tmp"]);
   });
 
   it("drops a candidate that doesn't exist on disk", () => {
@@ -56,13 +56,13 @@ describe("determineOverlayRoots", () => {
         exists: (p) => p !== "/tmp",
         deviceOf: sameDevice,
       }),
-    ).toStrictEqual([{ path: ENV.HOME }]);
+    ).toStrictEqual([ENV.HOME]);
   });
 
   it("dedupes identical candidates (e.g. RUNNER_TEMP === HOME on some self-hosted setups)", () => {
     expect(
       determineOverlayRoots([ENV.HOME, ENV.HOME], [], { exists, deviceOf: sameDevice }),
-    ).toStrictEqual([{ path: ENV.HOME }]);
+    ).toStrictEqual([ENV.HOME]);
   });
 
   it("does not let a non-existent outer candidate drop an existing inner one's coverage", () => {
@@ -76,7 +76,7 @@ describe("determineOverlayRoots", () => {
         exists: (p) => p === ENV.RUNNER_TEMP,
         deviceOf: sameDevice,
       }),
-    ).toStrictEqual([{ path: ENV.RUNNER_TEMP }]);
+    ).toStrictEqual([ENV.RUNNER_TEMP]);
   });
 
   it("keeps a nested candidate that is actually a distinct mount instead of folding it into the outer one", () => {
@@ -88,15 +88,15 @@ describe("determineOverlayRoots", () => {
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     const deviceOf = (p: string) => (p === ENV.RUNNER_TEMP ? 2 : 1);
     expect(determineOverlayRoots(candidates, [], { exists, deviceOf })).toStrictEqual([
-      { path: ENV.HOME },
-      { path: ENV.RUNNER_TEMP },
+      ENV.HOME,
+      ENV.RUNNER_TEMP,
     ]);
   });
 
   it("still folds a same-device nested candidate away even when deviceOf is given", () => {
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     expect(determineOverlayRoots(candidates, [], { exists, deviceOf: sameDevice })).toStrictEqual([
-      { path: ENV.HOME },
+      ENV.HOME,
     ]);
   });
 
@@ -107,8 +107,8 @@ describe("determineOverlayRoots", () => {
       return 1;
     };
     expect(determineOverlayRoots(candidates, [], { exists, deviceOf })).toStrictEqual([
-      { path: ENV.HOME },
-      { path: ENV.RUNNER_TEMP },
+      ENV.HOME,
+      ENV.RUNNER_TEMP,
     ]);
   });
 });
@@ -120,13 +120,9 @@ describe("createOverlayScratchDirs", () => {
       created.push(p);
     }) as unknown as typeof import("node:fs").mkdirSync;
 
-    const result = createOverlayScratchDirs(
-      "/var/tmp/buildcage/sandbox-xyz",
-      [{ path: "/home/runner" }],
-      {
-        mkdir,
-      },
-    );
+    const result = createOverlayScratchDirs("/var/tmp/buildcage/sandbox-xyz", ["/home/runner"], {
+      mkdir,
+    });
 
     expect(result).toStrictEqual([
       {
@@ -171,7 +167,7 @@ describe("formatFilesystemPlanLog", () => {
 
 describe("createOverlayScratchDirs — a root that slugifies to nothing", () => {
   it("falls back to _root so the directory still has a name", () => {
-    const dirs = createOverlayScratchDirs("/scratch", [{ path: "" }], { mkdir: () => undefined });
+    const dirs = createOverlayScratchDirs("/scratch", [""], { mkdir: () => undefined });
     expect(dirs[0].upper).toBe("/scratch/ephemeral/_root/upper");
   });
 });

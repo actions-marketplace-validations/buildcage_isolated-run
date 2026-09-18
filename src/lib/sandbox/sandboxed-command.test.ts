@@ -129,7 +129,7 @@ describe("runSandboxedCommand", () => {
   });
 
   it("builds the overlay only in ephemeral mode, from the already-folded roots", () => {
-    const overlayRoots = [{ path: "/usr", fsType: "ext4" }];
+    const overlayRoots = ["/usr"];
     mocks.createOverlayScratchDirs.mockReturnValue([{ path: "/usr", upper: `${SCRATCH}/upper0` }]);
 
     runSandboxedCommand(

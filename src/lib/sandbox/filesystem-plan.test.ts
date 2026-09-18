@@ -5,8 +5,9 @@
  */
 import { describe, it, expect, vi } from "vitest";
 
-import { resolveFilesystemPlan } from "./filesystem-plan.ts";
+import { resolveFilesystemPlan, validateFilesystemInputs } from "./filesystem-plan.ts";
 import { SandboxError } from "../errors.ts";
+import { RESERVED_INTERNAL_DESTINATIONS } from "./oci-mounts.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 
 describe("resolveFilesystemPlan", () => {
@@ -124,7 +125,7 @@ describe("resolveFilesystemPlan", () => {
     // GitHub-hosted runner), so it folds away; GITHUB_WORKSPACE is also
     // nested under HOME here, so it folds away too -- only HOME and /tmp
     // are left.
-    expect(plan.overlayRoots.map((r) => r.path).sort()).toStrictEqual([ENV.HOME, "/tmp"].sort());
+    expect(plan.overlayRoots.sort()).toStrictEqual([ENV.HOME, "/tmp"].sort());
   });
 
   it("resolves and pre-creates write_through targets, then excludes only what's actually covered by them", () => {
@@ -158,9 +159,7 @@ describe("resolveFilesystemPlan", () => {
     ]);
     // RUNNER_TEMP still folds away under HOME as usual; GITHUB_WORKSPACE
     // keeps its own overlay since it isn't nested under HOME here.
-    expect(plan.overlayRoots.map((r) => r.path).sort()).toStrictEqual(
-      [ENV.HOME, "/tmp", "/workspace"].sort(),
-    );
+    expect(plan.overlayRoots.sort()).toStrictEqual([ENV.HOME, "/tmp", "/workspace"].sort());
   });
 
   it("wraps a missing well-known runner file as WRITE_THROUGH_TARGET_MISSING", () => {
@@ -232,5 +231,54 @@ describe("resolveFilesystemPlan", () => {
       expect(err).toBeInstanceOf(SandboxError);
       expect((err as SandboxError).code).toBe("FILESYSTEM_PLAN_FAILED");
     }
+  });
+});
+
+describe("validateFilesystemInputs", () => {
+  it("throws FILESYSTEM_INPUT_CONFLICT for write_through: / in ephemeral mode", () => {
+    expect.assertions(2);
+    try {
+      validateFilesystemInputs("ephemeral", ["/"]);
+    } catch (err) {
+      expect(err).toBeInstanceOf(SandboxError);
+      expect((err as SandboxError).code).toBe("FILESYSTEM_INPUT_CONFLICT");
+    }
+  });
+
+  it("finds the / sentinel among other entries, not just on its own", () => {
+    expect(() => validateFilesystemInputs("ephemeral", ["./dist", "/"])).toThrow(SandboxError);
+  });
+
+  it("allows the / sentinel in persistent mode, and ordinary paths in either", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/"])).not.toThrow();
+    expect(() => validateFilesystemInputs("persistent", ["/opt/cache"])).not.toThrow();
+    expect(() => validateFilesystemInputs("ephemeral", ["./dist"])).not.toThrow();
+    expect(() => validateFilesystemInputs("persistent", [])).not.toThrow();
+    expect(() => validateFilesystemInputs("ephemeral", [])).not.toThrow();
+  });
+
+  it.each(RESERVED_INTERNAL_DESTINATIONS)("rejects the reserved path %s in either mode", (path) => {
+    expect(() => validateFilesystemInputs("persistent", [path])).toThrow(/reserved/);
+    expect(() => validateFilesystemInputs("ephemeral", [path])).toThrow(/reserved/);
+  });
+
+  // The CA paths are only really mounted by the inspect engine, but this
+  // function never sees the engine: an input accepted under one engine and
+  // refused under another would be worse than refusing it everywhere.
+  it("rejects a path under a reserved one", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/etc/resolv.conf/x"])).toThrow(
+      /reserved/,
+    );
+  });
+
+  it("allows a directory containing a reserved path, which the reserved mount is layered over", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/etc"])).not.toThrow();
+    expect(() => validateFilesystemInputs("ephemeral", ["/etc/ssl/certs"])).not.toThrow();
+  });
+
+  it("names the offending entry and the reserved path it collides with", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/etc/resolv.conf"])).toThrow(
+      /"\/etc\/resolv\.conf"/,
+    );
   });
 });

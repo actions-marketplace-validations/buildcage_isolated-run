@@ -1,33 +1,22 @@
 import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as core from "@actions/core";
 
 import { buildComposeDownArgs } from "#core/lib/docker/args.ts";
+import { readLocalImageOverride, resolveComposeFile } from "./lib/compose-file.ts";
 import { planPostCleanup } from "./lib/post-cleanup.ts";
 import type { PostCleanupTargets } from "./lib/post-state.ts";
 
 // Untested by design, down to the end of the file: planPostCleanup decides
 // what may be torn down, and tearing it down is docker's own.
 /* v8 ignore start */
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
-
-// Same gate as main.ts's own LOCAL_IMAGE_OVERRIDE_ENABLED — see its comment
-// there. Needed here too: if main.ts started the proxy via
-// BUILDCAGE_TEST_COMPOSE_FILE (this repo's own inspect-engine fixture tests)
-// and the process was then killed before its own finally block ran, this
+// The override is read here too, not just in main.ts: if main.ts started the
+// proxy via BUILDCAGE_TEST_COMPOSE_FILE (this repo's own inspect-engine fixture
+// tests) and the process was then killed before its own finally block ran, this
 // fallback must tear down the same compose file that started it, not the
 // shipped default it never used.
-const LOCAL_IMAGE_OVERRIDE_ENABLED = process.env.BUILDCAGE_BUILD_TEST_HOOKS === "1";
-
 async function stopProxyContainer({ containerName, projectName }: PostCleanupTargets) {
-  const localOverride = LOCAL_IMAGE_OVERRIDE_ENABLED
-    ? (await import("./core/lib/provenance/local-image-override.ts")).readLocalImageOverride(
-        process.env,
-      )
-    : null;
-  const composeFile = localOverride?.composeFile ?? defaultComposeFile;
+  const composeFile = resolveComposeFile(await readLocalImageOverride(process.env));
 
   execFileSync("docker", buildComposeDownArgs({ composeFile, projectName }), {
     stdio: "inherit",
