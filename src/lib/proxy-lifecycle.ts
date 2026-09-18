@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 
 import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/docker-error.ts";
 import type { Annotation } from "#core/lib/actions/annotation.ts";
+import type { RunDocker } from "#core/lib/docker/client.ts";
 import {
   buildComposeUpArgs,
   buildComposeDownArgs,
@@ -23,7 +24,7 @@ const LOG_TAIL = 100;
  *  instead of mocking node:child_process directly (see core/lib/docker/client.ts). */
 export interface ProxyLifecycleDeps {
   /** `docker <args>` with stdout captured, for output this module reads. */
-  captureDocker?: (args: string[], env: NodeJS.ProcessEnv) => string;
+  captureDocker?: RunDocker;
   /** `docker <args>` with stdio inherited, for output meant for the job log. */
   printDocker?: (args: string[], env: NodeJS.ProcessEnv) => void;
 }
@@ -31,7 +32,7 @@ export interface ProxyLifecycleDeps {
 // Untested by design: the defaults behind the seams above, which only hand
 // execFileSync what the tested callers decided.
 /* v8 ignore start */
-const captureDockerViaExec = (args: string[], env: NodeJS.ProcessEnv): string =>
+const captureDockerViaExec: RunDocker = (args, env) =>
   execFileSync("docker", args, {
     encoding: "utf8",
     env,
