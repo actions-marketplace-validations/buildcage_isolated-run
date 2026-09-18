@@ -127,8 +127,6 @@ describe("reportStepTraffic", () => {
     expect(mocks.writeReportSummary).not.toHaveBeenCalled();
   });
 
-  // The wording says "fetch" for every failure in the sequence, not only the
-  // fetch. Inherited, not intended -- pinned here so changing it is deliberate.
   it("warns rather than throwing when writing the summary fails", async () => {
     // The step's exit code is the isolated command's own; nothing here may
     // replace it, and the proxy still has to be torn down afterwards.
@@ -136,7 +134,7 @@ describe("reportStepTraffic", () => {
 
     await expect(reportStepTraffic(options(), deps)).resolves.toBeUndefined();
     expect(annotation.warning).toHaveBeenCalledWith(
-      "Failed to fetch sandbox report: summary too large",
+      "Failed to write the report summary: summary too large",
     );
   });
 
@@ -149,7 +147,7 @@ describe("reportStepTraffic", () => {
 
     await expect(reportStepTraffic(options(), deps)).resolves.toBeUndefined();
     expect(annotation.warning).toHaveBeenCalledWith(
-      "Failed to fetch sandbox report: artifact service down",
+      "Failed to upload the traffic artifact: artifact service down",
     );
   });
 });
