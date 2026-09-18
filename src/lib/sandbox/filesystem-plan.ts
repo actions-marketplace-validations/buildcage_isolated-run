@@ -16,7 +16,7 @@
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import type { FilesystemMode } from "../filesystem-mode.ts";
-import { determineOverlayRoots, formatFilesystemPlanLog } from "./ephemeral-fs.ts";
+import { determineOverlayRoots } from "./ephemeral-fs.ts";
 import {
   resolveWriteThroughPaths,
   ensureWriteThroughTargetsExist,
@@ -28,12 +28,10 @@ import {
 import { assertScratchBaseNotWritable, isAtOrUnder } from "./paths.ts";
 import { RESERVED_INTERNAL_DESTINATIONS } from "./oci-mounts.ts";
 
-export { formatFilesystemPlanLog };
-
 /**
  * Validates write_through: paths against the filesystem mode. Pure, no I/O --
  * deliberately called on its own, ahead of
- * checkPasswordlessSudo()/checkOverlayfsSupport() in main(), so a plain input
+ * checkPasswordlessSudo()/checkOverlayfsSupport() in the step, so a plain input
  * mistake is rejected immediately rather than only after those privileged
  * preflight checks have already run. That early call passes the raw lines;
  * resolveFilesystemPlan calls it again on the resolved paths, which is the

@@ -194,9 +194,13 @@ describe("writeReportSummary", () => {
   it("writes the summary to GITHUB_STEP_SUMMARY", async () => {
     const summaryFile = join(scratchDir, "summary.md");
     writeFileSync(summaryFile, "");
+    // core.summary.write() finds the file through the variable itself, so the
+    // path has to be both passed in and present in the environment here.
     vi.stubEnv("GITHUB_STEP_SUMMARY", summaryFile);
 
-    await writeReportSummary(report(), createAnnotation(true), options(), false);
+    await writeReportSummary(report(), createAnnotation(true), options(), false, {
+      GITHUB_STEP_SUMMARY: summaryFile,
+    });
 
     expect(readFileSync(summaryFile, "utf8")).toContain("Outbound Traffic Report");
     vi.unstubAllEnvs();
@@ -205,43 +209,62 @@ describe("writeReportSummary", () => {
   // Local/manual invocations have no step summary to write to.
   it("falls back to stdout when there is no step summary", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.stubEnv("GITHUB_STEP_SUMMARY", "");
 
-    await writeReportSummary(report(), createAnnotation(false), options(), false);
+    await writeReportSummary(report(), createAnnotation(false), options(), false, {});
 
     expect(log.mock.calls[0][0]).toContain("Outbound Traffic Report");
-    vi.unstubAllEnvs();
   });
 
   it("annotates the outcome and fails the step when the outcome calls for it", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.stubEnv("GITHUB_STEP_SUMMARY", "");
 
     await writeReportSummary(
       blockedReport(),
       createAnnotation(true),
       options({ failOnBlocked: true }),
       false,
+      {},
     );
 
     expect(log.mock.calls.map(([line]) => line as string)).toContainEqual(
       expect.stringContaining("::error::"),
     );
     expect(process.exitCode).toBe(1);
-    vi.unstubAllEnvs();
   });
 
   // GITHUB_STEP_SUMMARY is unique per step, so a later step has no way to read
-  // this step's copy back -- the mirror is what this repo's own tests read.
+  // this step's copy back -- the mirror is what this repo's own integration
+  // assertions read (test/assert-sandbox.sh).
   it("mirrors the summary to BUILDCAGE_RUN_DEBUG_SUMMARY_FILE when it is set", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const debugFile = join(scratchDir, "debug.md");
-    vi.stubEnv("GITHUB_STEP_SUMMARY", "");
-    vi.stubEnv("BUILDCAGE_RUN_DEBUG_SUMMARY_FILE", debugFile);
+    const appendFile = vi.fn();
 
-    await writeReportSummary(report(), createAnnotation(false), options(), false);
+    await writeReportSummary(
+      report(),
+      createAnnotation(false),
+      options(),
+      false,
+      { BUILDCAGE_RUN_DEBUG_SUMMARY_FILE: "/tmp/debug-summary.md" },
+      { appendFile },
+    );
 
-    expect(readFileSync(debugFile, "utf8")).toContain("Outbound Traffic Report");
-    vi.unstubAllEnvs();
+    expect(appendFile.mock.calls[0][0]).toBe("/tmp/debug-summary.md");
+    expect(appendFile.mock.calls[0][1]).toContain("Outbound Traffic Report");
+  });
+
+  it("writes no mirror when the runner named no file for one", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const appendFile = vi.fn();
+
+    await writeReportSummary(
+      report(),
+      createAnnotation(false),
+      options(),
+      false,
+      {},
+      { appendFile },
+    );
+
+    expect(appendFile).not.toHaveBeenCalled();
   });
 });

@@ -30,7 +30,7 @@ export class WritablePathConflictError extends Error {}
 /**
  * Fail closed if any writable-exception directory is, or contains, or is
  * contained in, SANDBOX_SCRATCH_BASE. That directory holds the run's own
- * `mount --rbind /` rootfs (see rootfsBindDir in main.ts); the writable
+ * `mount --rbind /` rootfs (see rootfsBindDir in sandboxed-command.ts); the writable
  * exceptions are recursive bind-mounts, so any overlap would recursively
  * re-expose that rootfs inside the sandbox as a second, *writable* copy of
  * the whole host `/` -- the exact escape SANDBOX_SCRATCH_BASE's placement

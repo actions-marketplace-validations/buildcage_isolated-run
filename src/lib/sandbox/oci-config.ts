@@ -42,7 +42,7 @@ export interface SandboxRuntimeWiring {
 }
 
 /** `filesystem_mode: ephemeral` only. Already fully resolved/folded by
- *  ephemeral-fs.ts and main.ts before this is called -- buildOciConfig does
+ *  ephemeral-fs.ts and the step itself before this is called -- buildOciConfig does
  *  no path resolution of its own here, only mount assembly and ordering. */
 export interface EphemeralPolicy {
   overlayRoots: OverlayDirs[];
@@ -106,8 +106,7 @@ export interface BuildOciConfigOptions {
  *   each mode's own layers come from oci-mounts.ts.
  *
  * `writablePaths` containing "/" is a sentinel meaning "disable the
- * read-only restriction entirely" (see README.md's `writable`
- * input).
+ * read-only restriction entirely" (see README.md's `write_through` input).
  */
 export function buildOciConfig(
   baseSpec: OciSpec,

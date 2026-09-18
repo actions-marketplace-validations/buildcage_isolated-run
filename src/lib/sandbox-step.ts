@@ -26,19 +26,15 @@ import {
   readFilesystemInputs,
   readRuleInputs,
   readRunCommand,
-  splitWriteThroughInput,
 } from "./inputs.ts";
 import { checkUrlAndTlsRuleSupport } from "./engine-rule-support.ts";
 import { readLocalImageOverride, resolveComposeFile } from "./compose-file.ts";
 import { buildComposeEnv } from "./compose-env.ts";
 import { checkPasswordlessSudo } from "./sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./overlayfs-preflight.ts";
-import { removeCreatedDirsIfEmpty } from "./sandbox/write-through.ts";
-import {
-  formatFilesystemPlanLog,
-  resolveFilesystemPlan,
-  validateFilesystemInputs,
-} from "./sandbox/filesystem-plan.ts";
+import { removeCreatedDirsIfEmpty, splitWriteThroughInput } from "./sandbox/write-through.ts";
+import { resolveFilesystemPlan, validateFilesystemInputs } from "./sandbox/filesystem-plan.ts";
+import { formatFilesystemPlanLog } from "./sandbox/ephemeral-fs.ts";
 import { generateContainerName, getContainerNetns } from "./container.ts";
 import { runSandboxedCommand } from "./sandbox/sandboxed-command.ts";
 import { startSandboxProxy, stopSandboxProxy } from "./proxy-lifecycle.ts";
@@ -331,6 +327,7 @@ export async function runSandboxStep(
         actionRepo,
         actionRef,
         runCommand: runInput,
+        env,
       });
       await stopSandboxProxy({ composeFile, projectName, composeEnv, annotation });
     }

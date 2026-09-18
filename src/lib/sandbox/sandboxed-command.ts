@@ -80,7 +80,7 @@ export interface RunSandboxedCommandOptions {
   proxyNetns: string;
   runInput: string;
   /** Already resolved (resolveWriteThroughPaths) and pre-created
-   *  (ensureWriteThroughTargetsExist) by main() before this runs. Opens holes
+   *  (ensureWriteThroughTargetsExist) by the step before this runs. Opens holes
    *  in the read-only set in persistent mode, and in the overlay in ephemeral
    *  mode -- see buildOciConfig. */
   writeThroughPaths: string[];

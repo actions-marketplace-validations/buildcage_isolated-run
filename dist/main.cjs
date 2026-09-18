@@ -17598,9 +17598,6 @@ function resolveWriteThroughInput({ writeThrough, writable, allowWrite }, notice
 	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
 	return !writeThrough.trim() && writable.trim() ? (notice("writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
 }
-function splitWriteThroughInput(input) {
-	return input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-}
 function readRunCommand(getInput$3 = getInput) {
 	let runInput = getInput$3("run", { trimWhitespace: !1 });
 	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
@@ -18004,8 +18001,11 @@ function resolveWriteThroughEntry(rawLine, env) {
 	if (normalized === "/" && rawLine.trim() !== "/") throw Error(`write_through entry ${JSON.stringify(rawLine)} resolves to "/", the sentinel for dropping the read-only restriction entirely. Write it as a literal "/" if that is what you meant; otherwise check the "../" count.`);
 	return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
+function splitWriteThroughInput(input) {
+	return input?.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) ?? [];
+}
 function resolveWriteThroughPaths(input, env) {
-	let lines = input?.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) ?? [];
+	let lines = splitWriteThroughInput(input);
 	return [...new Set(lines.map((line) => resolveWriteThroughEntry(line, env)))];
 }
 var WriteThroughTargetMissingError = class extends Error {}, WriteThroughTargetUncreatableError = class extends Error {};
@@ -19933,11 +19933,11 @@ function computeReportOutcome(report, { stepLabel, failOnBlocked, actionRepo, ac
 		shouldFail
 	};
 }
-async function writeReportSummary(report, annotation, options, artifactAvailable) {
+async function writeReportSummary(report, annotation, options, artifactAvailable, env, { appendFile = node_fs.appendFileSync } = {}) {
 	let outcome = computeReportOutcome(report, options);
-	await writeStepSummary(truncateForStepSummary(outcome.markdown, artifactAvailable), process.env.GITHUB_STEP_SUMMARY);
-	let debugSummaryFile = process.env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
-	debugSummaryFile && (0, node_fs.appendFileSync)(debugSummaryFile, outcome.markdown), applyOutcomeAnnotation(annotation, outcome);
+	await writeStepSummary(truncateForStepSummary(outcome.markdown, artifactAvailable), env.GITHUB_STEP_SUMMARY);
+	let debugSummaryFile = env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
+	debugSummaryFile && appendFile(debugSummaryFile, outcome.markdown), applyOutcomeAnnotation(annotation, outcome);
 }
 //#endregion
 //#region src/core/lib/report/outcome/traffic-output.ts
@@ -64974,7 +64974,7 @@ const realDeps$1 = {
 	readFailOnBlocked,
 	readStepLabel
 };
-async function reportStepTraffic({ containerName, proxyEngine, parameters, annotation, actionRepo, actionRef, runCommand }, overrides = {}) {
+async function reportStepTraffic({ containerName, proxyEngine, parameters, annotation, actionRepo, actionRef, runCommand, env }, overrides = {}) {
 	let { fetchReport, readActionVersion, writeReportSummary, wantsTrafficArtifact, uploadTrafficArtifact, readFailOnBlocked, readStepLabel } = {
 		...realDeps$1,
 		...overrides
@@ -64990,7 +64990,7 @@ async function reportStepTraffic({ containerName, proxyEngine, parameters, annot
 			actionVersion: readActionVersion(containerName, proxyEngine),
 			stepLabel: readStepLabel(),
 			failOnBlocked
-		}, wantsArtifact && report.engine === "inspect"), wantsArtifact && (phase = "upload the traffic artifact", await uploadTrafficArtifact(report, containerName, annotation));
+		}, wantsArtifact && report.engine === "inspect", env), wantsArtifact && (phase = "upload the traffic artifact", await uploadTrafficArtifact(report, containerName, annotation));
 	} catch (e) {
 		annotation.warning(`Failed to ${phase}: ${errorMessage(e)}`);
 	}
@@ -65126,7 +65126,8 @@ async function runSandboxStep(env, overrides = {}) {
 				annotation,
 				actionRepo,
 				actionRef,
-				runCommand: runInput
+				runCommand: runInput,
+				env
 			}), await stopSandboxProxy({
 				composeFile,
 				projectName,

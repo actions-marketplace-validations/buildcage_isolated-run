@@ -42,7 +42,7 @@ export function parseMountsUnder(mountinfoContent: string, dir: string): string[
 /**
  * Force-detaches any mount points still nested under `dir` before it's
  * recursively deleted. This is the safety net for rootfsBindDir (a
- * `mount --rbind /` of the entire host filesystem — see main.ts) surviving
+ * `mount --rbind /` of the entire host filesystem — see run-isolated.sh) surviving
  * past run-isolated.sh's own cleanup trap: if that trap never runs (e.g.
  * run-isolated.sh itself is SIGKILL'd, which bypasses traps entirely) or
  * its `umount -R` fails (EBUSY), a plain recursive delete of `dir` would
