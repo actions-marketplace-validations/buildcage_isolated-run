@@ -18992,13 +18992,19 @@ async function stopSandboxProxy({ composeFile, projectName, composeEnv, annotati
 	});
 }
 //#endregion
+//#region src/core/lib/report/render/communication-section.ts
+const COMMUNICATION_DETAILS_OPEN = "<details>\n<summary>💬 Communication details</summary>\n\n", COMMUNICATION_DETAILS_CLOSE = "</details>\n";
+function wrapCommunicationDetails(body) {
+	return `\n${COMMUNICATION_DETAILS_OPEN}${body}${COMMUNICATION_DETAILS_CLOSE}`;
+}
+//#endregion
 //#region src/core/lib/report/render/truncate-communication-details.ts
 const SAFETY_MARGIN_BYTES = 8192;
 function truncateForStepSummary(markdown, artifactAvailable, limitBytes = 1048576) {
 	if (Buffer.byteLength(markdown, "utf8") <= limitBytes - SAFETY_MARGIN_BYTES) return markdown;
-	let openAt = markdown.indexOf("<details>\n<summary>💬 Communication details</summary>\n\n");
+	let openAt = markdown.indexOf(COMMUNICATION_DETAILS_OPEN);
 	if (openAt === -1) return markdown;
-	let bodyStart = openAt + 55, closeAt = markdown.indexOf("</details>\n", bodyStart);
+	let bodyStart = openAt + 55, closeAt = markdown.indexOf(COMMUNICATION_DETAILS_CLOSE, bodyStart);
 	if (closeAt === -1) return markdown;
 	let before = markdown.slice(0, bodyStart), body = markdown.slice(bodyStart, closeAt), after = markdown.slice(closeAt), note = truncationNote(artifactAvailable), fixedBytes = Buffer.byteLength(before, "utf8") + Buffer.byteLength(after, "utf8") + Buffer.byteLength(note, "utf8"), budget = Math.max(0, limitBytes - SAFETY_MARGIN_BYTES - fixedBytes), kept = "", usedBytes = 0, fenceOpen = !1;
 	for (let line of body.split("\n")) {
@@ -19372,7 +19378,7 @@ function formatElapsedFixed(elapsedSeconds) {
 //#region src/core/lib/report/render/inspect-details.ts
 function renderInspectDetails(timeline, startedAt) {
 	let connected = connectedHosts(timeline), shown = timeline.filter((e) => !isRedundantDns(e, connected));
-	return shown.length === 0 ? "" : `\n<details>\n<summary>💬 Communication details</summary>\n\n\`\`\`\n${shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n"}\`\`\`\n\n</details>\n`;
+	return shown.length === 0 ? "" : wrapCommunicationDetails(`\`\`\`\n${shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n"}\`\`\`\n\n`);
 }
 const MARK = {
 	block: "🚫",
