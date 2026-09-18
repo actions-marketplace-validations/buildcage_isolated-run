@@ -241,11 +241,12 @@ The two integration targets need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook bui
 │   ├── lib/                   # Action-specific implementation: container, report, sudo-preflight,
 │   │                          # sandbox/ (OCI config, runc bootstrap, netns/mountinfo helpers)
 │   └── core/                  # Code shared with the isolated-run proxy image's QuickJS scripts
-│       ├── lib/                # acl/ (rule parsing, dual-consumed by Node and QuickJS),
-│       │                      # actions/, docker/, provenance/ (Sigstore, OCI registry lookups,
-│       │                      # image ref resolution, local-image test-hook override), report/,
-│       │                      # log/, test/test-shim.ts (portable node:test-alike shim used by
-│       │                      # *.test.ts across Node and QuickJS alike)
+│       ├── lib/                # acl/ (rule parsing and the proxy config generators, dual-consumed
+│       │                      # by Node and QuickJS), actions/, docker/, provenance/ (Sigstore,
+│       │                      # OCI registry lookups, image ref resolution, local-image test-hook
+│       │                      # override), report/, log/, test/test-shim.ts (portable
+│       │                      # node:test-alike shim used by *.test.ts across Node and QuickJS
+│       │                      # alike)
 │       └── scripts/            # QuickJS entry point (convert-rule.qjs.ts), run inside the built
 │                              # image (rolldown-bundled into /opt/buildcage/scripts/ at image
 │                              # build time; see rolldown.scripts.config.js). test/ is a qjs test
@@ -392,7 +393,7 @@ behavior, see [Inspect Proxy Engine](./security.md#inspect-proxy-engine) in Secu
   request by its first bytes, so one `bind` line handles both without the config declaring per-port
   whether it's plaintext or TLS. Two HAProxy features carry the rest of the enforcement:
   `normalize-uri` (an upstream directive still marked experimental, gated behind
-  `expose-experimental-directives` in `src/core/lib/acl/haproxy-config.ts`) resolves `..` in the
+  `expose-experimental-directives` in `src/core/lib/acl/haproxy-sections.ts`) resolves `..` in the
   path before ACLs see it, and `do-resolve` + `set-dst` resolve the requested name and rewrite the
   connection's destination to it, run only after the ACL check for that request has already passed.
 
