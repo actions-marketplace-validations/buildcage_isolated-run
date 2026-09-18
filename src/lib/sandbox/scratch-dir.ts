@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import { isValidContainerName, scratchDirNameFor } from "../container.ts";
-import { retryOnBusy } from "../retry-on-busy.ts";
+import { retryBriefly } from "../retry-briefly.ts";
 import { parseMountinfo } from "./mountinfo.ts";
 
 // Base directory for each run's scratch dir (OCI bundle + the host-`/`
@@ -123,7 +123,7 @@ function unmountAllUnder(dir: string, deps: ScratchDirDeps, warn?: Warn): void {
  */
 function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
   const { exec = defaultExec, lstat = lstatSync, remove = defaultRemove } = deps;
-  retryOnBusy(
+  retryBriefly(
     () => {
       try {
         remove(dir);

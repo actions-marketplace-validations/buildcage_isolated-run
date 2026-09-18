@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 
-import { retryOnBusy } from "./retry-on-busy.ts";
+import { retryBriefly } from "./retry-briefly.ts";
 
-describe("retryOnBusy", () => {
+describe("retryBriefly", () => {
   it("returns the result of a call that succeeds first time", () => {
     let calls = 0;
-    const result = retryOnBusy(() => {
+    const result = retryBriefly(() => {
       calls++;
       return "done";
     });
@@ -15,7 +15,7 @@ describe("retryOnBusy", () => {
 
   it("tries again until the call succeeds", () => {
     let calls = 0;
-    const result = retryOnBusy(
+    const result = retryBriefly(
       () => {
         calls++;
         if (calls < 3) throw new Error("busy");
@@ -30,7 +30,7 @@ describe("retryOnBusy", () => {
   it("gives up after the last attempt, throwing what that attempt threw", () => {
     let calls = 0;
     expect(() =>
-      retryOnBusy(
+      retryBriefly(
         () => {
           calls++;
           throw new Error(`failure ${calls}`);
@@ -44,7 +44,7 @@ describe("retryOnBusy", () => {
   it("throws a failure retryOn rejects without trying again", () => {
     let calls = 0;
     expect(() =>
-      retryOnBusy(
+      retryBriefly(
         () => {
           calls++;
           throw Object.assign(new Error("gone"), { code: "ENOENT" });

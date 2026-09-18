@@ -326,8 +326,8 @@ function parseEphemeralRoots(raw) {
 	if (Array.isArray(parsed)) return parsed.every((p) => typeof p == "string" && (0, node_path.isAbsolute)(p) && !/[\x00-\x1f\x7f]/.test(p)) ? parsed : void 0;
 }
 //#endregion
-//#region src/lib/retry-on-busy.ts
-function retryOnBusy(fn, options = {}) {
+//#region src/lib/retry-briefly.ts
+function retryBriefly(fn, options = {}) {
 	let { attempts = 5, delayMs = 200, retryOn = () => !0 } = options;
 	for (let attempt = 1;; attempt++) try {
 		return fn();
@@ -393,7 +393,7 @@ function unmountAllUnder(dir, deps, warn) {
 }
 function removeScratchDir(dir, deps) {
 	let { exec = defaultExec, lstat = node_fs.lstatSync, remove = defaultRemove } = deps;
-	retryOnBusy(() => {
+	retryBriefly(() => {
 		try {
 			remove(dir);
 		} catch (e) {

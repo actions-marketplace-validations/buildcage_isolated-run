@@ -17793,8 +17793,8 @@ function checkPasswordlessSudo({ execFile = defaultExecFile$2 } = {}) {
 	}
 }
 //#endregion
-//#region src/lib/retry-on-busy.ts
-function retryOnBusy(fn, options = {}) {
+//#region src/lib/retry-briefly.ts
+function retryBriefly(fn, options = {}) {
 	let { attempts = 5, delayMs = 200, retryOn = () => !0 } = options;
 	for (let attempt = 1;; attempt++) try {
 		return fn();
@@ -17866,7 +17866,7 @@ function unmountAllUnder(dir, deps, warn) {
 }
 function removeScratchDir(dir, deps) {
 	let { exec = defaultExec$2, lstat = node_fs.lstatSync, remove = defaultRemove } = deps;
-	retryOnBusy(() => {
+	retryBriefly(() => {
 		try {
 			remove(dir);
 		} catch (e) {
@@ -17926,7 +17926,7 @@ function describeOverlayFailure(e) {
 	return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
 function removeProbeDir(dir, exec) {
-	retryOnBusy(() => exec("sudo", [
+	retryBriefly(() => exec("sudo", [
 		"-n",
 		"rm",
 		"-rf",

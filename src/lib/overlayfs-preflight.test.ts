@@ -95,7 +95,8 @@ describe("checkOverlayfsSupport", () => {
   });
 
   // The probe dir is created by the root-owned mount, so its cleanup is
-  // privileged too and gets the same bounded retry removeScratchDir uses.
+  // privileged too and waits out the same bounded window removeScratchDir does
+  // -- on any failure, since `sudo rm` reports no errno to narrow it by.
   it("retries the probe-dir cleanup and succeeds on a later attempt", () => {
     base = freshBasePath();
     let cleanupAttempts = 0;

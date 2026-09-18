@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { capturedStderr } from "#core/lib/actions/docker-error.ts";
 import { SandboxError } from "./errors.ts";
-import { retryOnBusy } from "./retry-on-busy.ts";
+import { retryBriefly } from "./retry-briefly.ts";
 import { SANDBOX_SCRATCH_BASE, ensureOwnScratchBase } from "./sandbox/scratch-dir.ts";
 
 type ExecLike = typeof execFileSync;
@@ -36,13 +36,16 @@ export function describeOverlayFailure(e: unknown): string {
  * and not traversable by the unprivileged runner user, after the mount
  * itself is torn down when the `sudo unshare` child exits. A plain rmSync
  * here reliably fails with EACCES on any host where the probe mount
- * actually succeeded (confirmed in CI). Retries on EBUSY for the same
- * reason scratch-dir.ts's removeScratchDir does: a lazy-unmount-style
- * teardown can leave the kernel's own bookkeeping lagging behind by a
- * short, bounded window.
+ * actually succeeded (confirmed in CI). Retries for the same reason
+ * scratch-dir.ts's removeScratchDir does: a lazy-unmount-style teardown
+ * can leave the kernel's own bookkeeping lagging behind by a short,
+ * bounded window. Unlike that one it waits out any failure rather than
+ * EBUSY alone, because a `sudo rm` that fails reports an exit status and
+ * no errno, so a mount still settling and a permanent EACCES arrive here
+ * as the same error.
  */
 function removeProbeDir(dir: string, exec: ExecLike): void {
-  retryOnBusy(() =>
+  retryBriefly(() =>
     exec("sudo", ["-n", "rm", "-rf", dir], { stdio: ["ignore", "ignore", "pipe"] }),
   );
 }
