@@ -10,7 +10,7 @@ var __create = Object.create, __defProp = Object.defineProperty, __getOwnPropDes
 	enumerable: !0
 }) : target, mod));
 //#endregion
-let node_child_process = require("node:child_process"), node_path = require("node:path"), node_url = require("node:url"), os = require("os");
+let node_child_process = require("node:child_process"), node_url = require("node:url"), os = require("os");
 os = __toESM(os, 1);
 let fs = require("fs");
 fs = __toESM(fs, 1);
@@ -20,7 +20,7 @@ let events = require("events");
 events = __toESM(events, 1);
 let node_crypto = require("node:crypto"), child_process = require("child_process");
 child_process = __toESM(child_process, 1), require("timers");
-let node_fs = require("node:fs");
+let node_path = require("node:path"), node_fs = require("node:fs");
 //#endregion
 //#region node_modules/.pnpm/@actions+core@3.0.1/node_modules/@actions/core/lib/summary.js
 var __awaiter$6 = function(thisArg, _arguments, P, generator) {
@@ -176,6 +176,15 @@ function buildComposeDownArgs({ composeFile, projectName }) {
 		projectName,
 		"down"
 	];
+}
+//#endregion
+//#region src/lib/compose-file.ts
+const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href)), DEFAULT_COMPOSE_FILE = (0, node_path.join)(__dirname$1, "../docker/compose.action.yaml");
+async function readLocalImageOverride(env, log = console.log) {
+	return null;
+}
+function resolveComposeFile(override) {
+	return override?.composeFile ?? DEFAULT_COMPOSE_FILE;
 }
 //#endregion
 //#region src/core/lib/actions/annotation.ts
@@ -414,10 +423,10 @@ function planPostCleanup(state, env, { readOwner = readContainerOwner, fileExist
 }
 //#endregion
 //#region src/post.ts
-const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href)), defaultComposeFile = (0, node_path.join)(__dirname$1, "../docker/compose.action.yaml");
 async function stopProxyContainer({ containerName, projectName }) {
+	let composeFile = resolveComposeFile(await readLocalImageOverride(process.env));
 	(0, node_child_process.execFileSync)("docker", buildComposeDownArgs({
-		composeFile: defaultComposeFile,
+		composeFile,
 		projectName
 	}), {
 		stdio: "inherit",

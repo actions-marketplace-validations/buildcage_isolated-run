@@ -24,8 +24,6 @@ var __create = Object.create, __defProp = Object.defineProperty, __getOwnPropDes
 	enumerable: !0
 }) : target, mod));
 //#endregion
-let node_path = require("node:path");
-node_path = __toESM(node_path, 1);
 let node_url = require("node:url"), os = require("os");
 os = __toESM(os, 1);
 let crypto = require("crypto");
@@ -56,6 +54,8 @@ let node_fs = require("node:fs");
 node_fs = __toESM(node_fs, 1);
 let node_os = require("node:os");
 node_os = __toESM(node_os, 1);
+let node_path = require("node:path");
+node_path = __toESM(node_path, 1);
 let fs_promises = require("fs/promises");
 fs_promises = __toESM(fs_promises, 1);
 let node_child_process = require("node:child_process"), node_readline = require("node:readline"), node_process = require("node:process");
@@ -17663,6 +17663,15 @@ function checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules 
 	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced — the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
 }
 //#endregion
+//#region src/lib/compose-file.ts
+const __dirname$2 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href)), DEFAULT_COMPOSE_FILE = (0, node_path.join)(__dirname$2, "../docker/compose.action.yaml");
+async function readLocalImageOverride(env, log = console.log) {
+	return null;
+}
+function resolveComposeFile(override) {
+	return override?.composeFile ?? DEFAULT_COMPOSE_FILE;
+}
+//#endregion
 //#region src/core/lib/actions/docker-error.ts
 const SLIM_RUNNER_DETECTED_PREFIX = " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\")", SLIM_RUNNER_NOTE$1 = `${SLIM_RUNNER_DETECTED_PREFIX} — these ship a Docker client with no daemon and are not supported for this action.`;
 function describeDockerFailure(e, { operation = "docker", env = process.env, exists = node_fs.existsSync } = {}) {
@@ -18737,7 +18746,7 @@ function writeEnvLoader(execDir) {
 }
 //#endregion
 //#region src/lib/sandbox/run.ts
-const __dirname$2 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href));
+const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href));
 function defaultExecFile(command, args, options) {
 	(0, node_child_process.execFileSync)(command, args, options);
 }
@@ -18745,7 +18754,7 @@ function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, 
 	let args = [
 		"-n",
 		"--",
-		(0, node_path.join)(__dirname$2, "..", "scripts", "run-isolated.sh"),
+		(0, node_path.join)(__dirname$1, "..", "scripts", "run-isolated.sh"),
 		"--proxy-netns",
 		proxyNetns,
 		"--runc",
@@ -64938,7 +64947,6 @@ async function reportStepTraffic({ containerName, proxyEngine, parameters, annot
 //#endregion
 //#region src/main.ts
 init_core();
-const __dirname$1 = (0, node_path.dirname)((0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href)), defaultComposeFile = (0, node_path.join)(__dirname$1, "../docker/compose.action.yaml");
 async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
 	let digest = await verifyImageDigestOrThrow({
 		actionRef,
@@ -64961,13 +64969,13 @@ async function main() {
 	let annotation = createAnnotation(!!env.GITHUB_STEP_SUMMARY), { overlayRoots, writeThroughPaths, createdDirs } = resolveFilesystemPlan(filesystemMode, writeThroughInput, env);
 	if (filesystemMode === "ephemeral") for (let line of formatFilesystemPlanLog(filesystemMode, overlayRoots, writeThroughPaths)) info(line);
 	try {
-		let { imageRef, pullPolicy } = await resolveVerifiedImage({
+		let localOverride = await readLocalImageOverride(env), { imageRef, pullPolicy } = localOverride ?? await resolveVerifiedImage({
 			actionRef,
 			actionRepo,
 			proxyEngine
 		});
 		console.log(`buildcage: proxy image: ${imageRef}`);
-		let composeFile = defaultComposeFile, { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } = readRuleInputs();
+		let composeFile = resolveComposeFile(localOverride), { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } = readRuleInputs();
 		checkUrlAndTlsRuleSupport({
 			proxyEngine,
 			proxyMode,

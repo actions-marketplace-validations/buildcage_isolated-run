@@ -1,4 +1,3 @@
-import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as core from "@actions/core";
 
@@ -19,6 +18,7 @@ import {
   splitWriteThroughInput,
 } from "./lib/inputs.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
+import { readLocalImageOverride, resolveComposeFile } from "./lib/compose-file.ts";
 import { buildComposeEnv } from "./lib/compose-env.ts";
 import { checkPasswordlessSudo } from "./lib/sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./lib/overlayfs-preflight.ts";
@@ -35,19 +35,10 @@ import { startSandboxProxy, stopSandboxProxy } from "./lib/proxy-lifecycle.ts";
 import { reportStepTraffic } from "./lib/step-report.ts";
 
 // Untested by design, down to the end of the file: what is left here is the
-// entry point's own wiring -- the compose file path, the local-image gate, the
-// docker/runc invocations main() sequences, and the self-invocation guard a
-// test can never be inside. Every unit main() calls is tested directly.
+// entry point's own wiring -- the docker/runc invocations main() sequences and
+// the self-invocation guard a test can never be inside. Every unit main() calls
+// is tested directly.
 /* v8 ignore start */
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const defaultComposeFile = join(__dirname, "../docker/compose.action.yaml");
-
-// Gates a local-image override used only by this repo's own CI/dev testing
-// (the test_sandbox_* jobs in .github/workflows/test-e2e.yml, test_sandbox in
-// test-integration.yml, and verify-image in docker-publish.yml, where the image
-// is not signed yet), never by a consumer of a published action.
-const LOCAL_IMAGE_OVERRIDE_ENABLED = process.env.BUILDCAGE_BUILD_TEST_HOOKS === "1";
-
 /**
  * Verifies image provenance and resolves the digest-pinned image ref for
  * isolated-run's (buildkitd-less) proxy image.
@@ -116,20 +107,11 @@ async function main(): Promise<void> {
   }
 
   try {
-    const localOverride = LOCAL_IMAGE_OVERRIDE_ENABLED
-      ? (await import("./core/lib/provenance/local-image-override.ts")).readLocalImageOverride(env)
-      : null;
-    if (localOverride) {
-      console.log(
-        `BUILDCAGE_LOCAL_IMAGE_REF is set (${JSON.stringify(localOverride.imageRef)}) — ` +
-          `skipping image provenance verification entirely. This bypass exists only for ` +
-          `buildcage's own CI self-tests and local development.`,
-      );
-    }
+    const localOverride = await readLocalImageOverride(env);
     const { imageRef, pullPolicy } =
       localOverride ?? (await resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }));
     console.log(`buildcage: proxy image: ${imageRef}`);
-    const composeFile = localOverride?.composeFile ?? defaultComposeFile;
+    const composeFile = resolveComposeFile(localOverride);
 
     const { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } =
       readRuleInputs();
