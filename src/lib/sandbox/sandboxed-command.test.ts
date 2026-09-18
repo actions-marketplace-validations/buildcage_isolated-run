@@ -6,6 +6,7 @@ import {
   type RunSandboxedCommandOptions,
 } from "./sandboxed-command.ts";
 import { SandboxError } from "../errors.ts";
+import { WritablePathConflictError } from "./paths.ts";
 
 // Every collaborator is tested in its own file; what is left to check here is
 // the order they run in, what runSandboxedCommand hands each one, and which
@@ -175,6 +176,16 @@ describe("runSandboxedCommand", () => {
     expect(mocks.buildOciConfig.mock.calls[0][1].identity.gid).toBe(65534);
   });
 
+  function failureFrom(
+    overrides: Partial<RunSandboxedCommandOptions> = {},
+  ): SandboxError | undefined {
+    try {
+      runSandboxedCommand(options(overrides), deps);
+    } catch (e) {
+      return e as SandboxError;
+    }
+  }
+
   it.each([
     ["extractRuncBootstrap", () => mocks.extractRuncBootstrap, "RUNC_EXTRACT_FAILED", {}],
     ["extractCaCert", () => mocks.extractCaCert, "CA_EXTRACT_FAILED", { proxyEngine: "inspect" }],
@@ -184,16 +195,39 @@ describe("runSandboxedCommand", () => {
       throw new Error("boom");
     });
 
-    const error = (() => {
-      try {
-        runSandboxedCommand(options(overrides as Partial<RunSandboxedCommandOptions>), deps);
-      } catch (e) {
-        return e as SandboxError;
-      }
-    })();
+    const error = failureFrom(overrides as Partial<RunSandboxedCommandOptions>);
 
     expect(error).toBeInstanceOf(SandboxError);
     expect(error!.code).toBe(code);
     expect(error!.message).toContain("boom");
+  });
+
+  // A step that already wrote for the user -- resolveSandboxGid's
+  // UNSAFE_PRIMARY_GID is the one that bites -- keeps its code and its words
+  // instead of being restated as a generic failure of the step that called it.
+  it.each([
+    ["extractRuncBootstrap", () => mocks.extractRuncBootstrap, {}],
+    ["extractCaCert", () => mocks.extractCaCert, { proxyEngine: "inspect" }],
+    ["resolveSandboxGid", () => mocks.resolveSandboxGid, {}],
+  ])("lets a SandboxError from %s through untouched", (_name, target, overrides) => {
+    const thrown = new SandboxError("the primary group is privileged", "UNSAFE_PRIMARY_GID");
+    target().mockImplementation(() => {
+      throw thrown;
+    });
+
+    expect(failureFrom(overrides as Partial<RunSandboxedCommandOptions>)).toBe(thrown);
+  });
+
+  // Same misconfiguration, same code whichever check catches it first: the
+  // early one in resolveFilesystemPlan, or buildOciConfig's authoritative one.
+  it("reports a writable-path conflict as FILESYSTEM_INPUT_CONFLICT", () => {
+    mocks.buildOciConfig.mockImplementation(() => {
+      throw new WritablePathConflictError('writable path "/proc" is inside "/proc"');
+    });
+
+    const error = failureFrom();
+
+    expect(error!.code).toBe("FILESYSTEM_INPUT_CONFLICT");
+    expect(error!.message).toBe('writable path "/proc" is inside "/proc"');
   });
 });

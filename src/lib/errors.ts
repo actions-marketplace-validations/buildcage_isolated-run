@@ -17,7 +17,8 @@ import { ActionError } from "#core/lib/errors.ts";
  *   DOCKER_UNAVAILABLE         – docker CLI missing from PATH or a docker command failed
  *   PASSWORDLESS_SUDO_REQUIRED    – sudo -n check failed; passwordless sudo isn't configured
  *   UNSAFE_PRIMARY_GID            – the runner's primary GID is privileged and no safe substitute GID exists
- *   FILESYSTEM_INPUT_CONFLICT      – filesystem_mode/write_through inputs combined in a disallowed way
+ *   FILESYSTEM_INPUT_CONFLICT      – filesystem_mode/write_through inputs combined in a disallowed way,
+ *                                    or a writable path that collides with a mount the sandbox needs itself
  *   INVALID_FILESYSTEM_MODE       – filesystem input isn't "persistent" or "ephemeral"
  *   INVALID_WRITE_THROUGH_PATH    – a write_through entry failed path-resolution rules (unknown $VAR, etc.)
  *   WRITE_THROUGH_TARGET_MISSING  – a write_through entry resolves to a well-known GITHUB_* file that doesn't exist
