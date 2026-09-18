@@ -63989,13 +63989,16 @@ async function uploadTrafficArtifact(report, containerName, annotation, { upload
 		});
 	}
 }
-function truncateForStepSummary(markdown, artifactAvailable) {
-	if (Buffer.byteLength(markdown, "utf8") <= 1040384) return markdown;
+//#endregion
+//#region src/core/lib/report/render/truncate-communication-details.ts
+const SAFETY_MARGIN_BYTES = 8192;
+function truncateForStepSummary(markdown, artifactAvailable, limitBytes = 1048576) {
+	if (Buffer.byteLength(markdown, "utf8") <= limitBytes - SAFETY_MARGIN_BYTES) return markdown;
 	let openAt = markdown.indexOf("<details>\n<summary>💬 Communication details</summary>\n\n");
 	if (openAt === -1) return markdown;
 	let bodyStart = openAt + 55, closeAt = markdown.indexOf("</details>\n", bodyStart);
 	if (closeAt === -1) return markdown;
-	let before = markdown.slice(0, bodyStart), body = markdown.slice(bodyStart, closeAt), after = markdown.slice(closeAt), note = truncationNote(artifactAvailable), fixedBytes = Buffer.byteLength(before, "utf8") + Buffer.byteLength(after, "utf8") + Buffer.byteLength(note, "utf8"), budget = Math.max(0, 1040384 - fixedBytes), kept = "", usedBytes = 0, fenceOpen = !1;
+	let before = markdown.slice(0, bodyStart), body = markdown.slice(bodyStart, closeAt), after = markdown.slice(closeAt), note = truncationNote(artifactAvailable), fixedBytes = Buffer.byteLength(before, "utf8") + Buffer.byteLength(after, "utf8") + Buffer.byteLength(note, "utf8"), budget = Math.max(0, limitBytes - SAFETY_MARGIN_BYTES - fixedBytes), kept = "", usedBytes = 0, fenceOpen = !1;
 	for (let line of body.split("\n")) {
 		let withNewline = `${line}\n`, lineBytes = Buffer.byteLength(withNewline, "utf8");
 		if (usedBytes + lineBytes > budget) break;
