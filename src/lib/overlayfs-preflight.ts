@@ -18,6 +18,16 @@ const REQUIREMENT =
   "filesystem_mode: persistent instead, or run this action from a runner whose filesystem isn't " +
   "overlayfs-backed.";
 
+const CLEANUP_REQUIREMENT =
+  "The probe mount itself succeeded, so this runner does support overlayfs -- what failed is " +
+  "removing the probe directory afterwards. That needs `sudo rm -rf`, because the kernel writes " +
+  "root-owned overlayfs bookkeeping into workdir while the mount is live (see removeProbeDir), " +
+  "and filesystem_mode: ephemeral's real cleanup discards its overlay work dirs exactly the same " +
+  "way -- so a run would fail on this runner anyway, later and with less to go on. This is " +
+  "usually a sudoers config scoped to specific commands rather than a blanket NOPASSWD:ALL, " +
+  "which checkPasswordlessSudo's own `sudo -n true` probe cannot detect. Grant the runner user " +
+  "passwordless sudo for `rm`, or use filesystem_mode: persistent instead.";
+
 /**
  * Kept pure (takes the error, not execFileSync's raw output) so it's
  * unit-testable the same way as sudo-preflight.ts's describeSudoFailure.
@@ -25,6 +35,12 @@ const REQUIREMENT =
 export function describeOverlayFailure(e: unknown): string {
   const captured = capturedStderr(e);
   return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
+}
+
+/** Pure, for the same reason describeOverlayFailure is. */
+export function describeProbeCleanupFailure(dir: string, e: unknown): string {
+  const captured = capturedStderr(e);
+  return `Failed to remove the overlayfs probe directory ${dir}. ${CLEANUP_REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
 
 /**
@@ -36,13 +52,20 @@ export function describeOverlayFailure(e: unknown): string {
  * and not traversable by the unprivileged runner user, after the mount
  * itself is torn down when the `sudo unshare` child exits. A plain rmSync
  * here reliably fails with EACCES on any host where the probe mount
- * actually succeeded (confirmed in CI). Retries for the same reason
- * scratch-dir.ts's removeScratchDir does: a lazy-unmount-style teardown
- * can leave the kernel's own bookkeeping lagging behind by a short,
- * bounded window. Unlike that one it waits out any failure rather than
- * EBUSY alone, because a `sudo rm` that fails reports an exit status and
- * no errno, so a mount still settling and a permanent EACCES arrive here
- * as the same error.
+ * actually succeeded (confirmed in CI).
+ *
+ * The retry is insurance, not a mechanism anything here is known to hit --
+ * unlike scratch-dir.ts's removeScratchDir, which lazily unmounts the very
+ * directory it then deletes and so races a teardown the kernel defers.
+ * `--propagation private` keeps this probe's mount out of the caller's
+ * namespace entirely, and the namespace it did live in is gone by the time
+ * the `sudo unshare` child is reaped, so there is no mount point left here
+ * for the removal to contend with. It waits out any failure rather than
+ * EBUSY alone, because a `sudo rm` that fails reports an exit status and no
+ * errno, so nothing here can tell one cause from another anyway. What does
+ * survive the retries is reported as OVERLAY_PROBE_CLEANUP_FAILED: in
+ * practice that means this runner cannot `sudo rm` at all, which is what
+ * filesystem_mode: ephemeral's own cleanup needs too.
  */
 function removeProbeDir(dir: string, exec: ExecLike): void {
   retryBriefly(() =>
@@ -89,30 +112,55 @@ export function checkOverlayfsSupport({
 }: CheckOverlayfsSupportOptions = {}): void {
   ensureOwnScratchBase(base);
   const probeDir = mkdtempSync(join(base, "overlay-probe-"));
+  // Boxed rather than held as a bare `unknown`: `throw undefined` is legal,
+  // so the box is what distinguishes "the probe failed" from its value.
+  let probeFailure: { error: unknown } | null = null;
   try {
-    const lower = join(probeDir, "lower");
-    const upper = join(probeDir, "upper");
-    const work = join(probeDir, "work");
-    const merged = join(probeDir, "merged");
-    for (const dir of [lower, upper, work, merged]) mkdirSync(dir);
-    exec(
-      "sudo",
-      [
-        "-n",
-        "unshare",
-        "--mount",
-        "--propagation",
-        "private",
-        "--",
-        "sh",
-        "-c",
-        `mount -t overlay overlay -o lowerdir=${lower},upperdir=${upper},workdir=${work} ${merged}`,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] },
-    );
-  } catch (e) {
-    throw new SandboxError(describeOverlayFailure(e), "OVERLAYFS_UNSUPPORTED");
-  } finally {
-    removeProbeDir(probeDir, exec);
+    probeOverlayMount(probeDir, exec);
+  } catch (error) {
+    probeFailure = { error };
   }
+
+  // Deliberately not a `finally`: an exception thrown from one replaces
+  // whatever the block was already throwing, so a cleanup that failed too
+  // would erase the probe's own verdict -- REQUIREMENT, the reason this
+  // check exists at all -- and leave the caller with a bare `rm` error.
+  // The cleanup only gets to speak when the probe had nothing to say.
+  try {
+    removeProbeDir(probeDir, exec);
+  } catch (e) {
+    if (!probeFailure) {
+      throw new SandboxError(
+        describeProbeCleanupFailure(probeDir, e),
+        "OVERLAY_PROBE_CLEANUP_FAILED",
+      );
+    }
+  }
+
+  if (probeFailure) {
+    throw new SandboxError(describeOverlayFailure(probeFailure.error), "OVERLAYFS_UNSUPPORTED");
+  }
+}
+
+function probeOverlayMount(probeDir: string, exec: ExecLike): void {
+  const lower = join(probeDir, "lower");
+  const upper = join(probeDir, "upper");
+  const work = join(probeDir, "work");
+  const merged = join(probeDir, "merged");
+  for (const dir of [lower, upper, work, merged]) mkdirSync(dir);
+  exec(
+    "sudo",
+    [
+      "-n",
+      "unshare",
+      "--mount",
+      "--propagation",
+      "private",
+      "--",
+      "sh",
+      "-c",
+      `mount -t overlay overlay -o lowerdir=${lower},upperdir=${upper},workdir=${work} ${merged}`,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] },
+  );
 }

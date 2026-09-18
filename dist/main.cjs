@@ -17925,6 +17925,10 @@ function describeOverlayFailure(e) {
 	let captured = capturedStderr(e);
 	return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
+function describeProbeCleanupFailure(dir, e) {
+	let captured = capturedStderr(e);
+	return `Failed to remove the overlayfs probe directory ${dir}. The probe mount itself succeeded, so this runner does support overlayfs -- what failed is removing the probe directory afterwards. That needs \`sudo rm -rf\`, because the kernel writes root-owned overlayfs bookkeeping into workdir while the mount is live (see removeProbeDir), and filesystem_mode: ephemeral's real cleanup discards its overlay work dirs exactly the same way -- so a run would fail on this runner anyway, later and with less to go on. This is usually a sudoers config scoped to specific commands rather than a blanket NOPASSWD:ALL, which checkPasswordlessSudo's own \`sudo -n true\` probe cannot detect. Grant the runner user passwordless sudo for \`rm\`, or use filesystem_mode: persistent instead.${captured ? ` (${captured})` : ""}`;
+}
 function removeProbeDir(dir, exec) {
 	retryBriefly(() => exec("sudo", [
 		"-n",
@@ -17939,38 +17943,45 @@ function removeProbeDir(dir, exec) {
 }
 function checkOverlayfsSupport({ base = SANDBOX_SCRATCH_BASE, exec = node_child_process.execFileSync } = {}) {
 	ensureOwnScratchBase(base);
-	let probeDir = (0, node_fs.mkdtempSync)((0, node_path.join)(base, "overlay-probe-"));
+	let probeDir = (0, node_fs.mkdtempSync)((0, node_path.join)(base, "overlay-probe-")), probeFailure = null;
 	try {
-		let lower = (0, node_path.join)(probeDir, "lower"), upper = (0, node_path.join)(probeDir, "upper"), work = (0, node_path.join)(probeDir, "work"), merged = (0, node_path.join)(probeDir, "merged");
-		for (let dir of [
-			lower,
-			upper,
-			work,
-			merged
-		]) (0, node_fs.mkdirSync)(dir);
-		exec("sudo", [
-			"-n",
-			"unshare",
-			"--mount",
-			"--propagation",
-			"private",
-			"--",
-			"sh",
-			"-c",
-			`mount -t overlay overlay -o lowerdir=${lower},upperdir=${upper},workdir=${work} ${merged}`
-		], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"ignore",
-				"pipe"
-			]
-		});
-	} catch (e) {
-		throw new SandboxError(describeOverlayFailure(e), "OVERLAYFS_UNSUPPORTED");
-	} finally {
-		removeProbeDir(probeDir, exec);
+		probeOverlayMount(probeDir, exec);
+	} catch (error) {
+		probeFailure = { error };
 	}
+	try {
+		removeProbeDir(probeDir, exec);
+	} catch (e) {
+		if (!probeFailure) throw new SandboxError(describeProbeCleanupFailure(probeDir, e), "OVERLAY_PROBE_CLEANUP_FAILED");
+	}
+	if (probeFailure) throw new SandboxError(describeOverlayFailure(probeFailure.error), "OVERLAYFS_UNSUPPORTED");
+}
+function probeOverlayMount(probeDir, exec) {
+	let lower = (0, node_path.join)(probeDir, "lower"), upper = (0, node_path.join)(probeDir, "upper"), work = (0, node_path.join)(probeDir, "work"), merged = (0, node_path.join)(probeDir, "merged");
+	for (let dir of [
+		lower,
+		upper,
+		work,
+		merged
+	]) (0, node_fs.mkdirSync)(dir);
+	exec("sudo", [
+		"-n",
+		"unshare",
+		"--mount",
+		"--propagation",
+		"private",
+		"--",
+		"sh",
+		"-c",
+		`mount -t overlay overlay -o lowerdir=${lower},upperdir=${upper},workdir=${work} ${merged}`
+	], {
+		encoding: "utf8",
+		stdio: [
+			"ignore",
+			"ignore",
+			"pipe"
+		]
+	});
 }
 //#endregion
 //#region src/lib/sandbox/write-through.ts

@@ -715,7 +715,10 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
   error rather than a cryptic one partway through. This is known to fail when the runner process
   itself runs inside a container whose own root filesystem is overlayfs (common for container-based
   self-hosted runners), since the kernel doesn't allow an overlay mount's `upperdir`/`workdir` to
-  themselves sit on overlayfs. `filesystem_mode: persistent` remains available on any runner this action
+  themselves sit on overlayfs. The probe's own leftovers are removed with `sudo rm -rf`, since the
+  kernel writes root-owned bookkeeping into `workdir` while the mount is live, so a runner whose
+  sudoers is scoped too narrowly to allow that fails the preflight too — it is what this mode's own
+  cleanup needs later anyway. `filesystem_mode: persistent` remains available on any runner this action
   otherwise supports.
 - **Linux only**: requires a Linux runner with passwordless `sudo` for the isolation setup itself
   (network namespace, veth, iptables) and a working Docker installation (client and daemon) for the
