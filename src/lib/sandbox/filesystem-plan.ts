@@ -8,10 +8,14 @@
  * make the two depend on each other. Translating their errors into
  * SandboxError is its own job too -- both throw error classes of their own,
  * and nothing else in sandbox/ turns those into a caller-facing code.
+ *
+ * validateFilesystemInputs lives here rather than beside the input reads for
+ * the same reason: which paths a write_through: entry may name is decided by
+ * the mounts the sandbox makes for itself, not by how the input was spelled.
  */
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
-import { validateFilesystemInputs, type FilesystemMode } from "../inputs.ts";
+import type { FilesystemMode } from "../filesystem-mode.ts";
 import {
   determineOverlayRoots,
   formatFilesystemPlanLog,
@@ -25,9 +29,47 @@ import {
   WRITE_THROUGH_ALL,
   type CreatedDir,
 } from "./write-through.ts";
-import { assertScratchBaseNotWritable } from "./paths.ts";
+import { assertScratchBaseNotWritable, isAtOrUnder } from "./paths.ts";
+import { RESERVED_INTERNAL_DESTINATIONS } from "./oci-mounts.ts";
 
 export { formatFilesystemPlanLog };
+
+/**
+ * Validates write_through: paths against the filesystem mode. Pure, no I/O --
+ * deliberately called on its own, ahead of
+ * checkPasswordlessSudo()/checkOverlayfsSupport() in main(), so a plain input
+ * mistake is rejected immediately rather than only after those privileged
+ * preflight checks have already run. That early call passes the raw lines;
+ * resolveFilesystemPlan calls it again on the resolved paths, which is the
+ * authoritative one. Both see the same sentinel: resolveWriteThroughEntry
+ * rejects a spelling that merely normalizes to "/", so only a literal one
+ * reaches either call.
+ */
+export function validateFilesystemInputs(
+  filesystemMode: FilesystemMode,
+  writeThroughPaths: string[],
+): void {
+  if (filesystemMode === "ephemeral" && writeThroughPaths.includes(WRITE_THROUGH_ALL)) {
+    throw new SandboxError(
+      "write_through: / drops the read-only restriction wholesale, which has no meaning in " +
+        "filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists " +
+        "to prevent. List the paths that must survive instead.",
+      "FILESYSTEM_INPUT_CONFLICT",
+    );
+  }
+
+  for (const path of writeThroughPaths) {
+    const reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
+    if (reserved) {
+      throw new SandboxError(
+        `write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} ` +
+          "itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. " +
+          "Name a containing directory instead to persist writes around it.",
+        "FILESYSTEM_INPUT_CONFLICT",
+      );
+    }
+  }
+}
 
 export interface FilesystemPlan {
   /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots). [] in persistent mode. */

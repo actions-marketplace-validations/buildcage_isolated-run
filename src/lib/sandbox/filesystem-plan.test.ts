@@ -5,8 +5,9 @@
  */
 import { describe, it, expect, vi } from "vitest";
 
-import { resolveFilesystemPlan } from "./filesystem-plan.ts";
+import { resolveFilesystemPlan, validateFilesystemInputs } from "./filesystem-plan.ts";
 import { SandboxError } from "../errors.ts";
+import { RESERVED_INTERNAL_DESTINATIONS } from "./oci-mounts.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 
 describe("resolveFilesystemPlan", () => {
@@ -232,5 +233,54 @@ describe("resolveFilesystemPlan", () => {
       expect(err).toBeInstanceOf(SandboxError);
       expect((err as SandboxError).code).toBe("FILESYSTEM_PLAN_FAILED");
     }
+  });
+});
+
+describe("validateFilesystemInputs", () => {
+  it("throws FILESYSTEM_INPUT_CONFLICT for write_through: / in ephemeral mode", () => {
+    expect.assertions(2);
+    try {
+      validateFilesystemInputs("ephemeral", ["/"]);
+    } catch (err) {
+      expect(err).toBeInstanceOf(SandboxError);
+      expect((err as SandboxError).code).toBe("FILESYSTEM_INPUT_CONFLICT");
+    }
+  });
+
+  it("finds the / sentinel among other entries, not just on its own", () => {
+    expect(() => validateFilesystemInputs("ephemeral", ["./dist", "/"])).toThrow(SandboxError);
+  });
+
+  it("allows the / sentinel in persistent mode, and ordinary paths in either", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/"])).not.toThrow();
+    expect(() => validateFilesystemInputs("persistent", ["/opt/cache"])).not.toThrow();
+    expect(() => validateFilesystemInputs("ephemeral", ["./dist"])).not.toThrow();
+    expect(() => validateFilesystemInputs("persistent", [])).not.toThrow();
+    expect(() => validateFilesystemInputs("ephemeral", [])).not.toThrow();
+  });
+
+  it.each(RESERVED_INTERNAL_DESTINATIONS)("rejects the reserved path %s in either mode", (path) => {
+    expect(() => validateFilesystemInputs("persistent", [path])).toThrow(/reserved/);
+    expect(() => validateFilesystemInputs("ephemeral", [path])).toThrow(/reserved/);
+  });
+
+  // The CA paths are only really mounted by the inspect engine, but this
+  // function never sees the engine: an input accepted under one engine and
+  // refused under another would be worse than refusing it everywhere.
+  it("rejects a path under a reserved one", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/etc/resolv.conf/x"])).toThrow(
+      /reserved/,
+    );
+  });
+
+  it("allows a directory containing a reserved path, which the reserved mount is layered over", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/etc"])).not.toThrow();
+    expect(() => validateFilesystemInputs("ephemeral", ["/etc/ssl/certs"])).not.toThrow();
+  });
+
+  it("names the offending entry and the reserved path it collides with", () => {
+    expect(() => validateFilesystemInputs("persistent", ["/etc/resolv.conf"])).toThrow(
+      /"\/etc\/resolv\.conf"/,
+    );
   });
 });

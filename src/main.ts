@@ -17,14 +17,17 @@ import {
   readRuleInputs,
   readRunCommand,
   splitWriteThroughInput,
-  validateFilesystemInputs,
 } from "./lib/inputs.ts";
 import { checkUrlAndTlsRuleSupport } from "./lib/engine-rule-support.ts";
 import { buildComposeEnv } from "./lib/compose-env.ts";
 import { checkPasswordlessSudo } from "./lib/sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./lib/overlayfs-preflight.ts";
 import { removeCreatedDirsIfEmpty } from "./lib/sandbox/write-through.ts";
-import { formatFilesystemPlanLog, resolveFilesystemPlan } from "./lib/sandbox/filesystem-plan.ts";
+import {
+  formatFilesystemPlanLog,
+  resolveFilesystemPlan,
+  validateFilesystemInputs,
+} from "./lib/sandbox/filesystem-plan.ts";
 import { generateContainerName, getContainerNetns } from "./lib/container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
 import { runSandboxedCommand } from "./lib/sandbox/sandboxed-command.ts";
