@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   checkOverlayfsSupport,
   describeOverlayFailure,
+  describeProbeCleanupFailure,
   type CheckOverlayfsSupportOptions,
 } from "./overlayfs-preflight.ts";
 import { SandboxError } from "./errors.ts";
@@ -32,8 +33,36 @@ describe("describeOverlayFailure", () => {
   });
 });
 
+describe("describeProbeCleanupFailure", () => {
+  // The probe already proved overlayfs works, so the message has to say what
+  // is actually wrong instead of repeating the unsupported-overlayfs advice.
+  it("names the directory and points at sudo rather than at overlayfs support", () => {
+    const message = describeProbeCleanupFailure("/var/tmp/buildcage-1001/overlay-probe-abc", {
+      stderr: "rm: Permission denied\n",
+    });
+    expect(message).toContain("/var/tmp/buildcage-1001/overlay-probe-abc");
+    expect(message).toContain("passwordless sudo for `rm`");
+    expect(message).toContain("rm: Permission denied");
+  });
+
+  it("omits the parenthetical when there is no stderr to show", () => {
+    expect(describeProbeCleanupFailure("/tmp/probe", new Error("boom"))).not.toMatch(/\(\s*\)$/);
+  });
+});
+
 /** execFileSync has a wider overload set than these stubs need to model. */
 const asExec = (fn: unknown) => fn as NonNullable<CheckOverlayfsSupportOptions["exec"]>;
+
+/** The error `fn` threw, so a test can assert on its code and message rather
+ *  than only on the fact that something was thrown. */
+function catchFrom(fn: () => void): unknown {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  throw new Error("expected a throw");
+}
 
 describe("checkOverlayfsSupport", () => {
   let base: string;
@@ -112,15 +141,54 @@ describe("checkOverlayfsSupport", () => {
     expect(cleanupAttempts).toBe(3);
   });
 
-  it("gives up on the probe-dir cleanup after the last attempt", () => {
+  it("reports a cleanup that never succeeded as OVERLAY_PROBE_CLEANUP_FAILED", () => {
     base = freshBasePath();
     const exec = vi.fn((_cmd: string, args: readonly string[]) => {
-      if (args.includes("rm")) throw new Error("device or resource busy");
+      if (args.includes("rm")) {
+        throw Object.assign(new Error("Command failed"), { stderr: "rm: Permission denied" });
+      }
       return "";
     });
 
-    expect(() => checkOverlayfsSupport({ base, exec: asExec(exec) })).toThrow(
-      /device or resource busy/,
-    );
+    const err = catchFrom(() => checkOverlayfsSupport({ base, exec: asExec(exec) }));
+
+    expect(err).toBeInstanceOf(SandboxError);
+    expect((err as SandboxError).code).toBe("OVERLAY_PROBE_CLEANUP_FAILED");
+    expect((err as Error).message).toContain("rm: Permission denied");
+  });
+
+  // A `finally` would have let the cleanup's own error replace this one,
+  // taking REQUIREMENT -- the reason the probe exists -- with it.
+  it("keeps the probe's verdict when the cleanup fails too", () => {
+    base = freshBasePath();
+    const exec = vi.fn((_cmd: string, args: readonly string[]) => {
+      if (args.includes("unshare")) {
+        throw Object.assign(new Error("Command failed"), {
+          stderr: "mount: wrong fs type, bad option, bad superblock",
+        });
+      }
+      throw new Error("device or resource busy");
+    });
+
+    const err = catchFrom(() => checkOverlayfsSupport({ base, exec: asExec(exec) }));
+
+    expect(err).toBeInstanceOf(SandboxError);
+    expect((err as SandboxError).code).toBe("OVERLAYFS_UNSUPPORTED");
+    expect((err as Error).message).toContain("filesystem_mode: persistent");
+    expect((err as Error).message).toContain("bad superblock");
+    expect((err as Error).message).not.toContain("device or resource busy");
+  });
+
+  // Every exit path leaves the cleanup having been attempted, including the
+  // one where the probe mount itself failed.
+  it("still attempts the cleanup when the probe mount fails", () => {
+    base = freshBasePath();
+    const exec = vi.fn((_cmd: string, args: readonly string[]) => {
+      if (args.includes("unshare")) throw new Error("mount refused");
+      return "";
+    });
+
+    expect(() => checkOverlayfsSupport({ base, exec: asExec(exec) })).toThrow(SandboxError);
+    expect(exec.mock.calls.filter(([, args]) => args.includes("rm"))).toHaveLength(1);
   });
 });

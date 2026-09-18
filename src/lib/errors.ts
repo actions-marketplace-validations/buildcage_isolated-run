@@ -25,6 +25,8 @@ import { ActionError } from "#core/lib/errors.ts";
  *   WRITE_THROUGH_TARGET_UNCREATABLE – a write_through entry doesn't exist and couldn't be created (sudo mkdir/chown failed)
  *   ALLOW_WRITE_REMOVED           – the removed allow_write input was supplied (renamed to write_through)
  *   OVERLAYFS_UNSUPPORTED         – filesystem_mode: ephemeral's overlayfs preflight probe failed
+ *   OVERLAY_PROBE_CLEANUP_FAILED  – that probe mounted fine, but its root-owned leftovers could not be
+ *                                    removed, which is what ephemeral's own cleanup needs too
  *   FILESYSTEM_PLAN_FAILED        – computing filesystem_mode: ephemeral's overlay roots failed for a reason
  *                                    unrelated to write_through's own syntax (e.g. a permissions error reading
  *                                    one of the fixed $HOME/$RUNNER_TEMP/etc. candidate paths)
@@ -51,6 +53,7 @@ export type SandboxErrorCode =
   | "WRITE_THROUGH_TARGET_UNCREATABLE"
   | "ALLOW_WRITE_REMOVED"
   | "OVERLAYFS_UNSUPPORTED"
+  | "OVERLAY_PROBE_CLEANUP_FAILED"
   | "FILESYSTEM_PLAN_FAILED"
   | "SCRATCH_BASE_UNSAFE"
   | "CONTAINER_NAME_INVALID"
