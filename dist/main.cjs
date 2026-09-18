@@ -19612,19 +19612,19 @@ function createIncrementalAggregator() {
 	};
 }
 //#endregion
-//#region src/core/lib/log/haproxy.ts
-const logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
+//#region src/core/lib/log/start-marker.ts
+const PROXY_START_MARKER = "buildcage haproxy starting", logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
 async function scanHaproxyLog(lines, isAudit) {
-	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, logHeadIntact, unparsed = 0;
+	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, headIntact, unparsed = 0;
 	for await (let line of lines) {
 		let m = line.match(logPattern);
 		if (!m) {
 			let trimmed = line.trim();
 			if (trimmed === "") continue;
-			logHeadIntact ??= trimmed.startsWith("buildcage haproxy starting"), trimmed.includes("buildcage [") && unparsed++;
+			headIntact ??= trimmed.startsWith(PROXY_START_MARKER), trimmed.includes("buildcage [") && unparsed++;
 			continue;
 		}
-		logHeadIntact ??= !1;
+		headIntact ??= !1;
 		let [, decision, ruleType, hostPort, reason] = m, { host, port } = splitHostPort(hostPort), entry = {
 			host,
 			port: port ?? "0",
@@ -19637,7 +19637,7 @@ async function scanHaproxyLog(lines, isAudit) {
 		passed: passed.toSortedArray(),
 		blocked: blocked.toSortedArray(),
 		blockedCount,
-		logHeadIntact: logHeadIntact ?? !1,
+		headIntact: headIntact ?? !1,
 		unparsed
 	};
 }
@@ -19669,19 +19669,19 @@ function targetOf(row) {
 //#endregion
 //#region src/core/lib/report/build/universal.ts
 async function buildUniversalReportData(lines, parameters) {
-	let { passed, blocked: blockedRawRows, blockedCount, logHeadIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
+	let { passed, blocked: blockedRawRows, blockedCount, headIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
 	return {
 		engine: "universal",
 		parameters,
 		passed,
 		blocked: annotateKnownBlocked(blockedRawRows, parameters.knownBlockedRules),
 		blockedCount,
-		logLooksPlausible: logHeadIntact && unparsed === 0
+		logLooksPlausible: headIntact && unparsed === 0
 	};
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = /^buildcage haproxy starting (\d+)$/;
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
 function timeOf(stamp) {
 	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
 	return Number.isNaN(parsed) ? 0 : parsed / 1e3;
