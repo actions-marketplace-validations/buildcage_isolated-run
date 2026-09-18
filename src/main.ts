@@ -13,11 +13,9 @@ import { SandboxError } from "./lib/errors.ts";
 import type { ProxyEngine } from "./lib/engine.ts";
 import {
   readEngineInputs,
-  readFailOnBlocked,
   readFilesystemInputs,
   readRuleInputs,
   readRunCommand,
-  readStepLabel,
   splitWriteThroughInput,
   validateFilesystemInputs,
 } from "./lib/inputs.ts";
@@ -31,8 +29,7 @@ import { generateContainerName, getContainerNetns } from "./lib/container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
 import { runSandboxedCommand } from "./lib/sandbox/sandboxed-command.ts";
 import { startSandboxProxy, stopSandboxProxy } from "./lib/proxy-lifecycle.ts";
-import { uploadTrafficArtifact, wantsTrafficArtifact } from "./lib/traffic-artifact.ts";
-import { fetchReport, readActionVersion, writeReportSummary } from "./lib/report.ts";
+import { reportStepTraffic } from "./lib/step-report.ts";
 
 // Untested by design, down to the end of the file: what is left here is the
 // entry point's own wiring -- the compose file path, the local-image gate, the
@@ -202,40 +199,23 @@ async function main(): Promise<void> {
         overlayRoots,
       });
     } finally {
-      try {
-        const report = await fetchReport(
-          containerName,
-          {
-            mode: proxyMode,
-            allowedHttpsRules: httpsRules,
-            allowedHttpRules: httpRules,
-            allowedIpRules: ipRules,
-            allowedTlsRules: tlsRules,
-            knownBlockedRules,
-          },
-          proxyEngine,
-        );
-        const failOnBlocked = readFailOnBlocked();
-        const wantsArtifact = wantsTrafficArtifact();
-        await writeReportSummary(
-          report,
-          annotation,
-          {
-            actionRepo,
-            actionRef,
-            runCommand: runInput,
-            actionVersion: readActionVersion(containerName, proxyEngine),
-            stepLabel: readStepLabel(),
-            failOnBlocked,
-          },
-          wantsArtifact && report.engine === "inspect",
-        );
-        if (wantsArtifact) {
-          await uploadTrafficArtifact(report, containerName, annotation);
-        }
-      } catch (e) {
-        annotation.warning(`Failed to fetch sandbox report: ${errorMessage(e)}`);
-      }
+      // Never throws, so the teardown below is always reached.
+      await reportStepTraffic({
+        containerName,
+        proxyEngine,
+        parameters: {
+          mode: proxyMode,
+          allowedHttpsRules: httpsRules,
+          allowedHttpRules: httpRules,
+          allowedIpRules: ipRules,
+          allowedTlsRules: tlsRules,
+          knownBlockedRules,
+        },
+        annotation,
+        actionRepo,
+        actionRef,
+        runCommand: runInput,
+      });
       await stopSandboxProxy({ composeFile, projectName, composeEnv, annotation });
     }
 

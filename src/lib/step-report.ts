@@ -1,0 +1,109 @@
+/**
+ * The step's report phase: everything between the isolated command finishing
+ * and the proxy being stopped.
+ *
+ * Its own module rather than part of report.ts because it spans three of them
+ * -- the report itself, the traffic artifact, and the inputs that decide
+ * whether either is wanted -- and none of the three owns the order.
+ */
+
+import type { Annotation } from "#core/lib/actions/annotation.ts";
+import { errorMessage } from "#core/lib/errors.ts";
+import type { GenReportParameters } from "#core/lib/report/types.ts";
+import type { ProxyEngine } from "./engine.ts";
+import { readFailOnBlocked, readStepLabel } from "./inputs.ts";
+import { fetchReport, readActionVersion, writeReportSummary } from "./report.ts";
+import { uploadTrafficArtifact, wantsTrafficArtifact } from "./traffic-artifact.ts";
+
+/**
+ * The steps this function sequences. Declared rather than imported straight
+ * into the body so a test can watch the order and the arguments without
+ * standing in for four modules at once; each one is tested in its own file.
+ */
+export interface ReportStepDeps {
+  fetchReport: typeof fetchReport;
+  readActionVersion: typeof readActionVersion;
+  writeReportSummary: typeof writeReportSummary;
+  wantsTrafficArtifact: typeof wantsTrafficArtifact;
+  uploadTrafficArtifact: typeof uploadTrafficArtifact;
+  readFailOnBlocked: typeof readFailOnBlocked;
+  readStepLabel: typeof readStepLabel;
+}
+
+const realDeps: ReportStepDeps = {
+  fetchReport,
+  readActionVersion,
+  writeReportSummary,
+  wantsTrafficArtifact,
+  uploadTrafficArtifact,
+  readFailOnBlocked,
+  readStepLabel,
+};
+
+export interface ReportStepOptions {
+  containerName: string;
+  proxyEngine: ProxyEngine;
+  /** Echoed into the report verbatim; see GenReportParameters. */
+  parameters: GenReportParameters;
+  annotation: Annotation;
+  actionRepo: string;
+  actionRef: string;
+  runCommand: string;
+}
+
+/**
+ * Fetch the proxy's report, write the Job Summary, and upload the traffic
+ * artifact if one was asked for.
+ *
+ * Never throws. The step's exit code is the isolated command's own, so a
+ * report that could not be fetched is a warning and nothing more -- and the
+ * proxy teardown that runs after this call depends on reaching it.
+ */
+export async function reportStepTraffic(
+  {
+    containerName,
+    proxyEngine,
+    parameters,
+    annotation,
+    actionRepo,
+    actionRef,
+    runCommand,
+  }: ReportStepOptions,
+  overrides: Partial<ReportStepDeps> = {},
+): Promise<void> {
+  const {
+    fetchReport,
+    readActionVersion,
+    writeReportSummary,
+    wantsTrafficArtifact,
+    uploadTrafficArtifact,
+    readFailOnBlocked,
+    readStepLabel,
+  } = { ...realDeps, ...overrides };
+
+  try {
+    const report = await fetchReport(containerName, parameters, proxyEngine);
+    const failOnBlocked = readFailOnBlocked();
+    const wantsArtifact = wantsTrafficArtifact();
+    await writeReportSummary(
+      report,
+      annotation,
+      {
+        actionRepo,
+        actionRef,
+        runCommand,
+        actionVersion: readActionVersion(containerName, proxyEngine),
+        stepLabel: readStepLabel(),
+        failOnBlocked,
+      },
+      // Only the inspect engine produces a traffic JSON, so only its summary
+      // may point at one; uploadTrafficArtifact warns about the mismatch.
+      wantsArtifact && report.engine === "inspect",
+    );
+    if (wantsArtifact) {
+      await uploadTrafficArtifact(report, containerName, annotation);
+    }
+  } catch (e) {
+    annotation.warning(`Failed to fetch sandbox report: ${errorMessage(e)}`);
+  }
+}
