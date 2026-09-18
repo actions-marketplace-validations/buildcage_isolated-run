@@ -19,6 +19,8 @@ import {
 import { buildACLRules, InvalidRulesError } from "#core/lib/acl/rules.ts";
 import { SandboxError } from "./errors.ts";
 
+const silent = () => {};
+
 describe("resolveWriteThroughInput", () => {
   const inputs = (over: Partial<Parameters<typeof resolveWriteThroughInput>[0]> = {}) => ({
     writeThrough: "",
@@ -28,17 +30,24 @@ describe("resolveWriteThroughInput", () => {
   });
 
   it("returns write_through: as given", () => {
-    expect(resolveWriteThroughInput(inputs({ writeThrough: "/opt/cache" }))).toBe("/opt/cache");
+    expect(resolveWriteThroughInput(inputs({ writeThrough: "/opt/cache" }), silent)).toBe(
+      "/opt/cache",
+    );
   });
 
-  it("accepts writable: as the pre-rename spelling", () => {
-    expect(resolveWriteThroughInput(inputs({ writable: "/opt/cache" }))).toBe("/opt/cache");
+  it("accepts writable: as the pre-rename spelling, pointing at the new name", () => {
+    const notice = vi.fn();
+
+    expect(resolveWriteThroughInput(inputs({ writable: "/opt/cache" }), notice)).toBe("/opt/cache");
+    expect(notice).toHaveBeenCalledWith(
+      expect.stringContaining("writable: is now called write_through:"),
+    );
   });
 
   it("throws FILESYSTEM_INPUT_CONFLICT when both spellings are set", () => {
     expect.assertions(2);
     try {
-      resolveWriteThroughInput(inputs({ writeThrough: "/opt/a", writable: "/opt/b" }));
+      resolveWriteThroughInput(inputs({ writeThrough: "/opt/a", writable: "/opt/b" }), silent);
     } catch (err) {
       expect(err).toBeInstanceOf(SandboxError);
       expect((err as SandboxError).code).toBe("FILESYSTEM_INPUT_CONFLICT");
@@ -48,7 +57,7 @@ describe("resolveWriteThroughInput", () => {
   it("rejects the removed allow_write: input rather than ignoring it", () => {
     expect.assertions(2);
     try {
-      resolveWriteThroughInput(inputs({ allowWrite: "./dist" }));
+      resolveWriteThroughInput(inputs({ allowWrite: "./dist" }), silent);
     } catch (err) {
       expect(err).toBeInstanceOf(SandboxError);
       expect((err as SandboxError).code).toBe("ALLOW_WRITE_REMOVED");
@@ -56,7 +65,7 @@ describe("resolveWriteThroughInput", () => {
   });
 
   it("returns an empty string when nothing is set", () => {
-    expect(resolveWriteThroughInput(inputs())).toBe("");
+    expect(resolveWriteThroughInput(inputs(), silent)).toBe("");
   });
 });
 
@@ -176,25 +185,34 @@ describe("readRunCommand", () => {
 
 describe("readEngineInputs", () => {
   it("defaults to universal when unset", () => {
-    expect(readEngineInputs(inputs())).toStrictEqual({ proxyEngine: "universal" });
+    expect(readEngineInputs(silent, inputs())).toStrictEqual({ proxyEngine: "universal" });
   });
 
   it("passes the input through resolveProxyEngine", () => {
-    expect(readEngineInputs(inputs({ proxy_engine: "inspect" }))).toStrictEqual({
+    expect(readEngineInputs(silent, inputs({ proxy_engine: "inspect" }))).toStrictEqual({
       proxyEngine: "inspect",
     });
   });
 
   it("rejects an unknown engine", () => {
-    expect(() => readEngineInputs(inputs({ proxy_engine: "nope" }))).toThrow(
+    expect(() => readEngineInputs(silent, inputs({ proxy_engine: "nope" }))).toThrow(
       /Invalid proxy_engine/,
     );
+  });
+
+  it("hands the deprecated alias's notice to the caller", () => {
+    const notice = vi.fn();
+
+    expect(readEngineInputs(notice, inputs({ proxy_engine: "transparent" }))).toStrictEqual({
+      proxyEngine: "universal",
+    });
+    expect(notice).toHaveBeenCalledOnce();
   });
 });
 
 describe("readFilesystemInputs", () => {
   it("defaults to persistent with no write_through entries", () => {
-    expect(readFilesystemInputs(inputs())).toStrictEqual({
+    expect(readFilesystemInputs(silent, inputs())).toStrictEqual({
       filesystemMode: "persistent",
       writeThroughInput: "",
     });
@@ -202,23 +220,24 @@ describe("readFilesystemInputs", () => {
 
   it("reads both inputs together", () => {
     expect(
-      readFilesystemInputs(inputs({ filesystem_mode: "ephemeral", write_through: "/tmp/out" })),
+      readFilesystemInputs(
+        silent,
+        inputs({ filesystem_mode: "ephemeral", write_through: "/tmp/out" }),
+      ),
     ).toStrictEqual({ filesystemMode: "ephemeral", writeThroughInput: "/tmp/out" });
   });
 
   it("still accepts the old writable: spelling", () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      expect(readFilesystemInputs(inputs({ writable: "/tmp/out" })).writeThroughInput).toBe(
-        "/tmp/out",
-      );
-    } finally {
-      log.mockRestore();
-    }
+    const notice = vi.fn();
+
+    expect(readFilesystemInputs(notice, inputs({ writable: "/tmp/out" })).writeThroughInput).toBe(
+      "/tmp/out",
+    );
+    expect(notice).toHaveBeenCalledOnce();
   });
 
   it("rejects the removed allow_write: input", () => {
-    expect(() => readFilesystemInputs(inputs({ allow_write: "/tmp/out" }))).toThrow(
+    expect(() => readFilesystemInputs(silent, inputs({ allow_write: "/tmp/out" }))).toThrow(
       /allow_write: has been replaced/,
     );
   });

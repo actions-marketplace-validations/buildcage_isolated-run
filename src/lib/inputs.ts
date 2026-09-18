@@ -22,7 +22,6 @@ import {
   parseRulesOrThrow,
 } from "#core/lib/acl/rules.ts";
 import { buildUrlRules } from "#core/lib/acl/url-rules.ts";
-import { annotate } from "#core/lib/actions/annotation.ts";
 import { SandboxError } from "./errors.ts";
 import { resolveProxyEngine, type ProxyEngine } from "./engine.ts";
 import { resolveFilesystemMode, type FilesystemMode } from "./filesystem-mode.ts";
@@ -30,6 +29,9 @@ import { resolveFilesystemMode, type FilesystemMode } from "./filesystem-mode.ts
 /** Narrowed to what this module needs, so a test can pass a plain lookup. */
 export type GetInput = (name: string, options?: { trimWhitespace?: boolean }) => string;
 export type GetBooleanInput = (name: string) => boolean;
+
+/** Where a renamed input's migration message goes; the entry point supplies it. */
+export type Notice = (message: string) => void;
 
 export function readKnownBlockedRules(input: string | undefined): string[] {
   return parseKnownBlockedRulesOrThrow(input);
@@ -49,11 +51,10 @@ export interface WriteThroughInputs {
  * replaced) is rejected rather than ignored, since ignoring it would silently
  * discard writes the step asked to keep.
  */
-export function resolveWriteThroughInput({
-  writeThrough,
-  writable,
-  allowWrite,
-}: WriteThroughInputs): string {
+export function resolveWriteThroughInput(
+  { writeThrough, writable, allowWrite }: WriteThroughInputs,
+  notice: Notice,
+): string {
   if (allowWrite.trim()) {
     throw new SandboxError(
       "allow_write: has been replaced by write_through:, which covers both filesystem modes. " +
@@ -68,7 +69,7 @@ export function resolveWriteThroughInput({
     );
   }
   if (!writeThrough.trim() && writable.trim()) {
-    annotate.notice(
+    notice(
       "writable: is now called write_through:; writable: still works, but consider updating to write_through:.",
     );
     return writable;
@@ -103,8 +104,8 @@ export interface EngineInputs {
   proxyEngine: ProxyEngine;
 }
 
-export function readEngineInputs(getInput: GetInput = core.getInput): EngineInputs {
-  return { proxyEngine: resolveProxyEngine(getInput("proxy_engine")) };
+export function readEngineInputs(notice: Notice, getInput: GetInput = core.getInput): EngineInputs {
+  return { proxyEngine: resolveProxyEngine(getInput("proxy_engine"), notice) };
 }
 
 export interface FilesystemInputs {
@@ -113,14 +114,20 @@ export interface FilesystemInputs {
   writeThroughInput: string;
 }
 
-export function readFilesystemInputs(getInput: GetInput = core.getInput): FilesystemInputs {
+export function readFilesystemInputs(
+  notice: Notice,
+  getInput: GetInput = core.getInput,
+): FilesystemInputs {
   return {
     filesystemMode: resolveFilesystemMode(getInput("filesystem_mode")),
-    writeThroughInput: resolveWriteThroughInput({
-      writeThrough: getInput("write_through"),
-      writable: getInput("writable"),
-      allowWrite: getInput("allow_write"),
-    }),
+    writeThroughInput: resolveWriteThroughInput(
+      {
+        writeThrough: getInput("write_through"),
+        writable: getInput("writable"),
+        allowWrite: getInput("allow_write"),
+      },
+      notice,
+    ),
   };
 }
 

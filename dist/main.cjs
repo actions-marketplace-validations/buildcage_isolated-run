@@ -17572,9 +17572,9 @@ function buildUrlRules(rulesInput) {
 //#endregion
 //#region src/lib/engine.ts
 const ENGINES = ["universal", "inspect"], ENGINE_ALIASES = { transparent: "universal" };
-function resolveProxyEngine(input) {
+function resolveProxyEngine(input, notice) {
 	let trimmed = input?.trim() || "universal", alias = ENGINE_ALIASES[trimmed];
-	alias && annotate.notice("proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.");
+	alias && notice("proxy_engine: transparent is now called universal; transparent still works, but consider updating to proxy_engine: universal.");
 	let engine = alias ?? trimmed;
 	if (!ENGINES.includes(engine)) throw new SandboxError(`Invalid proxy_engine: ${JSON.stringify(input)}. Must be one of ${ENGINES.join(", ")}.`, "INVALID_PROXY_ENGINE");
 	return engine;
@@ -17593,38 +17593,38 @@ init_core();
 function readKnownBlockedRules(input) {
 	return parseKnownBlockedRulesOrThrow(input);
 }
-function resolveWriteThroughInput({ writeThrough, writable, allowWrite }) {
+function resolveWriteThroughInput({ writeThrough, writable, allowWrite }, notice) {
 	if (allowWrite.trim()) throw new SandboxError("allow_write: has been replaced by write_through:, which covers both filesystem modes. Rename the input -- the path syntax is unchanged.", "ALLOW_WRITE_REMOVED");
 	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
-	return !writeThrough.trim() && writable.trim() ? (annotate.notice("writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
+	return !writeThrough.trim() && writable.trim() ? (notice("writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
 }
 function splitWriteThroughInput(input) {
 	return input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
-function readRunCommand(getInput$2 = getInput) {
-	let runInput = getInput$2("run", { trimWhitespace: !1 });
+function readRunCommand(getInput$3 = getInput) {
+	let runInput = getInput$3("run", { trimWhitespace: !1 });
 	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
 	return runInput;
 }
-function readEngineInputs(getInput$1 = getInput) {
-	return { proxyEngine: resolveProxyEngine(getInput$1("proxy_engine")) };
+function readEngineInputs(notice, getInput$4 = getInput) {
+	return { proxyEngine: resolveProxyEngine(getInput$4("proxy_engine"), notice) };
 }
-function readFilesystemInputs(getInput$3 = getInput) {
+function readFilesystemInputs(notice, getInput$2 = getInput) {
 	return {
-		filesystemMode: resolveFilesystemMode(getInput$3("filesystem_mode")),
+		filesystemMode: resolveFilesystemMode(getInput$2("filesystem_mode")),
 		writeThroughInput: resolveWriteThroughInput({
-			writeThrough: getInput$3("write_through"),
-			writable: getInput$3("writable"),
-			allowWrite: getInput$3("allow_write")
-		})
+			writeThrough: getInput$2("write_through"),
+			writable: getInput$2("writable"),
+			allowWrite: getInput$2("allow_write")
+		}, notice)
 	};
 }
-function readRuleInputs(getInput$5 = getInput) {
-	let proxyMode = getInput$5("proxy_mode") || "restrict", rules = buildACLRules({
-		httpsRulesInput: getInput$5("allowed_https_rules"),
-		httpRulesInput: getInput$5("allowed_http_rules"),
-		ipRulesInput: getInput$5("allowed_ip_rules")
-	}), knownBlockedRules = readKnownBlockedRules(getInput$5("known_blocked_rules")), urlRulesInput = getInput$5("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$5("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
+function readRuleInputs(getInput$1 = getInput) {
+	let proxyMode = getInput$1("proxy_mode") || "restrict", rules = buildACLRules({
+		httpsRulesInput: getInput$1("allowed_https_rules"),
+		httpRulesInput: getInput$1("allowed_http_rules"),
+		ipRulesInput: getInput$1("allowed_ip_rules")
+	}), knownBlockedRules = readKnownBlockedRules(getInput$1("known_blocked_rules")), urlRulesInput = getInput$1("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$1("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
 	return {
 		proxyMode,
 		httpsRules: rules.httpsRules,
@@ -17635,8 +17635,8 @@ function readRuleInputs(getInput$5 = getInput) {
 		knownBlockedRules
 	};
 }
-function readStepLabel(getInput$4 = getInput) {
-	return getInput$4("label") || void 0;
+function readStepLabel(getInput$5 = getInput) {
+	return getInput$5("label") || void 0;
 }
 function readFailOnBlocked(getBooleanInput$1 = getBooleanInput) {
 	try {
@@ -64973,9 +64973,9 @@ async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
 	};
 }
 async function main() {
-	let env = process.env, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs();
+	let env = process.env, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs(annotate.notice);
 	console.log(`Proxy engine: ${proxyEngine}`);
-	let { filesystemMode, writeThroughInput } = readFilesystemInputs();
+	let { filesystemMode, writeThroughInput } = readFilesystemInputs(annotate.notice);
 	validateFilesystemInputs(filesystemMode, splitWriteThroughInput(writeThroughInput)), checkPasswordlessSudo(), filesystemMode === "ephemeral" && checkOverlayfsSupport();
 	let annotation = createAnnotation(!!env.GITHUB_STEP_SUMMARY), { overlayRoots, writeThroughPaths, createdDirs } = resolveFilesystemPlan(filesystemMode, writeThroughInput, env);
 	if (filesystemMode === "ephemeral") for (let line of formatFilesystemPlanLog(filesystemMode, overlayRoots, writeThroughPaths)) info(line);
@@ -64992,7 +64992,7 @@ async function main() {
 			proxyMode,
 			urlRules,
 			tlsRules
-		}, (message) => annotation.warning(message)), withLogGroup("buildcage: Configured ACL Rules", () => {
+		}, annotation.warning), withLogGroup("buildcage: Configured ACL Rules", () => {
 			logRules("HTTPS", httpsRules), logRules("HTTP", httpRules), logRules("IP", ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
 		});
 		let containerName = generateContainerName(), projectName = deriveProjectName(containerName);
