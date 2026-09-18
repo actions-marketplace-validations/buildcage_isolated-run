@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
+  assembleBundle,
   runSandboxedCommand,
   type RunSandboxedCommandDeps,
   type RunSandboxedCommandOptions,
@@ -92,6 +93,18 @@ describe("runSandboxedCommand", () => {
     expect(mocks.writeOciConfig.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runIsolated.mock.invocationCallOrder[0],
     );
+  });
+
+  // The proxy is both the default gateway and the only nameserver on the veth
+  // link, and the sandbox is the other end of it.
+  it("wires the sandbox to the proxy's fixed addresses", () => {
+    runSandboxedCommand(options(), deps);
+
+    expect(mocks.runIsolated.mock.calls[0][0]).toMatchObject({
+      gateway: "172.20.0.1",
+      dns: "172.20.0.1",
+      targetIp: "172.20.0.101",
+    });
   });
 
   // The netns is a different ID namespace from Docker's, but derived from the
@@ -229,5 +242,61 @@ describe("runSandboxedCommand", () => {
 
     expect(error!.code).toBe("FILESYSTEM_INPUT_CONFLICT");
     expect(error!.message).toBe('writable path "/proc" is inside "/proc"');
+  });
+});
+
+describe("assembleBundle", () => {
+  it("assembles the bundle without running anything", () => {
+    const bundle = assembleBundle(SCRATCH, options(), deps);
+
+    expect(bundle).toStrictEqual({
+      config: { process: {} },
+      runcPath: BOOTSTRAP.runcPath,
+      caTrust: undefined,
+      netnsName: "buildcage-sandbox-deadbeef",
+      rootfsBindDir: `${SCRATCH}/rootfs`,
+    });
+    expect(mocks.writeOciConfig).not.toHaveBeenCalled();
+    expect(mocks.runIsolated).not.toHaveBeenCalled();
+  });
+
+  // buildOciConfig only records the paths; every one of them has to be on
+  // disk before runc is handed the bundle -- see writeBundleFiles.
+  it("writes the files the config points at before building it", () => {
+    assembleBundle(SCRATCH, options({ filesystemMode: "ephemeral", overlayRoots: ["/tmp"] }), deps);
+
+    for (const step of [
+      mocks.createOverlayScratchDirs,
+      mocks.writeResolvConf,
+      mocks.mkdir,
+      mocks.writeRunScript,
+      mocks.writeEnvLoader,
+    ]) {
+      expect(step.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.buildOciConfig.mock.invocationCallOrder[0]!,
+      );
+    }
+  });
+
+  // The caller wires runIsolated up from what comes back here, so the two
+  // have to describe the same sandbox.
+  it("reports the same netns and rootfs the config was built against", () => {
+    const bundle = assembleBundle(SCRATCH, options(), deps);
+    const { runtime } = mocks.buildOciConfig.mock.calls[0][1];
+
+    expect(runtime.netnsPath).toBe(`/var/run/netns/${bundle.netnsName}`);
+    expect(runtime.rootfsBindDir).toBe(bundle.rootfsBindDir);
+  });
+
+  it("points the sandbox's resolver at the proxy", () => {
+    assembleBundle(SCRATCH, options(), deps);
+
+    expect(mocks.writeResolvConf).toHaveBeenCalledWith("172.20.0.1", SCRATCH);
+  });
+
+  it("hands back the CA trust files the inspect engine needs, for the caller to pass on", () => {
+    const bundle = assembleBundle(SCRATCH, options({ proxyEngine: "inspect" }), deps);
+
+    expect(bundle.caTrust).toStrictEqual({ bundlePath: `${SCRATCH}/ca-bundle.crt` });
   });
 });

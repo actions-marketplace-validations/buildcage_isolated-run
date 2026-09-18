@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { annotate } from "#core/lib/actions/annotation.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
-import { isValidContainerName } from "../container.ts";
+import { isValidContainerName, scratchDirNameFor } from "../container.ts";
 import { retryOnBusy } from "../retry-on-busy.ts";
 import { parseMountinfo } from "./mountinfo.ts";
 
@@ -213,7 +213,7 @@ export function scratchDirFor(containerName: string): string {
       "CONTAINER_NAME_INVALID",
     );
   }
-  return join(SANDBOX_SCRATCH_BASE, containerName.replace(/^buildcage-proxy-/, "sandbox-"));
+  return join(SANDBOX_SCRATCH_BASE, scratchDirNameFor(containerName));
 }
 
 /**

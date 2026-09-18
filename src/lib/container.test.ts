@@ -5,8 +5,10 @@ import {
   getContainerNetns,
   isContainerNotFoundError,
   isValidContainerName,
+  netnsNameFor,
   ownerToken,
   readContainerOwner,
+  scratchDirNameFor,
   CONTAINER_NAME_PATTERN,
 } from "./container.ts";
 import { deriveProjectName } from "#core/lib/docker/compose-project-name.ts";
@@ -44,6 +46,35 @@ describe("isValidContainerName", () => {
 
   it("rejects a too-long suffix", () => {
     expect(isValidContainerName("buildcage-proxy-abcd12345")).toBe(false);
+  });
+});
+
+describe("the names derived from a container's own", () => {
+  it("swaps the prefix, keeping the part that identifies the step", () => {
+    expect(netnsNameFor("buildcage-proxy-deadbeef")).toBe("buildcage-sandbox-deadbeef");
+    expect(scratchDirNameFor("buildcage-proxy-deadbeef")).toBe("sandbox-deadbeef");
+  });
+
+  // Each is a name in its own namespace: runc container ids and `ip netns`
+  // names are not Docker's, and the scratch dir is a directory under
+  // SANDBOX_SCRATCH_BASE. Sharing a spelling would make `docker ps` output
+  // ambiguous.
+  it("gives a generated name three distinct spellings", () => {
+    const containerName = generateContainerName();
+    const names = [containerName, netnsNameFor(containerName), scratchDirNameFor(containerName)];
+
+    expect(new Set(names).size).toBe(3);
+  });
+
+  it("leaves a name that does not carry the prefix alone", () => {
+    expect(netnsNameFor("something-else")).toBe("something-else");
+    expect(scratchDirNameFor("something-else")).toBe("something-else");
+  });
+
+  // scratchDirFor validates before deriving, and assertUnderScratchBase
+  // re-checks the shape on the way back in -- see scratch-dir.ts.
+  it("produces a scratch dir name of the shape cleanup will accept", () => {
+    expect(scratchDirNameFor(generateContainerName())).toMatch(/^sandbox-[0-9a-f]{8}$/);
   });
 });
 

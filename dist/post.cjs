@@ -242,6 +242,10 @@ const CONTAINER_NAME_PATTERN = /^buildcage-proxy-[0-9a-f]{8}$/;
 function isValidContainerName(name) {
 	return CONTAINER_NAME_PATTERN.test(name);
 }
+const CONTAINER_NAME_PREFIX_RE = RegExp("^buildcage-proxy-");
+function scratchDirNameFor(containerName) {
+	return containerName.replace(CONTAINER_NAME_PREFIX_RE, "sandbox-");
+}
 const OWNER_TOKEN_VARS = [
 	"GITHUB_RUN_ID",
 	"GITHUB_RUN_ATTEMPT",
@@ -414,7 +418,7 @@ function assertUnderScratchBase(dir) {
 }
 function scratchDirFor(containerName) {
 	if (!isValidContainerName(containerName)) throw new SandboxError(`Refusing to derive a scratch dir from container name ${JSON.stringify(containerName)}.`, "CONTAINER_NAME_INVALID");
-	return (0, node_path.join)(SANDBOX_SCRATCH_BASE, containerName.replace(/^buildcage-proxy-/, "sandbox-"));
+	return (0, node_path.join)(SANDBOX_SCRATCH_BASE, scratchDirNameFor(containerName));
 }
 //#endregion
 //#region src/lib/post-cleanup.ts
