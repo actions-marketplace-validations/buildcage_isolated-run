@@ -64261,7 +64261,7 @@ function foldExpectedBlockedRows(rows) {
 			unmatched.push(row);
 			continue;
 		}
-		let key = `${row.expectedBy}\t${row.ruleType}\t${row.reason ?? ""}`, group = groups.get(key);
+		let key = `${row.expectedBy}\t${row.ruleType}\t${row.reason}`, group = groups.get(key);
 		group ? (group.hosts.add(row.host), group.count += row.count) : groups.set(key, {
 			rule: row.expectedBy,
 			ruleType: row.ruleType,
