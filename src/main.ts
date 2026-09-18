@@ -4,7 +4,7 @@ import * as core from "@actions/core";
 import { resolveBuildcageImageRef } from "#core/lib/provenance/image-ref.ts";
 import { verifyImageDigestOrThrow, type ResolvedImage } from "#core/lib/provenance/verify-image.ts";
 import type { VerifyImageIdentity } from "#core/lib/provenance/verify-policy.ts";
-import { createAnnotation } from "#core/lib/actions/annotation.ts";
+import { annotate, createAnnotation } from "#core/lib/actions/annotation.ts";
 import { logRules, withLogGroup } from "#core/lib/actions/log.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { exitOnFatalError } from "#core/lib/actions/fatal.ts";
@@ -66,10 +66,12 @@ async function main(): Promise<void> {
 
   const runInput = readRunCommand();
 
-  const { proxyEngine } = readEngineInputs();
+  // Both read a renamed input, whose migration notice is printed whether or
+  // not this is a real action run, unlike `annotation` below.
+  const { proxyEngine } = readEngineInputs(annotate.notice);
   console.log(`Proxy engine: ${proxyEngine}`);
 
-  const { filesystemMode, writeThroughInput } = readFilesystemInputs();
+  const { filesystemMode, writeThroughInput } = readFilesystemInputs(annotate.notice);
 
   // Cheap, pure input check first, so a plain mistake (e.g. write_through: /
   // under filesystem_mode: ephemeral) is rejected immediately rather than only
@@ -115,9 +117,7 @@ async function main(): Promise<void> {
 
     const { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } =
       readRuleInputs();
-    checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules }, (message) =>
-      annotation.warning(message),
-    );
+    checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules }, annotation.warning);
 
     withLogGroup("buildcage: Configured ACL Rules", () => {
       logRules("HTTPS", httpsRules);
