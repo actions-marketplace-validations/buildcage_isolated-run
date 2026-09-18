@@ -17949,45 +17949,10 @@ function caTrustAdditions(files, env) {
 	};
 }
 //#endregion
-//#region scripts/extra-masked-proc-paths.json
-var extra_masked_proc_paths_default = [
-	"/proc/kallsyms",
-	"/proc/kmsg",
-	"/proc/sysrq-trigger"
-], extra_masked_runtime_paths_default = [
-	"/var/run/docker.sock",
-	"/run/docker.sock",
-	"/run/containerd/containerd.sock",
-	"/var/run/docker/containerd/containerd.sock",
-	"/run/buildkit/buildkitd.sock",
-	"/run/podman/podman.sock",
-	"/var/run/crio/crio.sock",
-	"/run/dbus/system_bus_socket",
-	"/var/run/dbus/system_bus_socket"
-];
-//#endregion
-//#region src/lib/sandbox/runtime-sockets.ts
-function rootlessRuntimeSocketPaths(env) {
-	let dir = env.XDG_RUNTIME_DIR;
-	return dir ? [`${dir}/docker.sock`, `${dir}/podman/podman.sock`] : [];
-}
-function perUserRuntimeDirs(uid, env) {
-	let xdg = env.XDG_RUNTIME_DIR;
-	return [...new Set([`/run/user/${uid}`, ...xdg ? [xdg] : []])];
-}
-//#endregion
-//#region src/lib/sandbox/oci-config.ts
-function writeRunScript(runInput, execDir) {
-	let scriptPath = (0, node_path.join)(execDir, "run-script.sh"), content = runInput.startsWith("#!") ? runInput : `#!/bin/sh\nset -e\n${runInput}\n`;
-	return (0, node_fs.writeFileSync)(scriptPath, content, { mode: 448 }), scriptPath;
-}
-function computeReadonlyHostMounts(hostMounts, protectedPaths, freshMountDestinations) {
-	return hostMounts.filter(({ mountPoint }) => mountPoint !== "/" && !freshMountDestinations.has(mountPoint) && !protectedPaths.has(mountPoint)).map(({ mountPoint }) => mountPoint);
-}
+//#region src/lib/sandbox/oci-mounts.ts
 function freshMountDestinationsFrom(baseSpec) {
 	return new Set(baseSpec.mounts.map((m) => m.destination));
 }
-const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
 function withHostShmSize(mounts, hostShmBytes) {
 	return mounts.map((m) => {
 		if (m.destination !== "/dev/shm") return m;
@@ -18009,51 +17974,58 @@ function assertNoFreshMountDestinations(writableDirs, freshMountDestinations) {
 		if (shadowed) throw Error(`writable path ${JSON.stringify(dir)} is inside ${JSON.stringify(shadowed)}, which the sandbox mounts itself; bind-mounting the host's copy there would expose it inside the sandbox. Choose a path outside it.`);
 	}
 }
-function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env, caTrust }, probes = realHostProbes) {
-	let { uid, gid } = identity, { workdir, home, runnerTemp, writablePaths = [] } = writable, { netnsPath, rootfsBindDir, resolvConfPath, seccompProfile, execDir, envLoaderPath, scriptPath, hostMounts = [] } = runtime, disableReadonly = !ephemeral && writablePaths.includes("/"), caAdditions = caTrust ? caTrustAdditions(caTrust, env) : void 0, internalMounts = [{
-		destination: RESOLV_CONF_DESTINATION,
+function ephemeralLayers({ overlayRoots, allowWrite }, freshMountDestinations) {
+	let mounts = [], overlayPaths = overlayRoots.map((r) => r.path);
+	assertScratchBaseNotWritable([...overlayPaths, ...allowWrite]), assertNoFreshMountDestinations(allowWrite, freshMountDestinations);
+	let protectedPaths = new Set([...overlayPaths, ...allowWrite]);
+	for (let root of [...overlayRoots].sort((a, b) => a.path.length - b.path.length)) mounts.push({
+		destination: root.path,
+		type: "overlay",
+		source: "overlay",
+		options: [
+			`lowerdir=${root.path}`,
+			`upperdir=${root.upper}`,
+			`workdir=${root.work}`
+		]
+	});
+	for (let p of [...allowWrite].sort((a, b) => a.length - b.length)) mounts.push({
+		destination: p,
 		type: "none",
-		source: resolvConfPath,
-		options: ["rbind", "ro"]
-	}, ...caAdditions?.mounts ?? []], mounts = withHostShmSize(baseSpec.mounts, probes.shmSizeBytes()), nofile = probes.nofileRlimit(), freshMountDestinations = freshMountDestinationsFrom(baseSpec), protectedPaths;
-	if (ephemeral) {
-		let { overlayRoots, allowWrite } = ephemeral, overlayPaths = overlayRoots.map((r) => r.path);
-		assertScratchBaseNotWritable([...overlayPaths, ...allowWrite]), assertNoFreshMountDestinations(allowWrite, freshMountDestinations), protectedPaths = new Set([...overlayPaths, ...allowWrite]);
-		for (let root of [...overlayRoots].sort((a, b) => a.path.length - b.path.length)) mounts.push({
-			destination: root.path,
-			type: "overlay",
-			source: "overlay",
-			options: [
-				`lowerdir=${root.path}`,
-				`upperdir=${root.upper}`,
-				`workdir=${root.work}`
-			]
-		});
-		for (let p of [...allowWrite].sort((a, b) => a.length - b.length)) mounts.push({
+		source: p,
+		options: ["rbind", "rw"]
+	});
+	return {
+		mounts,
+		writablePaths: protectedPaths
+	};
+}
+function persistentLayers(writableDirs, freshMountDestinations, { disableReadonly }) {
+	let mounts = [], protectedPaths = new Set(writableDirs);
+	if (!disableReadonly) {
+		assertScratchBaseNotWritable(writableDirs), assertNoFreshMountDestinations(writableDirs, freshMountDestinations);
+		for (let p of writableDirs) mounts.push({
 			destination: p,
 			type: "none",
 			source: p,
 			options: ["rbind", "rw"]
 		});
-	} else {
-		let writableDirs = [...new Set([
-			workdir,
-			home,
-			"/tmp",
-			runnerTemp,
-			...writablePaths
-		].filter((p) => !!p))];
-		if (protectedPaths = new Set(writableDirs), !disableReadonly) {
-			assertScratchBaseNotWritable(writableDirs), assertNoFreshMountDestinations(writableDirs, freshMountDestinations);
-			for (let p of writableDirs) mounts.push({
-				destination: p,
-				type: "none",
-				source: p,
-				options: ["rbind", "rw"]
-			});
-		}
 	}
-	mounts.push(...internalMounts), mounts.push({
+	return {
+		mounts,
+		writablePaths: protectedPaths
+	};
+}
+function writableDirsOf({ workdir, home, runnerTemp, writablePaths = [] }) {
+	return [...new Set([
+		workdir,
+		home,
+		"/tmp",
+		runnerTemp,
+		...writablePaths
+	].filter((p) => !!p))];
+}
+function scratchBaseLayers(execDir) {
+	return [{
 		destination: SANDBOX_SCRATCH_BASE,
 		type: "tmpfs",
 		source: "tmpfs",
@@ -18067,74 +18039,7 @@ function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env,
 		type: "none",
 		source: execDir,
 		options: ["bind", "ro"]
-	});
-	let extraMaskedHostPaths = [
-		...extra_masked_runtime_paths_default,
-		...rootlessRuntimeSocketPaths(env),
-		...perUserRuntimeDirs(uid, env),
-		...EXTRA_MASKED_NETNS_PATHS
-	], maskedPaths = [
-		...baseSpec.linux.maskedPaths ?? [],
-		...extra_masked_proc_paths_default,
-		...extraMaskedHostPaths
-	], isExtraMasked = (p) => extra_masked_proc_paths_default.includes(p) || extraMaskedHostPaths.includes(p), baseReadonlyPaths = (baseSpec.linux.readonlyPaths ?? []).filter((p) => !isExtraMasked(p)), readonlyPaths = disableReadonly ? baseReadonlyPaths : Array.from(new Set([...baseReadonlyPaths, ...computeReadonlyHostMounts(hostMounts, protectedPaths, freshMountDestinations).filter((p) => !isExtraMasked(p))])), namespaces = baseSpec.linux.namespaces.map((ns) => ns.type === "network" ? {
-		...ns,
-		path: netnsPath
-	} : ns);
-	return {
-		...baseSpec,
-		root: {
-			path: rootfsBindDir,
-			readonly: !disableReadonly
-		},
-		mounts,
-		hostname: probes.hostname(),
-		process: {
-			...baseSpec.process,
-			terminal: !1,
-			user: {
-				uid,
-				gid
-			},
-			args: [
-				probes.setprivPath(),
-				"--pdeathsig=KILL",
-				"--",
-				envLoaderPath,
-				scriptPath
-			],
-			env: [],
-			cwd: workdir || "/",
-			capabilities: {
-				bounding: [],
-				effective: [],
-				permitted: [],
-				inheritable: [],
-				ambient: []
-			},
-			noNewPrivileges: !0,
-			rlimits: nofile ? [{
-				type: "RLIMIT_NOFILE",
-				soft: nofile.soft,
-				hard: nofile.hard
-			}] : void 0
-		},
-		linux: {
-			...baseSpec.linux,
-			namespaces,
-			seccomp: seccompProfile,
-			maskedPaths,
-			readonlyPaths
-		}
-	};
-}
-function writeOciConfig(config, bundleDir) {
-	let configPath = (0, node_path.join)(bundleDir, "config.json");
-	return (0, node_fs.writeFileSync)(configPath, JSON.stringify(config), { mode: 384 }), configPath;
-}
-function writeResolvConf(dns, dir) {
-	let resolvConfPath = (0, node_path.join)(dir, "resolv.conf");
-	return (0, node_fs.writeFileSync)(resolvConfPath, `nameserver ${dns}\n`, { mode: 420 }), resolvConfPath;
+	}];
 }
 //#endregion
 //#region src/lib/sandbox/write-through.ts
@@ -18563,6 +18468,29 @@ function extractRuncBootstrap({ containerName, destDir }, deps = {}) {
 	};
 }
 //#endregion
+//#region scripts/extra-masked-runtime-paths.json
+var extra_masked_runtime_paths_default = [
+	"/var/run/docker.sock",
+	"/run/docker.sock",
+	"/run/containerd/containerd.sock",
+	"/var/run/docker/containerd/containerd.sock",
+	"/run/buildkit/buildkitd.sock",
+	"/run/podman/podman.sock",
+	"/var/run/crio/crio.sock",
+	"/run/dbus/system_bus_socket",
+	"/var/run/dbus/system_bus_socket"
+];
+//#endregion
+//#region src/lib/sandbox/runtime-sockets.ts
+function rootlessRuntimeSocketPaths(env) {
+	let dir = env.XDG_RUNTIME_DIR;
+	return dir ? [`${dir}/docker.sock`, `${dir}/podman/podman.sock`] : [];
+}
+function perUserRuntimeDirs(uid, env) {
+	let xdg = env.XDG_RUNTIME_DIR;
+	return [...new Set([`/run/user/${uid}`, ...xdg ? [xdg] : []])];
+}
+//#endregion
 //#region src/lib/sandbox/identity.ts
 const PRIVILEGED_GROUP_NAMES = new Set([
 	"root",
@@ -18623,6 +18551,122 @@ function resolveSandboxGid(primaryGid, env, options = {}) {
 		substitutedFrom: primaryGid
 	};
 	throw new SandboxError(`The runner's primary GID (${primaryGid}) is a privileged group, and no safe substitute GID was found (nogroup/nobody/65534 are all privileged too on this host). Refusing to start the sandbox rather than run it under a privileged primary GID.`, "UNSAFE_PRIMARY_GID");
+}
+//#endregion
+//#region scripts/extra-masked-proc-paths.json
+var extra_masked_proc_paths_default = [
+	"/proc/kallsyms",
+	"/proc/kmsg",
+	"/proc/sysrq-trigger"
+];
+//#endregion
+//#region src/lib/sandbox/oci-protected-paths.ts
+const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
+function computeReadonlyHostMounts(hostMounts, protectedPaths, freshMountDestinations) {
+	return hostMounts.filter(({ mountPoint }) => mountPoint !== "/" && !freshMountDestinations.has(mountPoint) && !protectedPaths.has(mountPoint)).map(({ mountPoint }) => mountPoint);
+}
+function resolveProtectedPaths({ baseMaskedPaths, baseReadonlyPaths, uid, env, hostMounts, writablePaths, freshMountDestinations, disableReadonly }) {
+	let extraMaskedHostPaths = [
+		...extra_masked_runtime_paths_default,
+		...rootlessRuntimeSocketPaths(env),
+		...perUserRuntimeDirs(uid, env),
+		...EXTRA_MASKED_NETNS_PATHS
+	], maskedPaths = [
+		...baseMaskedPaths,
+		...extra_masked_proc_paths_default,
+		...extraMaskedHostPaths
+	], isExtraMasked = (p) => extra_masked_proc_paths_default.includes(p) || extraMaskedHostPaths.includes(p), keptReadonlyPaths = baseReadonlyPaths.filter((p) => !isExtraMasked(p));
+	return {
+		maskedPaths,
+		readonlyPaths: disableReadonly ? keptReadonlyPaths : Array.from(new Set([...keptReadonlyPaths, ...computeReadonlyHostMounts(hostMounts, writablePaths, freshMountDestinations).filter((p) => !isExtraMasked(p))]))
+	};
+}
+//#endregion
+//#region src/lib/sandbox/oci-config.ts
+function buildOciConfig(baseSpec, { identity, writable, ephemeral, runtime, env, caTrust }, probes = realHostProbes) {
+	let { uid, gid } = identity, { workdir, writablePaths = [] } = writable, { netnsPath, rootfsBindDir, resolvConfPath, seccompProfile, execDir, envLoaderPath, scriptPath, hostMounts = [] } = runtime, disableReadonly = !ephemeral && writablePaths.includes("/"), caAdditions = caTrust ? caTrustAdditions(caTrust, env) : void 0, internalMounts = [{
+		destination: RESOLV_CONF_DESTINATION,
+		type: "none",
+		source: resolvConfPath,
+		options: ["rbind", "ro"]
+	}, ...caAdditions?.mounts ?? []], nofile = probes.nofileRlimit(), freshMountDestinations = freshMountDestinationsFrom(baseSpec), layers = ephemeral ? ephemeralLayers(ephemeral, freshMountDestinations) : persistentLayers(writableDirsOf(writable), freshMountDestinations, { disableReadonly }), mounts = [
+		...withHostShmSize(baseSpec.mounts, probes.shmSizeBytes()),
+		...layers.mounts,
+		...internalMounts,
+		...scratchBaseLayers(execDir)
+	], { maskedPaths, readonlyPaths } = resolveProtectedPaths({
+		baseMaskedPaths: baseSpec.linux.maskedPaths ?? [],
+		baseReadonlyPaths: baseSpec.linux.readonlyPaths ?? [],
+		uid,
+		env,
+		hostMounts,
+		writablePaths: layers.writablePaths,
+		freshMountDestinations,
+		disableReadonly
+	}), namespaces = baseSpec.linux.namespaces.map((ns) => ns.type === "network" ? {
+		...ns,
+		path: netnsPath
+	} : ns);
+	return {
+		...baseSpec,
+		root: {
+			path: rootfsBindDir,
+			readonly: !disableReadonly
+		},
+		mounts,
+		hostname: probes.hostname(),
+		process: {
+			...baseSpec.process,
+			terminal: !1,
+			user: {
+				uid,
+				gid
+			},
+			args: [
+				probes.setprivPath(),
+				"--pdeathsig=KILL",
+				"--",
+				envLoaderPath,
+				scriptPath
+			],
+			env: [],
+			cwd: workdir || "/",
+			capabilities: {
+				bounding: [],
+				effective: [],
+				permitted: [],
+				inheritable: [],
+				ambient: []
+			},
+			noNewPrivileges: !0,
+			rlimits: nofile ? [{
+				type: "RLIMIT_NOFILE",
+				soft: nofile.soft,
+				hard: nofile.hard
+			}] : void 0
+		},
+		linux: {
+			...baseSpec.linux,
+			namespaces,
+			seccomp: seccompProfile,
+			maskedPaths,
+			readonlyPaths
+		}
+	};
+}
+//#endregion
+//#region src/lib/sandbox/oci-files.ts
+function writeRunScript(runInput, execDir) {
+	let scriptPath = (0, node_path.join)(execDir, "run-script.sh"), content = runInput.startsWith("#!") ? runInput : `#!/bin/sh\nset -e\n${runInput}\n`;
+	return (0, node_fs.writeFileSync)(scriptPath, content, { mode: 448 }), scriptPath;
+}
+function writeOciConfig(config, bundleDir) {
+	let configPath = (0, node_path.join)(bundleDir, "config.json");
+	return (0, node_fs.writeFileSync)(configPath, JSON.stringify(config), { mode: 384 }), configPath;
+}
+function writeResolvConf(dns, dir) {
+	let resolvConfPath = (0, node_path.join)(dir, "resolv.conf");
+	return (0, node_fs.writeFileSync)(resolvConfPath, `nameserver ${dns}\n`, { mode: 420 }), resolvConfPath;
 }
 //#endregion
 //#region src/lib/sandbox/env-loader.ts
