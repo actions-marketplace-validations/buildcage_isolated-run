@@ -5,6 +5,7 @@ import { annotate } from "#core/lib/actions/annotation.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import { isValidContainerName } from "../container.ts";
+import { retryOnBusy } from "../retry-on-busy.ts";
 import { parseMountinfo } from "./mountinfo.ts";
 
 // Base directory for each run's scratch dir (OCI bundle + the host-`/`
@@ -123,14 +124,13 @@ function unmountAllUnder(dir: string, deps: ScratchDirDeps): void {
  */
 function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
   const { exec = defaultExec, lstat = lstatSync, remove = defaultRemove } = deps;
-  const maxAttempts = 5;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      remove(dir);
-      return;
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "EACCES") {
+  retryOnBusy(
+    () => {
+      try {
+        remove(dir);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "EACCES") throw e;
         // This is the one call that runs as root, so ownership is checked
         // again immediately before it rather than relying on the caller's
         // own check. lstat, not stat, since a symlink here must not be
@@ -144,12 +144,10 @@ function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
           );
         }
         exec("sudo", ["-n", "rm", "-rf", dir]);
-        return;
       }
-      if (code !== "EBUSY" || attempt === maxAttempts) throw e;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-    }
-  }
+    },
+    { retryOn: (e) => (e as NodeJS.ErrnoException).code === "EBUSY" },
+  );
 }
 
 /**

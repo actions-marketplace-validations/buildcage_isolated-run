@@ -17670,11 +17670,15 @@ function resolveComposeFile(override) {
 //#endregion
 //#region src/core/lib/actions/docker-error.ts
 const SLIM_RUNNER_DETECTED_PREFIX = " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\")", SLIM_RUNNER_NOTE$1 = `${SLIM_RUNNER_DETECTED_PREFIX} — these ship a Docker client with no daemon and are not supported for this action.`;
+function capturedStderr(e) {
+	let err = e && typeof e == "object" ? e : {};
+	return typeof err.stderr == "string" ? err.stderr.trim() : "";
+}
 function describeDockerFailure(e, { operation = "docker", env = process.env, exists = node_fs.existsSync } = {}) {
 	let err = e && typeof e == "object" ? e : {}, slimNote = isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE$1 : "", whatHappened;
 	if (err.code === "ENOENT") whatHappened = `The "docker" command was not found on this runner's PATH while running ${operation}.`;
 	else {
-		let captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+		let captured = capturedStderr(e);
 		whatHappened = `${operation} failed${captured ? `: ${captured}` : " (see the Docker output above for the underlying error)"}.`;
 	}
 	return `${whatHappened}${slimNote} Buildcage requires a working Docker installation (client and daemon) on the runner, on Docker Engine 25.0 or later with Compose v2.20.2 or later. Lightweight runner images such as GitHub-hosted "ubuntu-slim" ship a Docker client but no daemon and are not supported for this action — use "ubuntu-latest" (or another runner with a full Docker install) instead. See README.md and docs/security.md for details.`;
@@ -17705,31 +17709,33 @@ function isContainerNotFoundError(e) {
 	let err = e && typeof e == "object" ? e : {}, text = `${err.stderr ?? ""} ${err.message ?? ""}`.toLowerCase();
 	return text.includes("no such object") || text.includes("no such container");
 }
-function getContainerNetns(containerName, { exec = node_child_process.execFileSync } = {}) {
-	let out;
+const captureDockerViaExec$1 = (args, env) => (0, node_child_process.execFileSync)("docker", args, {
+	encoding: "utf8",
+	env,
+	stdio: [
+		"ignore",
+		"pipe",
+		"pipe"
+	]
+});
+function inspectFormat(containerName, format, exec) {
 	try {
-		out = exec("docker", [
+		return exec([
 			"inspect",
 			"--format",
-			"{{.NetworkSettings.SandboxKey}}",
+			format,
 			containerName
 		], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"pipe",
-				"pipe"
-			],
-			env: {
-				...process.env,
-				LC_ALL: "C"
-			}
+			...process.env,
+			LC_ALL: "C"
 		}).trim();
 	} catch (e) {
 		if (isContainerNotFoundError(e)) return null;
 		throw new SandboxError(describeDockerFailure(e, { operation: "docker inspect" }), "DOCKER_UNAVAILABLE");
 	}
-	return out || null;
+}
+function getContainerNetns(containerName, { exec = captureDockerViaExec$1 } = {}) {
+	return inspectFormat(containerName, "{{.NetworkSettings.SandboxKey}}", exec) || null;
 }
 //#endregion
 //#region src/lib/host-addresses.ts
@@ -17761,7 +17767,7 @@ function buildComposeEnv({ containerName, proxyMode, proxyEngine, imageRef, http
 //#region src/lib/sudo-preflight.ts
 const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
 function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
-	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+	let captured = capturedStderr(e);
 	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
 }
 function defaultExecFile$2(command, args) {
@@ -17779,6 +17785,17 @@ function checkPasswordlessSudo({ execFile = defaultExecFile$2 } = {}) {
 		execFile("sudo", ["-n", "true"]);
 	} catch (e) {
 		throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
+	}
+}
+//#endregion
+//#region src/lib/retry-on-busy.ts
+function retryOnBusy(fn, options = {}) {
+	let { attempts = 5, delayMs = 200, retryOn = () => !0 } = options;
+	for (let attempt = 1;; attempt++) try {
+		return fn();
+	} catch (e) {
+		if (attempt >= attempts || !retryOn(e)) throw e;
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
 	}
 }
 //#endregion
@@ -17844,12 +17861,11 @@ function unmountAllUnder(dir, deps) {
 }
 function removeScratchDir(dir, deps) {
 	let { exec = defaultExec$2, lstat = node_fs.lstatSync, remove = defaultRemove } = deps;
-	for (let attempt = 1; attempt <= 5; attempt++) try {
-		remove(dir);
-		return;
-	} catch (e) {
-		let code = e.code;
-		if (code === "EACCES") {
+	retryOnBusy(() => {
+		try {
+			remove(dir);
+		} catch (e) {
+			if (e.code !== "EACCES") throw e;
 			let st = lstat(dir);
 			if (!st.isDirectory() || st.uid !== process.getuid()) throw new SandboxError(`Refusing to sudo rm -rf ${dir}: not a directory owned by uid ${process.getuid()}.`, "SCRATCH_DIR_UNSAFE");
 			exec("sudo", [
@@ -17858,11 +17874,8 @@ function removeScratchDir(dir, deps) {
 				"-rf",
 				dir
 			]);
-			return;
 		}
-		if (code !== "EBUSY" || attempt === 5) throw e;
-		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-	}
+	}, { retryOn: (e) => e.code === "EBUSY" });
 }
 function cleanupScratchDir(dir, ephemeralRoots, deps = {}) {
 	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps), removeScratchDir(dir, deps);
@@ -17901,26 +17914,20 @@ function withScratchDir(fn, containerName, ephemeralRoots) {
 //#region src/lib/overlayfs-preflight.ts
 const REQUIREMENT = `filesystem_mode: ephemeral requires overlayfs support on ${SANDBOX_SCRATCH_BASE} -- an overlay mount's upperdir/workdir are placed there, and the kernel doesn't allow those to themselves sit on an overlayfs filesystem. This commonly fails when the runner process is itself running inside a container whose own root filesystem is overlayfs (e.g. many container-based self-hosted runner setups), since that puts SANDBOX_SCRATCH_BASE on overlayfs too. Use filesystem_mode: persistent instead, or run this action from a runner whose filesystem isn't overlayfs-backed.`;
 function describeOverlayFailure(e) {
-	let err = e && typeof e == "object" ? e : {}, captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+	let captured = capturedStderr(e);
 	return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
 function removeProbeDir(dir, exec) {
-	for (let attempt = 1; attempt <= 5; attempt++) try {
-		exec("sudo", [
-			"-n",
-			"rm",
-			"-rf",
-			dir
-		], { stdio: [
-			"ignore",
-			"ignore",
-			"pipe"
-		] });
-		return;
-	} catch (e) {
-		if (attempt === 5) throw e;
-		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-	}
+	retryOnBusy(() => exec("sudo", [
+		"-n",
+		"rm",
+		"-rf",
+		dir
+	], { stdio: [
+		"ignore",
+		"ignore",
+		"pipe"
+	] }));
 }
 function checkOverlayfsSupport({ base = SANDBOX_SCRATCH_BASE, exec = node_child_process.execFileSync } = {}) {
 	ensureOwnScratchBase(base);
@@ -18965,8 +18972,8 @@ function readProxyState(containerName, composeEnv, { captureDocker = captureDock
 	}
 }
 function reportInspectFailure(e) {
-	let stderr = (e && typeof e == "object" ? e : {}).stderr ?? "";
-	stderr.trim() && !/no such object/i.test(stderr) && console.log(`buildcage: could not read the sandbox proxy container's state: ${stderr.trim()}`);
+	let stderr = capturedStderr(e);
+	stderr && !/no such object/i.test(stderr) && console.log(`buildcage: could not read the sandbox proxy container's state: ${stderr}`);
 }
 function printProxyLog({ composeFile, projectName, composeEnv }, { printDocker = printDockerViaExec }) {
 	try {

@@ -4,8 +4,8 @@ import { existsSync } from "node:fs";
 import { SandboxError } from "./errors.ts";
 import {
   SLIM_RUNNER_DETECTED_PREFIX,
+  capturedStderr,
   isLikelySlimRunner,
-  type DockerErrorLike,
 } from "#core/lib/actions/docker-error.ts";
 
 const REQUIREMENT =
@@ -30,8 +30,7 @@ export function describeSudoFailure(
   e: unknown,
   { env = process.env, exists = existsSync }: DescribeSudoFailureOptions = {},
 ): string {
-  const err = (e && typeof e === "object" ? e : {}) as DockerErrorLike;
-  const captured = typeof err.stderr === "string" ? err.stderr.trim() : "";
+  const captured = capturedStderr(e);
   const slimNote = isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : "";
   return `'sudo' is not available without a password on this runner.${slimNote} ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
