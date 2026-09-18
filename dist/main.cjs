@@ -18999,36 +18999,10 @@ async function stopSandboxProxy({ composeFile, projectName, composeEnv, annotati
 	});
 }
 //#endregion
-//#region src/core/lib/report/render/communication-section.ts
-const COMMUNICATION_DETAILS_OPEN = "<details>\n<summary>💬 Communication details</summary>\n\n", COMMUNICATION_DETAILS_CLOSE = "</details>\n";
-function wrapCommunicationDetails(body) {
-	return `\n${COMMUNICATION_DETAILS_OPEN}${body}${COMMUNICATION_DETAILS_CLOSE}`;
-}
-//#endregion
-//#region src/core/lib/report/render/truncate-communication-details.ts
-const SAFETY_MARGIN_BYTES = 8192;
-function truncateForStepSummary(markdown, artifactAvailable, limitBytes = 1048576) {
-	if (Buffer.byteLength(markdown, "utf8") <= limitBytes - SAFETY_MARGIN_BYTES) return markdown;
-	let openAt = markdown.indexOf(COMMUNICATION_DETAILS_OPEN);
-	if (openAt === -1) return markdown;
-	let bodyStart = openAt + 55, closeAt = markdown.indexOf(COMMUNICATION_DETAILS_CLOSE, bodyStart);
-	if (closeAt === -1) return markdown;
-	let before = markdown.slice(0, bodyStart), body = markdown.slice(bodyStart, closeAt), after = markdown.slice(closeAt), note = truncationNote(artifactAvailable), fixedBytes = Buffer.byteLength(before, "utf8") + Buffer.byteLength(after, "utf8") + Buffer.byteLength(note, "utf8"), budget = Math.max(0, limitBytes - SAFETY_MARGIN_BYTES - fixedBytes), kept = "", usedBytes = 0, fenceOpen = !1;
-	for (let line of body.split("\n")) {
-		let withNewline = `${line}\n`, lineBytes = Buffer.byteLength(withNewline, "utf8");
-		if (usedBytes + lineBytes > budget) break;
-		kept += withNewline, usedBytes += lineBytes, line.trim().startsWith("```") && (fenceOpen = !fenceOpen);
-	}
-	return fenceOpen && (kept += "```\n"), before + kept + note + after;
-}
-function truncationNote(artifactAvailable) {
-	return `_…truncated: the full communication log exceeded GitHub's Job Summary size limit; ${artifactAvailable ? "the buildcage-traffic artifact uploaded for this run has the rest" : "set upload_traffic_artifact: true to get the rest as a downloadable artifact"}._\n\n`;
-}
-//#endregion
 //#region src/core/lib/actions/write-step-summary.ts
 init_core();
-async function writeStepSummary(markdown, artifactAvailable = !1) {
-	process.env.GITHUB_STEP_SUMMARY ? await summary.addRaw(truncateForStepSummary(markdown, artifactAvailable)).write() : console.log(markdown);
+async function writeStepSummary(markdown, summaryFile) {
+	summaryFile ? await summary.addRaw(markdown).write() : console.log(markdown);
 }
 //#endregion
 //#region src/core/lib/docker/container-env.ts
@@ -19382,6 +19356,12 @@ function formatElapsedFixed(elapsedSeconds) {
 	return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}.${pad(ms, 3)}`;
 }
 //#endregion
+//#region src/core/lib/report/render/communication-section.ts
+const COMMUNICATION_DETAILS_OPEN = "<details>\n<summary>💬 Communication details</summary>\n\n", COMMUNICATION_DETAILS_CLOSE = "</details>\n";
+function wrapCommunicationDetails(body) {
+	return `\n${COMMUNICATION_DETAILS_OPEN}${body}${COMMUNICATION_DETAILS_CLOSE}`;
+}
+//#endregion
 //#region src/core/lib/report/render/inspect-details.ts
 function renderInspectDetails(timeline, startedAt) {
 	let connected = connectedHosts(timeline), shown = timeline.filter((e) => !isRedundantDns(e, connected));
@@ -19580,6 +19560,26 @@ function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound
 		}) + "\n";
 	}
 	return report.passed.length === 0 && report.blocked.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown;
+}
+//#endregion
+//#region src/core/lib/report/render/truncate-communication-details.ts
+const SAFETY_MARGIN_BYTES = 8192;
+function truncateForStepSummary(markdown, artifactAvailable, limitBytes = 1048576) {
+	if (Buffer.byteLength(markdown, "utf8") <= limitBytes - SAFETY_MARGIN_BYTES) return markdown;
+	let openAt = markdown.indexOf(COMMUNICATION_DETAILS_OPEN);
+	if (openAt === -1) return markdown;
+	let bodyStart = openAt + 55, closeAt = markdown.indexOf(COMMUNICATION_DETAILS_CLOSE, bodyStart);
+	if (closeAt === -1) return markdown;
+	let before = markdown.slice(0, bodyStart), body = markdown.slice(bodyStart, closeAt), after = markdown.slice(closeAt), note = truncationNote(artifactAvailable), fixedBytes = Buffer.byteLength(before, "utf8") + Buffer.byteLength(after, "utf8") + Buffer.byteLength(note, "utf8"), budget = Math.max(0, limitBytes - SAFETY_MARGIN_BYTES - fixedBytes), kept = "", usedBytes = 0, fenceOpen = !1;
+	for (let line of body.split("\n")) {
+		let withNewline = `${line}\n`, lineBytes = Buffer.byteLength(withNewline, "utf8");
+		if (usedBytes + lineBytes > budget) break;
+		kept += withNewline, usedBytes += lineBytes, line.trim().startsWith("```") && (fenceOpen = !fenceOpen);
+	}
+	return fenceOpen && (kept += "```\n"), before + kept + note + after;
+}
+function truncationNote(artifactAvailable) {
+	return `_…truncated: the full communication log exceeded GitHub's Job Summary size limit; ${artifactAvailable ? "the buildcage-traffic artifact uploaded for this run has the rest" : "set upload_traffic_artifact: true to get the rest as a downloadable artifact"}._\n\n`;
 }
 //#endregion
 //#region src/core/lib/log/aggregate.ts
@@ -19902,7 +19902,7 @@ function computeReportOutcome(report, { stepLabel, failOnBlocked, actionRepo, ac
 }
 async function writeReportSummary(report, annotation, options, artifactAvailable) {
 	let outcome = computeReportOutcome(report, options);
-	await writeStepSummary(outcome.markdown, artifactAvailable);
+	await writeStepSummary(truncateForStepSummary(outcome.markdown, artifactAvailable), process.env.GITHUB_STEP_SUMMARY);
 	let debugSummaryFile = process.env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
 	debugSummaryFile && (0, node_fs.appendFileSync)(debugSummaryFile, outcome.markdown), applyOutcomeAnnotation(annotation, outcome);
 }

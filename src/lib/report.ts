@@ -6,6 +6,7 @@ import { createDocker, type Docker } from "#core/lib/docker/client.ts";
 import { readRotatedLog } from "#core/lib/docker/rotated-log.ts";
 import { describeBlockedOutcome } from "#core/lib/report/outcome/blocked-outcome.ts";
 import { renderReportMarkdown } from "#core/lib/report/render/render-report-markdown.ts";
+import { truncateForStepSummary } from "#core/lib/report/render/truncate-communication-details.ts";
 import { buildUniversalReportData } from "#core/lib/report/build/universal.ts";
 import { buildInspectReportData } from "#core/lib/report/build/inspect.ts";
 import { applyOutcomeAnnotation } from "#core/lib/report/outcome/annotate.ts";
@@ -140,7 +141,10 @@ export async function writeReportSummary(
 ): Promise<void> {
   const outcome = computeReportOutcome(report, options);
 
-  await writeStepSummary(outcome.markdown, artifactAvailable);
+  await writeStepSummary(
+    truncateForStepSummary(outcome.markdown, artifactAvailable),
+    process.env.GITHUB_STEP_SUMMARY,
+  );
 
   // Debug-only mirror: GITHUB_STEP_SUMMARY is unique per step and can't be
   // reassigned, so a later step has no way to read this step's copy back.
