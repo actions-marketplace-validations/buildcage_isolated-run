@@ -34,7 +34,7 @@ jobs:
             npm init -y
             npm install --ignore-scripts @hono/node-server
 
-            python3 -m pip install --user --quiet requests
+            python3 -m pip install --user --quiet tornado
 
             # Refused: the report names the full URL, not just the host.
             curl -sS --max-time 5 -o /dev/null https://example.com/ || true

@@ -24,7 +24,7 @@ jobs:
             npm install --ignore-scripts @hono/node-server
 
             # A second registry, spanning two domains: the index and the files it points at.
-            python3 -m pip install --user --quiet requests
+            python3 -m pip install --user --quiet tornado
 
             # Unneeded by the build; leave it out of the rules you paste back in.
             curl -sS --max-time 5 -o /dev/null https://example.com/ || true
