@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
 import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/docker-error.ts";
+import type { RunDocker } from "#core/lib/docker/client.ts";
 import { SandboxError } from "./errors.ts";
 
 /**
@@ -66,24 +67,42 @@ export function isContainerNotFoundError(e: unknown): boolean {
   return text.includes("no such object") || text.includes("no such container");
 }
 
+export interface ContainerInspectOptions {
+  /** An injectable seam for testing without a real Docker daemon, not a
+   *  caller-facing precondition. */
+  exec?: RunDocker;
+}
+
+// Untested by design: the default behind the seam above, which only hands
+// execFileSync what the tested caller decided.
+/* v8 ignore start */
+const captureDockerViaExec: RunDocker = (args, env) =>
+  execFileSync("docker", args, { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
+/* v8 ignore stop */
+
 /**
+ * One `docker inspect --format` read of one container.
+ *
  * Null means "container doesn't exist yet" (see isContainerNotFoundError);
  * any other docker failure throws a SandboxError instead, so it isn't
  * confused with that case at the call site.
- *
- * `exec` is an injectable seam for testing without a real Docker daemon —
- * not a caller-facing precondition.
  */
-interface ExecFileSyncOptions {
-  encoding: string;
-  stdio: string[];
-  env: NodeJS.ProcessEnv;
-}
-
-type ExecFileSyncLike = (command: string, args: string[], options: ExecFileSyncOptions) => string;
-
-export interface ContainerInspectOptions {
-  exec?: ExecFileSyncLike;
+function inspectFormat(containerName: string, format: string, exec: RunDocker): string | null {
+  try {
+    // LC_ALL=C pins docker's own CLI error text to English regardless of the
+    // runner's system locale, since isContainerNotFoundError depends on
+    // matching that text.
+    return exec(["inspect", "--format", format, containerName], {
+      ...process.env,
+      LC_ALL: "C",
+    }).trim();
+  } catch (e) {
+    if (isContainerNotFoundError(e)) return null;
+    throw new SandboxError(
+      describeDockerFailure(e, { operation: "docker inspect" }),
+      "DOCKER_UNAVAILABLE",
+    );
+  }
 }
 
 /**
@@ -96,28 +115,11 @@ export interface ContainerInspectOptions {
  */
 export function getContainerNetns(
   containerName: string,
-  { exec = execFileSync as unknown as ExecFileSyncLike }: ContainerInspectOptions = {},
+  { exec = captureDockerViaExec }: ContainerInspectOptions = {},
 ): string | null {
-  let out;
-  try {
-    out = exec(
-      "docker",
-      ["inspect", "--format", "{{.NetworkSettings.SandboxKey}}", containerName],
-      // LC_ALL=C pins docker's own CLI error text to English regardless of
-      // the runner's system locale, since isContainerNotFoundError below
-      // depends on matching that text.
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LC_ALL: "C" } },
-    ).trim();
-  } catch (e) {
-    if (isContainerNotFoundError(e)) return null;
-    throw new SandboxError(
-      describeDockerFailure(e, { operation: "docker inspect" }),
-      "DOCKER_UNAVAILABLE",
-    );
-  }
   // Empty when the container exists but has no network sandbox assigned
   // (e.g. it's stopped) -- same "nothing to wire into" outcome as not found.
-  return out || null;
+  return inspectFormat(containerName, "{{.NetworkSettings.SandboxKey}}", exec) || null;
 }
 
 /**
@@ -127,24 +129,10 @@ export function getContainerNetns(
  */
 export function readContainerOwner(
   containerName: string,
-  { exec = execFileSync as unknown as ExecFileSyncLike }: ContainerInspectOptions = {},
+  { exec = captureDockerViaExec }: ContainerInspectOptions = {},
 ): string | null {
-  let out;
-  try {
-    out = exec(
-      "docker",
-      ["inspect", "--format", `{{index .Config.Labels "${OWNER_LABEL}"}}`, containerName],
-      // LC_ALL=C for the same reason as getContainerNetns.
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LC_ALL: "C" } },
-    ).trim();
-  } catch (e) {
-    if (isContainerNotFoundError(e)) return null;
-    throw new SandboxError(
-      describeDockerFailure(e, { operation: "docker inspect" }),
-      "DOCKER_UNAVAILABLE",
-    );
-  }
+  const owner = inspectFormat(containerName, `{{index .Config.Labels "${OWNER_LABEL}"}}`, exec);
   // Go's template prints this for a lookup in a container that carries no
   // labels at all, where a container with other labels prints "".
-  return out === "<no value>" ? "" : out;
+  return owner === "<no value>" ? "" : owner;
 }

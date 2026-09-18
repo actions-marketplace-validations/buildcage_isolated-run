@@ -17705,31 +17705,33 @@ function isContainerNotFoundError(e) {
 	let err = e && typeof e == "object" ? e : {}, text = `${err.stderr ?? ""} ${err.message ?? ""}`.toLowerCase();
 	return text.includes("no such object") || text.includes("no such container");
 }
-function getContainerNetns(containerName, { exec = node_child_process.execFileSync } = {}) {
-	let out;
+const captureDockerViaExec$1 = (args, env) => (0, node_child_process.execFileSync)("docker", args, {
+	encoding: "utf8",
+	env,
+	stdio: [
+		"ignore",
+		"pipe",
+		"pipe"
+	]
+});
+function inspectFormat(containerName, format, exec) {
 	try {
-		out = exec("docker", [
+		return exec([
 			"inspect",
 			"--format",
-			"{{.NetworkSettings.SandboxKey}}",
+			format,
 			containerName
 		], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"pipe",
-				"pipe"
-			],
-			env: {
-				...process.env,
-				LC_ALL: "C"
-			}
+			...process.env,
+			LC_ALL: "C"
 		}).trim();
 	} catch (e) {
 		if (isContainerNotFoundError(e)) return null;
 		throw new SandboxError(describeDockerFailure(e, { operation: "docker inspect" }), "DOCKER_UNAVAILABLE");
 	}
-	return out || null;
+}
+function getContainerNetns(containerName, { exec = captureDockerViaExec$1 } = {}) {
+	return inspectFormat(containerName, "{{.NetworkSettings.SandboxKey}}", exec) || null;
 }
 //#endregion
 //#region src/lib/host-addresses.ts

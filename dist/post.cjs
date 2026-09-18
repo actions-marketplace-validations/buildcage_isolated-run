@@ -252,31 +252,34 @@ function isContainerNotFoundError(e) {
 	let err = e && typeof e == "object" ? e : {}, text = `${err.stderr ?? ""} ${err.message ?? ""}`.toLowerCase();
 	return text.includes("no such object") || text.includes("no such container");
 }
-function readContainerOwner(containerName, { exec = node_child_process.execFileSync } = {}) {
-	let out;
+const captureDockerViaExec = (args, env) => (0, node_child_process.execFileSync)("docker", args, {
+	encoding: "utf8",
+	env,
+	stdio: [
+		"ignore",
+		"pipe",
+		"pipe"
+	]
+});
+function inspectFormat(containerName, format, exec) {
 	try {
-		out = exec("docker", [
+		return exec([
 			"inspect",
 			"--format",
-			"{{index .Config.Labels \"io.buildcage.owner\"}}",
+			format,
 			containerName
 		], {
-			encoding: "utf8",
-			stdio: [
-				"ignore",
-				"pipe",
-				"pipe"
-			],
-			env: {
-				...process.env,
-				LC_ALL: "C"
-			}
+			...process.env,
+			LC_ALL: "C"
 		}).trim();
 	} catch (e) {
 		if (isContainerNotFoundError(e)) return null;
 		throw new SandboxError(describeDockerFailure(e, { operation: "docker inspect" }), "DOCKER_UNAVAILABLE");
 	}
-	return out === "<no value>" ? "" : out;
+}
+function readContainerOwner(containerName, { exec = captureDockerViaExec } = {}) {
+	let owner = inspectFormat(containerName, "{{index .Config.Labels \"io.buildcage.owner\"}}", exec);
+	return owner === "<no value>" ? "" : owner;
 }
 //#endregion
 //#region src/core/lib/docker/compose-project-name.ts
