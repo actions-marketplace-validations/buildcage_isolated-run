@@ -56,8 +56,9 @@ export interface ReportStepOptions {
  * artifact if one was asked for.
  *
  * Never throws. The step's exit code is the isolated command's own, so a
- * report that could not be fetched is a warning and nothing more -- and the
- * proxy teardown that runs after this call depends on reaching it.
+ * failure anywhere here is a warning naming the step that failed, and nothing
+ * more -- and the proxy teardown that runs after this call depends on
+ * reaching it.
  */
 export async function reportStepTraffic(
   {
@@ -81,8 +82,14 @@ export async function reportStepTraffic(
     readStepLabel,
   } = { ...realDeps, ...overrides };
 
+  // Named so the warning below says which step failed. One catch, not three:
+  // every failure here has the same consequence, and only the wording differs.
+  let phase = "fetch sandbox report";
   try {
     const report = await fetchReport(containerName, parameters, proxyEngine);
+    // Moved on as soon as the fetch is done, so the two input reads below are
+    // attributed to the step that uses them rather than to the fetch.
+    phase = "write the report summary";
     const failOnBlocked = readFailOnBlocked();
     const wantsArtifact = wantsTrafficArtifact();
     await writeReportSummary(
@@ -101,9 +108,10 @@ export async function reportStepTraffic(
       wantsArtifact && report.engine === "inspect",
     );
     if (wantsArtifact) {
+      phase = "upload the traffic artifact";
       await uploadTrafficArtifact(report, containerName, annotation);
     }
   } catch (e) {
-    annotation.warning(`Failed to fetch sandbox report: ${errorMessage(e)}`);
+    annotation.warning(`Failed to ${phase}: ${errorMessage(e)}`);
   }
 }

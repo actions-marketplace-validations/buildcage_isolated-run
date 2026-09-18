@@ -64918,9 +64918,11 @@ async function reportStepTraffic({ containerName, proxyEngine, parameters, annot
 	let { fetchReport, readActionVersion, writeReportSummary, wantsTrafficArtifact, uploadTrafficArtifact, readFailOnBlocked, readStepLabel } = {
 		...realDeps,
 		...overrides
-	};
+	}, phase = "fetch sandbox report";
 	try {
-		let report = await fetchReport(containerName, parameters, proxyEngine), failOnBlocked = readFailOnBlocked(), wantsArtifact = wantsTrafficArtifact();
+		let report = await fetchReport(containerName, parameters, proxyEngine);
+		phase = "write the report summary";
+		let failOnBlocked = readFailOnBlocked(), wantsArtifact = wantsTrafficArtifact();
 		await writeReportSummary(report, annotation, {
 			actionRepo,
 			actionRef,
@@ -64928,9 +64930,9 @@ async function reportStepTraffic({ containerName, proxyEngine, parameters, annot
 			actionVersion: readActionVersion(containerName, proxyEngine),
 			stepLabel: readStepLabel(),
 			failOnBlocked
-		}, wantsArtifact && report.engine === "inspect"), wantsArtifact && await uploadTrafficArtifact(report, containerName, annotation);
+		}, wantsArtifact && report.engine === "inspect"), wantsArtifact && (phase = "upload the traffic artifact", await uploadTrafficArtifact(report, containerName, annotation));
 	} catch (e) {
-		annotation.warning(`Failed to fetch sandbox report: ${errorMessage(e)}`);
+		annotation.warning(`Failed to ${phase}: ${errorMessage(e)}`);
 	}
 }
 //#endregion
