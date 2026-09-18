@@ -18992,13 +18992,19 @@ async function stopSandboxProxy({ composeFile, projectName, composeEnv, annotati
 	});
 }
 //#endregion
+//#region src/core/lib/report/render/communication-section.ts
+const COMMUNICATION_DETAILS_OPEN = "<details>\n<summary>💬 Communication details</summary>\n\n", COMMUNICATION_DETAILS_CLOSE = "</details>\n";
+function wrapCommunicationDetails(body) {
+	return `\n${COMMUNICATION_DETAILS_OPEN}${body}${COMMUNICATION_DETAILS_CLOSE}`;
+}
+//#endregion
 //#region src/core/lib/report/render/truncate-communication-details.ts
 const SAFETY_MARGIN_BYTES = 8192;
 function truncateForStepSummary(markdown, artifactAvailable, limitBytes = 1048576) {
 	if (Buffer.byteLength(markdown, "utf8") <= limitBytes - SAFETY_MARGIN_BYTES) return markdown;
-	let openAt = markdown.indexOf("<details>\n<summary>💬 Communication details</summary>\n\n");
+	let openAt = markdown.indexOf(COMMUNICATION_DETAILS_OPEN);
 	if (openAt === -1) return markdown;
-	let bodyStart = openAt + 55, closeAt = markdown.indexOf("</details>\n", bodyStart);
+	let bodyStart = openAt + 55, closeAt = markdown.indexOf(COMMUNICATION_DETAILS_CLOSE, bodyStart);
 	if (closeAt === -1) return markdown;
 	let before = markdown.slice(0, bodyStart), body = markdown.slice(bodyStart, closeAt), after = markdown.slice(closeAt), note = truncationNote(artifactAvailable), fixedBytes = Buffer.byteLength(before, "utf8") + Buffer.byteLength(after, "utf8") + Buffer.byteLength(note, "utf8"), budget = Math.max(0, limitBytes - SAFETY_MARGIN_BYTES - fixedBytes), kept = "", usedBytes = 0, fenceOpen = !1;
 	for (let line of body.split("\n")) {
@@ -19372,7 +19378,7 @@ function formatElapsedFixed(elapsedSeconds) {
 //#region src/core/lib/report/render/inspect-details.ts
 function renderInspectDetails(timeline, startedAt) {
 	let connected = connectedHosts(timeline), shown = timeline.filter((e) => !isRedundantDns(e, connected));
-	return shown.length === 0 ? "" : `\n<details>\n<summary>💬 Communication details</summary>\n\n\`\`\`\n${shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n"}\`\`\`\n\n</details>\n`;
+	return shown.length === 0 ? "" : wrapCommunicationDetails(`\`\`\`\n${shown.map((event) => renderEvent(event, startedAt)).join("\n") + "\n"}\`\`\`\n\n`);
 }
 const MARK = {
 	block: "🚫",
@@ -19443,6 +19449,17 @@ function splitHostPort(authority) {
 		port: authority.slice(colon + 1)
 	};
 }
+function parseObservedUrl(url) {
+	let match = /^(https?):\/\/([^/?#]+)([^?#]*)/.exec(url);
+	if (!match) return null;
+	let [, scheme, authority, path] = match, { host, port } = splitHostPort(authority);
+	return {
+		scheme,
+		host,
+		port: port ?? DEFAULT_PORT[scheme],
+		path: path || "/"
+	};
+}
 //#endregion
 //#region src/core/lib/report/render/inspect-example.ts
 const METHOD_ORDER = [
@@ -19456,13 +19473,13 @@ const METHOD_ORDER = [
 ];
 function parseRequest(request) {
 	if (request.url === void 0 || request.method === void 0) return null;
-	let match = /^(https?):\/\/([^/?#]+)([^?#]*)/.exec(request.url);
-	if (!match) return null;
-	let [, scheme, authority, rawPath] = match, { host, port } = splitHostPort(authority);
+	let parsed = parseObservedUrl(request.url);
+	if (!parsed) return null;
+	let { scheme, host, port, path } = parsed;
 	return {
-		origin: port && port === DEFAULT_PORT[scheme] ? `${scheme}://${host}` : `${scheme}://${authority}`,
+		origin: port === DEFAULT_PORT[scheme] ? `${scheme}://${host}` : `${scheme}://${host}:${port}`,
 		method: request.method,
-		path: rawPath || "/"
+		path
 	};
 }
 function commonPrefixSegments(paths) {
@@ -19595,19 +19612,19 @@ function createIncrementalAggregator() {
 	};
 }
 //#endregion
-//#region src/core/lib/log/haproxy.ts
-const logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
+//#region src/core/lib/log/start-marker.ts
+const PROXY_START_MARKER = "buildcage haproxy starting", logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
 async function scanHaproxyLog(lines, isAudit) {
-	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, logHeadIntact, unparsed = 0;
+	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, headIntact, unparsed = 0;
 	for await (let line of lines) {
 		let m = line.match(logPattern);
 		if (!m) {
 			let trimmed = line.trim();
 			if (trimmed === "") continue;
-			logHeadIntact ??= trimmed.startsWith("buildcage haproxy starting"), trimmed.includes("buildcage [") && unparsed++;
+			headIntact ??= trimmed.startsWith(PROXY_START_MARKER), trimmed.includes("buildcage [") && unparsed++;
 			continue;
 		}
-		logHeadIntact ??= !1;
+		headIntact ??= !1;
 		let [, decision, ruleType, hostPort, reason] = m, { host, port } = splitHostPort(hostPort), entry = {
 			host,
 			port: port ?? "0",
@@ -19620,7 +19637,7 @@ async function scanHaproxyLog(lines, isAudit) {
 		passed: passed.toSortedArray(),
 		blocked: blocked.toSortedArray(),
 		blockedCount,
-		logHeadIntact: logHeadIntact ?? !1,
+		headIntact: headIntact ?? !1,
 		unparsed
 	};
 }
@@ -19652,19 +19669,19 @@ function targetOf(row) {
 //#endregion
 //#region src/core/lib/report/build/universal.ts
 async function buildUniversalReportData(lines, parameters) {
-	let { passed, blocked: blockedRawRows, blockedCount, logHeadIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
+	let { passed, blocked: blockedRawRows, blockedCount, headIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
 	return {
 		engine: "universal",
 		parameters,
 		passed,
 		blocked: annotateKnownBlocked(blockedRawRows, parameters.knownBlockedRules),
 		blockedCount,
-		logLooksPlausible: logHeadIntact && unparsed === 0
+		logLooksPlausible: headIntact && unparsed === 0
 	};
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = /^buildcage haproxy starting (\d+)$/;
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
 function timeOf(stamp) {
 	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
 	return Number.isNaN(parsed) ? 0 : parsed / 1e3;
@@ -19689,10 +19706,8 @@ function reasonFor(logged, terminationState) {
 function actionFor(refused, isAudit) {
 	return refused ? "block" : isAudit ? "audit" : "allow";
 }
-const URL_AUTHORITY = /^https?:\/\/([^/?#]+)/;
 function hostOf(url) {
-	let match = URL_AUTHORITY.exec(url);
-	return match ? splitHostPort(match[1]).host : url;
+	return parseObservedUrl(url)?.host ?? url;
 }
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
