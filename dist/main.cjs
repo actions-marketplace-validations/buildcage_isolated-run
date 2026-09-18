@@ -17688,12 +17688,20 @@ function isLikelySlimRunner(_env = process.env, _exists = node_fs.existsSync) {
 }
 //#endregion
 //#region src/lib/container.ts
+const CONTAINER_NAME_PREFIX = "buildcage-proxy-";
 function generateContainerName() {
-	return `buildcage-proxy-${(0, node_crypto.randomBytes)(4).toString("hex")}`;
+	return `${CONTAINER_NAME_PREFIX}${(0, node_crypto.randomBytes)(4).toString("hex")}`;
 }
 const CONTAINER_NAME_PATTERN = /^buildcage-proxy-[0-9a-f]{8}$/;
 function isValidContainerName(name) {
 	return CONTAINER_NAME_PATTERN.test(name);
+}
+const CONTAINER_NAME_PREFIX_RE = RegExp(`^${CONTAINER_NAME_PREFIX}`);
+function netnsNameFor(containerName) {
+	return containerName.replace(CONTAINER_NAME_PREFIX_RE, "buildcage-sandbox-");
+}
+function scratchDirNameFor(containerName) {
+	return containerName.replace(CONTAINER_NAME_PREFIX_RE, "sandbox-");
 }
 const OWNER_TOKEN_VARS = [
 	"GITHUB_RUN_ID",
@@ -17886,7 +17894,7 @@ function assertUnderScratchBase(dir) {
 }
 function scratchDirFor(containerName) {
 	if (!isValidContainerName(containerName)) throw new SandboxError(`Refusing to derive a scratch dir from container name ${JSON.stringify(containerName)}.`, "CONTAINER_NAME_INVALID");
-	return (0, node_path.join)(SANDBOX_SCRATCH_BASE, containerName.replace(/^buildcage-proxy-/, "sandbox-"));
+	return (0, node_path.join)(SANDBOX_SCRATCH_BASE, scratchDirNameFor(containerName));
 }
 function ensureOwnScratchBase(base = SANDBOX_SCRATCH_BASE, { mkdir = defaultMkdir, lstat = node_fs.lstatSync } = {}) {
 	try {
@@ -18789,7 +18797,7 @@ function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, 
 //#endregion
 //#region src/lib/sandbox/sandboxed-command.ts
 init_core();
-const realDeps$2 = {
+const PROXY_IP = "172.20.0.1", realDeps$2 = {
 	withScratchDir,
 	extractRuncBootstrap,
 	extractCaCert,
@@ -18808,64 +18816,87 @@ const realDeps$2 = {
 	mkdir: node_fs.mkdirSync,
 	info
 };
-function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThroughPaths, env, proxyEngine, filesystemMode, overlayRoots }, overrides = {}) {
-	let { withScratchDir, extractRuncBootstrap, extractCaCert, writeCaTrustFiles, createOverlayScratchDirs, writeResolvConf, writeRunScript, writeEnvLoader, listHostMounts, resolveSandboxGid, buildOciConfig, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated, mkdir, info } = {
+function extractBootstrap(containerName, dir, { extractRuncBootstrap }) {
+	try {
+		return extractRuncBootstrap({
+			containerName,
+			destDir: dir
+		});
+	} catch (e) {
+		throw e instanceof SandboxError ? e : new SandboxError(`Failed to extract runc/gen-seccomp-profile from the proxy image: ${errorMessage(e)}`, "RUNC_EXTRACT_FAILED");
+	}
+}
+function extractCaTrust(containerName, dir, { extractCaCert, writeCaTrustFiles }) {
+	try {
+		return writeCaTrustFiles(extractCaCert(containerName, dir), dir);
+	} catch (e) {
+		throw e instanceof SandboxError ? e : new SandboxError(`Failed to extract the proxy's CA from the proxy image: ${errorMessage(e)}`, "CA_EXTRACT_FAILED");
+	}
+}
+function writeBundleFiles(dir, { runInput, filesystemMode, overlayRoots }, { createOverlayScratchDirs, writeResolvConf, writeRunScript, writeEnvLoader, mkdir }) {
+	let overlayScratchPaths = filesystemMode === "ephemeral" ? createOverlayScratchDirs(dir, overlayRoots) : [], resolvConfPath = writeResolvConf(PROXY_IP, dir), execDir = (0, node_path.join)(dir, "exec");
+	return mkdir(execDir, { mode: 448 }), {
+		overlayScratchPaths,
+		resolvConfPath,
+		execDir,
+		scriptPath: writeRunScript(runInput, execDir),
+		envLoaderPath: writeEnvLoader(execDir)
+	};
+}
+function resolveIdentity(env, { resolveSandboxGid, info }) {
+	let { gid, substitutedFrom } = resolveSandboxGid(process.getgid(), env);
+	return substitutedFrom !== void 0 && info(`buildcage: sandbox GID substituted (${substitutedFrom} -> ${gid}) -- the runner's primary group grants container/VM runtime access`), {
+		uid: process.getuid(),
+		gid
+	};
+}
+function assembleBundle(dir, options, deps) {
+	let { containerName, writeThroughPaths, env, proxyEngine, filesystemMode } = options, { listHostMounts, buildOciConfig } = deps, { runcPath, seccompProfile, baseSpec } = extractBootstrap(containerName, dir, deps), caTrust = proxyEngine === "inspect" ? extractCaTrust(containerName, dir, deps) : void 0, netnsName = netnsNameFor(containerName), rootfsBindDir = (0, node_path.join)(dir, "rootfs"), config;
+	try {
+		let { overlayScratchPaths, resolvConfPath, execDir, scriptPath, envLoaderPath } = writeBundleFiles(dir, options, deps), hostMounts = listHostMounts();
+		config = buildOciConfig(baseSpec, {
+			identity: resolveIdentity(env, deps),
+			writable: {
+				workdir: env.GITHUB_WORKSPACE || "",
+				home: env.HOME || "",
+				runnerTemp: env.RUNNER_TEMP || "",
+				writablePaths: writeThroughPaths
+			},
+			ephemeral: filesystemMode === "ephemeral" ? {
+				overlayRoots: overlayScratchPaths,
+				allowWrite: writeThroughPaths
+			} : void 0,
+			runtime: {
+				netnsPath: `/var/run/netns/${netnsName}`,
+				rootfsBindDir,
+				resolvConfPath,
+				seccompProfile,
+				execDir,
+				envLoaderPath,
+				scriptPath,
+				hostMounts
+			},
+			env,
+			caTrust
+		});
+	} catch (e) {
+		throw e instanceof SandboxError ? e : e instanceof WritablePathConflictError ? new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT") : new SandboxError(`Failed to build the sandbox's OCI bundle: ${errorMessage(e)}`, "OCI_CONFIG_BUILD_FAILED");
+	}
+	return {
+		config,
+		runcPath,
+		caTrust,
+		netnsName,
+		rootfsBindDir
+	};
+}
+function runSandboxedCommand(options, overrides = {}) {
+	let { containerName, proxyNetns, env, filesystemMode, overlayRoots } = options, deps = {
 		...realDeps$2,
 		...overrides
-	}, dns = "172.20.0.1";
+	}, { withScratchDir, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated } = deps;
 	return withScratchDir((dir) => {
-		let runcPath, seccompProfile, baseSpec;
-		try {
-			({runcPath, seccompProfile, baseSpec} = extractRuncBootstrap({
-				containerName,
-				destDir: dir
-			}));
-		} catch (e) {
-			throw e instanceof SandboxError ? e : new SandboxError(`Failed to extract runc/gen-seccomp-profile from the proxy image: ${errorMessage(e)}`, "RUNC_EXTRACT_FAILED");
-		}
-		let caTrust;
-		if (proxyEngine === "inspect") try {
-			let caCertPath = extractCaCert(containerName, dir);
-			caTrust = writeCaTrustFiles(caCertPath, dir);
-		} catch (e) {
-			throw e instanceof SandboxError ? e : new SandboxError(`Failed to extract the proxy's CA from the proxy image: ${errorMessage(e)}`, "CA_EXTRACT_FAILED");
-		}
-		let workdir = env.GITHUB_WORKSPACE || "", home = env.HOME || "", netnsName = containerName.replace(/^buildcage-proxy-/, "buildcage-sandbox-"), rootfsBindDir = (0, node_path.join)(dir, "rootfs"), config;
-		try {
-			let overlayScratchPaths = filesystemMode === "ephemeral" ? createOverlayScratchDirs(dir, overlayRoots) : [], resolvConfPath = writeResolvConf(dns, dir), execDir = (0, node_path.join)(dir, "exec");
-			mkdir(execDir, { mode: 448 });
-			let scriptPath = writeRunScript(runInput, execDir), envLoaderPath = writeEnvLoader(execDir), hostMounts = listHostMounts(), { gid, substitutedFrom } = resolveSandboxGid(process.getgid(), env);
-			substitutedFrom !== void 0 && info(`buildcage: sandbox GID substituted (${substitutedFrom} -> ${gid}) -- the runner's primary group grants container/VM runtime access`), config = buildOciConfig(baseSpec, {
-				identity: {
-					uid: process.getuid(),
-					gid
-				},
-				writable: {
-					workdir,
-					home,
-					runnerTemp: env.RUNNER_TEMP || "",
-					writablePaths: writeThroughPaths
-				},
-				ephemeral: filesystemMode === "ephemeral" ? {
-					overlayRoots: overlayScratchPaths,
-					allowWrite: writeThroughPaths
-				} : void 0,
-				runtime: {
-					netnsPath: `/var/run/netns/${netnsName}`,
-					rootfsBindDir,
-					resolvConfPath,
-					seccompProfile,
-					execDir,
-					envLoaderPath,
-					scriptPath,
-					hostMounts
-				},
-				env,
-				caTrust
-			});
-		} catch (e) {
-			throw e instanceof SandboxError ? e : e instanceof WritablePathConflictError ? new SandboxError(errorMessage(e), "FILESYSTEM_INPUT_CONFLICT") : new SandboxError(`Failed to build the sandbox's OCI bundle: ${errorMessage(e)}`, "OCI_CONFIG_BUILD_FAILED");
-		}
+		let { config, runcPath, caTrust, netnsName, rootfsBindDir } = assembleBundle(dir, options, deps);
 		return writeOciConfig(config, dir), runIsolated({
 			envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust)),
 			runcPath,
@@ -18874,8 +18905,8 @@ function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThrough
 			containerId: containerName,
 			netnsName,
 			rootfsBindDir,
-			gateway: "172.20.0.1",
-			dns,
+			gateway: PROXY_IP,
+			dns: PROXY_IP,
 			targetIp: "172.20.0.101"
 		});
 	}, containerName, filesystemMode === "ephemeral" ? overlayRoots : void 0);

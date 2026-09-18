@@ -5,13 +5,15 @@ import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/d
 import type { RunDocker } from "#core/lib/docker/client.ts";
 import { SandboxError } from "./errors.ts";
 
+const CONTAINER_NAME_PREFIX = "buildcage-proxy-";
+
 /**
  * Each `run` step gets its own throwaway proxy container (start -> run ->
  * report -> stop) rather than reusing one across steps, so a random name
  * avoids collisions across concurrent/successive steps by construction.
  */
 export function generateContainerName(): string {
-  return `buildcage-proxy-${randomBytes(4).toString("hex")}`;
+  return `${CONTAINER_NAME_PREFIX}${randomBytes(4).toString("hex")}`;
 }
 
 /**
@@ -23,6 +25,32 @@ export const CONTAINER_NAME_PATTERN = /^buildcage-proxy-[0-9a-f]{8}$/;
 
 export function isValidContainerName(name: string): boolean {
   return CONTAINER_NAME_PATTERN.test(name);
+}
+
+/**
+ * A step's other names are derived from its container's by swapping that
+ * prefix, so `docker ps`, `ip netns` and the scratch dir all read as one
+ * step. They live together here because the swap has to work the same way in
+ * both directions: the post step reconstructs the scratch dir from the
+ * container name alone, long after the step that made it is gone.
+ *
+ * The Compose project name comes from the same container name but is hashed
+ * rather than prefix-swapped, since Compose constrains the charset -- see
+ * deriveProjectName in core.
+ */
+const CONTAINER_NAME_PREFIX_RE = new RegExp(`^${CONTAINER_NAME_PREFIX}`);
+
+/** The runc container id and `ip netns` name for the sandbox this container
+ *  fronts -- a different ID namespace from Docker's, named after the container
+ *  so `ip netns` and `docker ps` stay correlated per step. */
+export function netnsNameFor(containerName: string): string {
+  return containerName.replace(CONTAINER_NAME_PREFIX_RE, "buildcage-sandbox-");
+}
+
+/** The scratch dir's own name under SANDBOX_SCRATCH_BASE; scratchDirFor is
+ *  what resolves it to a path, and validates the name first. */
+export function scratchDirNameFor(containerName: string): string {
+  return containerName.replace(CONTAINER_NAME_PREFIX_RE, "sandbox-");
 }
 
 /** Label carrying the identity of the step that started the container. */
