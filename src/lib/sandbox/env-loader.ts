@@ -1,7 +1,7 @@
-import { annotate } from "#core/lib/actions/annotation.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { caTrustAdditions, type CaTrustFiles } from "./ca-trust.ts";
+import type { Warn } from "./scratch-dir.ts";
 
 // The step environment reaches the sandbox over stdin instead of through
 // config.json, so `env:` secrets never land on the runner's disk. Records
@@ -72,6 +72,7 @@ function isRunnerOnly(key: string): boolean {
 export function resolveSandboxEnv(
   env: NodeJS.ProcessEnv,
   caTrust?: CaTrustFiles,
+  warn?: Warn,
 ): Record<string, string> {
   const merged = { ...env, ...(caTrust ? caTrustAdditions(caTrust, env).env : undefined) };
   const resolved: Record<string, string> = {};
@@ -85,7 +86,7 @@ export function resolveSandboxEnv(
     else resolved[key] = value;
   }
   if (skipped.length > 0) {
-    annotate.warning(
+    warn?.(
       `Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`,
     );
   }

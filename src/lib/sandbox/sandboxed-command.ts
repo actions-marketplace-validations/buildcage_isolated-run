@@ -17,7 +17,7 @@ import { WritablePathConflictError } from "./paths.ts";
 import { writeRunScript, writeResolvConf, writeOciConfig } from "./oci-files.ts";
 import { buildEnvBlob, resolveSandboxEnv, writeEnvLoader } from "./env-loader.ts";
 import { runIsolated } from "./run.ts";
-import { withScratchDir } from "./scratch-dir.ts";
+import { withScratchDir, type Warn } from "./scratch-dir.ts";
 import type { BuiltOciSpec, OverlayDirs } from "./types.ts";
 
 /**
@@ -89,6 +89,11 @@ export interface RunSandboxedCommandOptions {
   filesystemMode: FilesystemMode;
   /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots), not raw candidates. */
   overlayRoots: string[];
+  /** Where this module's own warnings go -- a scratch dir that would not
+   *  unmount, and the environment variables a shell cannot export. Passed in
+   *  rather than chosen here: which emitter those land on is the caller's
+   *  decision, not the sandbox's. */
+  warn: Warn;
 }
 
 /** What the bundle is built from; `proxyNetns` is only needed to run it. */
@@ -288,7 +293,7 @@ export function runSandboxedCommand(
   options: RunSandboxedCommandOptions,
   overrides: Partial<RunSandboxedCommandDeps> = {},
 ): number {
-  const { containerName, proxyNetns, env, filesystemMode, overlayRoots } = options;
+  const { containerName, proxyNetns, env, filesystemMode, overlayRoots, warn } = options;
   const deps = { ...realDeps, ...overrides };
   const { withScratchDir, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated } = deps;
 
@@ -302,7 +307,7 @@ export function runSandboxedCommand(
       writeOciConfig(config, dir);
 
       return runIsolated({
-        envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust)),
+        envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust, warn)),
         runcPath,
         proxyNetns,
         bundleDir: dir,
@@ -314,7 +319,10 @@ export function runSandboxedCommand(
         targetIp: SANDBOX_IP,
       });
     },
-    containerName,
-    filesystemMode === "ephemeral" ? overlayRoots : undefined,
+    {
+      containerName,
+      ephemeralRoots: filesystemMode === "ephemeral" ? overlayRoots : undefined,
+      warn,
+    },
   );
 }

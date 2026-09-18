@@ -17849,7 +17849,7 @@ function defaultRemove(path) {
 function defaultMkdir(path, mode) {
 	(0, node_fs.mkdirSync)(path, { mode });
 }
-function unmountAllUnder(dir, deps) {
+function unmountAllUnder(dir, deps, warn) {
 	let { readMountinfo = defaultReadMountinfo, exec = defaultExec$2 } = deps, mountPoints;
 	try {
 		mountPoints = parseMountsUnder(readMountinfo(), dir);
@@ -17864,7 +17864,7 @@ function unmountAllUnder(dir, deps) {
 			mountPoint
 		]);
 	} catch (e) {
-		annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+		warn?.(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
 function removeScratchDir(dir, deps) {
@@ -17885,8 +17885,8 @@ function removeScratchDir(dir, deps) {
 		}
 	}, { retryOn: (e) => e.code === "EBUSY" });
 }
-function cleanupScratchDir(dir, ephemeralRoots, deps = {}) {
-	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps), removeScratchDir(dir, deps);
+function cleanupScratchDir(dir, { ephemeralRoots, warn } = {}, deps = {}) {
+	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps, warn), removeScratchDir(dir, deps);
 }
 function assertUnderScratchBase(dir) {
 	let abs = (0, node_path.resolve)(dir);
@@ -17906,16 +17906,19 @@ function ensureOwnScratchBase(base = SANDBOX_SCRATCH_BASE, { mkdir = defaultMkdi
 	let st = lstat(base), uid = process.getuid();
 	if (!st.isDirectory() || st.uid !== uid || st.mode & 63) throw new SandboxError(`${base} exists but is not a private directory owned by uid ${uid} (mode ${(st.mode & 4095).toString(8)}, uid ${st.uid}). Another user may have created it. Remove it and re-run.`, "SCRATCH_BASE_UNSAFE");
 }
-function withScratchDir(fn, containerName, ephemeralRoots) {
+function withScratchDir(fn, { containerName, ephemeralRoots, warn } = {}) {
 	let dir;
-	ensureOwnScratchBase(), containerName ? (dir = scratchDirFor(containerName), cleanupScratchDir(dir), (0, node_fs.mkdirSync)(dir, {
+	ensureOwnScratchBase(), containerName ? (dir = scratchDirFor(containerName), cleanupScratchDir(dir, { warn }), (0, node_fs.mkdirSync)(dir, {
 		recursive: !0,
 		mode: 448
 	})) : dir = (0, node_fs.mkdtempSync)((0, node_path.join)(SANDBOX_SCRATCH_BASE, "sandbox-"));
 	try {
 		return fn(dir);
 	} finally {
-		cleanupScratchDir(dir, ephemeralRoots);
+		cleanupScratchDir(dir, {
+			ephemeralRoots,
+			warn
+		});
 	}
 }
 //#endregion
@@ -18713,13 +18716,13 @@ const ENV_BLOB_TERMINATOR = "__BUILDCAGE_ENV_END__", ENV_KEY = /^[A-Za-z_][A-Za-
 function isRunnerOnly(key) {
 	return RUNNER_ONLY_ENV_KEYS.has(key) || ACTION_INPUT_ENV_KEYS.has(key);
 }
-function resolveSandboxEnv(env, caTrust) {
+function resolveSandboxEnv(env, caTrust, warn) {
 	let merged = {
 		...env,
 		...caTrust ? caTrustAdditions(caTrust, env).env : void 0
 	}, resolved = {}, skipped = [];
 	for (let [key, value] of Object.entries(merged)) value !== void 0 && (isRunnerOnly(key) || (ENV_KEY.test(key) ? resolved[key] = value : skipped.push(key)));
-	return skipped.length > 0 && annotate.warning(`Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`), resolved;
+	return skipped.length > 0 && warn?.(`Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`), resolved;
 }
 function buildEnvBlob(resolved) {
 	let records = [...Object.entries(resolved).map(([k, v]) => `${k}=${v}`), ENV_BLOB_TERMINATOR];
@@ -18891,14 +18894,14 @@ function assembleBundle(dir, options, deps) {
 	};
 }
 function runSandboxedCommand(options, overrides = {}) {
-	let { containerName, proxyNetns, env, filesystemMode, overlayRoots } = options, deps = {
+	let { containerName, proxyNetns, env, filesystemMode, overlayRoots, warn } = options, deps = {
 		...realDeps$2,
 		...overrides
 	}, { withScratchDir, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated } = deps;
 	return withScratchDir((dir) => {
 		let { config, runcPath, caTrust, netnsName, rootfsBindDir } = assembleBundle(dir, options, deps);
 		return writeOciConfig(config, dir), runIsolated({
-			envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust)),
+			envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust, warn)),
 			runcPath,
 			proxyNetns,
 			bundleDir: dir,
@@ -18909,7 +18912,11 @@ function runSandboxedCommand(options, overrides = {}) {
 			dns: PROXY_IP,
 			targetIp: "172.20.0.101"
 		});
-	}, containerName, filesystemMode === "ephemeral" ? overlayRoots : void 0);
+	}, {
+		containerName,
+		ephemeralRoots: filesystemMode === "ephemeral" ? overlayRoots : void 0,
+		warn
+	});
 }
 //#endregion
 //#region src/core/lib/docker/health.ts
@@ -65016,7 +65023,8 @@ const realDeps = {
 	saveState,
 	info,
 	log: console.log,
-	notice: annotate.notice
+	notice: annotate.notice,
+	warn: annotate.warning
 };
 async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }, { verifyImageDigestOrThrow, log }) {
 	let digest = await verifyImageDigestOrThrow({
@@ -65036,7 +65044,7 @@ function saveCleanupState(env, { containerName, filesystemMode, overlayRoots }, 
 	env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots)));
 }
 async function runSandboxStep(env, overrides = {}) {
-	let { readRunCommand, readEngineInputs, readFilesystemInputs, readRuleInputs, validateFilesystemInputs, checkPasswordlessSudo, checkOverlayfsSupport, createAnnotation, resolveFilesystemPlan, readLocalImageOverride, verifyImageDigestOrThrow, checkUrlAndTlsRuleSupport, logRules, withLogGroup, generateContainerName, getContainerNetns, startSandboxProxy, stopSandboxProxy, runSandboxedCommand, reportStepTraffic, removeCreatedDirsIfEmpty, saveState, info, log, notice } = {
+	let { readRunCommand, readEngineInputs, readFilesystemInputs, readRuleInputs, validateFilesystemInputs, checkPasswordlessSudo, checkOverlayfsSupport, createAnnotation, resolveFilesystemPlan, readLocalImageOverride, verifyImageDigestOrThrow, checkUrlAndTlsRuleSupport, logRules, withLogGroup, generateContainerName, getContainerNetns, startSandboxProxy, stopSandboxProxy, runSandboxedCommand, reportStepTraffic, removeCreatedDirsIfEmpty, saveState, info, log, notice, warn } = {
 		...realDeps,
 		...overrides
 	}, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs(notice);
@@ -65100,7 +65108,8 @@ async function runSandboxStep(env, overrides = {}) {
 				env,
 				proxyEngine,
 				filesystemMode,
-				overlayRoots
+				overlayRoots,
+				warn
 			});
 		} finally {
 			await reportStepTraffic({

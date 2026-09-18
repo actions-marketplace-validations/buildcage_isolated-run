@@ -39,6 +39,7 @@ const mocks = {
   info: vi.fn(),
   log: vi.fn(),
   notice: vi.fn(),
+  warn: vi.fn(),
 };
 
 // A bag of doubles, not a partially-typed stand-in: every step is replaced, so
@@ -243,6 +244,15 @@ describe("runSandboxStep", () => {
     expect(mocks.readEngineInputs.mock.calls[0][0]).toBe(mocks.notice);
     expect(mocks.readFilesystemInputs.mock.calls[0][0]).toBe(mocks.notice);
     expect(mocks.readEngineInputs.mock.calls[0][0]).not.toBe(annotation.notice);
+  });
+
+  // The sandbox warns about the step's own environment and about a scratch dir
+  // it could not unmount; both matter whether or not a report is being written.
+  it("gives the sandbox the emitter the annotation gate cannot suppress", async () => {
+    await runSandboxStep({ ...ENV, GITHUB_STEP_SUMMARY: "" }, deps);
+
+    expect(mocks.runSandboxedCommand.mock.calls[0][0].warn).toBe(mocks.warn);
+    expect(mocks.runSandboxedCommand.mock.calls[0][0].warn).not.toBe(annotation.warning);
   });
 
   it("suppresses annotations when this is not a real action run", async () => {

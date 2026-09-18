@@ -160,7 +160,7 @@ describe("withScratchDir", () => {
 
   it("logs a discard line for ephemeralRoots on the way out, once", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    withScratchDir(() => {}, undefined, ["/home/runner", "/tmp"]);
+    withScratchDir(() => {}, { ephemeralRoots: ["/home/runner", "/tmp"] });
     const discardCalls = log.mock.calls.filter((args) =>
       String(args[0]).startsWith("Discarded ephemeral writes under"),
     );
@@ -177,7 +177,7 @@ describe("withScratchDir", () => {
 describe("cleanupScratchDir", () => {
   it("does not log when ephemeralRoots is an empty array", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    withScratchDir(() => {}, undefined, []);
+    withScratchDir(() => {}, { ephemeralRoots: [] });
     expect(log.mock.calls.some((args) => String(args[0]).startsWith("Discarded"))).toBe(false);
     log.mockRestore();
   });
@@ -191,7 +191,7 @@ describe("cleanupScratchDir", () => {
   it("refuses to touch a path resolving to the scratch base's parent", () => {
     const exec: [string, string[]][] = [];
     const deps = { exec: (command: string, args: string[]) => void exec.push([command, args]) };
-    expect(() => cleanupScratchDir("/", undefined, deps)).toThrow(/not a scratch dir under/);
+    expect(() => cleanupScratchDir("/", {}, deps)).toThrow(/not a scratch dir under/);
     expect(exec).toStrictEqual([]);
   });
 
@@ -274,7 +274,7 @@ describe("cleanupScratchDir — sudo rm fallback on EACCES", () => {
   it("re-checks ownership and then deletes as root", () => {
     const h = host({ removeFailures: [fsError("EACCES")] });
 
-    cleanupScratchDir(SCRATCH_DIR, undefined, h.deps);
+    cleanupScratchDir(SCRATCH_DIR, {}, h.deps);
 
     expect(h.exec).toStrictEqual([["sudo", ["-n", "rm", "-rf", SCRATCH_DIR]]]);
   });
@@ -288,9 +288,7 @@ describe("cleanupScratchDir — sudo rm fallback on EACCES", () => {
       owner: { isDirectory: () => false, uid: process.getuid!(), mode: 0o100600 },
     });
 
-    expect(() => cleanupScratchDir(SCRATCH_DIR, undefined, h.deps)).toThrow(
-      /Refusing to sudo rm -rf/,
-    );
+    expect(() => cleanupScratchDir(SCRATCH_DIR, {}, h.deps)).toThrow(/Refusing to sudo rm -rf/);
     expect(h.exec).toStrictEqual([]);
   });
 
@@ -301,7 +299,7 @@ describe("cleanupScratchDir — sudo rm fallback on EACCES", () => {
     });
 
     try {
-      cleanupScratchDir(SCRATCH_DIR, undefined, h.deps);
+      cleanupScratchDir(SCRATCH_DIR, {}, h.deps);
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SandboxError);
@@ -315,14 +313,14 @@ describe("cleanupScratchDir — EBUSY retry", () => {
   it("retries and succeeds once the lazily-detached mount has finished going away", () => {
     const h = host({ removeFailures: [fsError("EBUSY")] });
 
-    expect(() => cleanupScratchDir(SCRATCH_DIR, undefined, h.deps)).not.toThrow();
+    expect(() => cleanupScratchDir(SCRATCH_DIR, {}, h.deps)).not.toThrow();
     expect(h.removed).toStrictEqual([SCRATCH_DIR]);
   });
 
   it("gives up after the last attempt rather than looping forever", () => {
     const h = host({ removeFailures: Array.from({ length: 5 }, () => fsError("EBUSY")) });
 
-    expect(() => cleanupScratchDir(SCRATCH_DIR, undefined, h.deps)).toThrow(/simulated EBUSY/);
+    expect(() => cleanupScratchDir(SCRATCH_DIR, {}, h.deps)).toThrow(/simulated EBUSY/);
     expect(h.removed).toStrictEqual([]);
   });
 
@@ -331,7 +329,7 @@ describe("cleanupScratchDir — EBUSY retry", () => {
     // and succeed, so reaching the throw is what "no retry" means here.
     const h = host({ removeFailures: [fsError("EROFS")] });
 
-    expect(() => cleanupScratchDir(SCRATCH_DIR, undefined, h.deps)).toThrow(/simulated EROFS/);
+    expect(() => cleanupScratchDir(SCRATCH_DIR, {}, h.deps)).toThrow(/simulated EROFS/);
     expect(h.removed).toStrictEqual([]);
   });
 });
@@ -346,7 +344,7 @@ describe("cleanupScratchDir — force-detaching what is still mounted", () => {
   it("lazily unmounts the deepest path first, so children go before their parents", () => {
     const h = host({ mountinfo });
 
-    cleanupScratchDir(SCRATCH_DIR, undefined, h.deps);
+    cleanupScratchDir(SCRATCH_DIR, {}, h.deps);
 
     expect(h.exec.map(([, args]) => args[3])).toStrictEqual([`${SCRATCH_DIR}/rootfs`, SCRATCH_DIR]);
     expect(h.exec[0]).toStrictEqual(["sudo", ["umount", "-R", "-l", `${SCRATCH_DIR}/rootfs`]]);
@@ -362,7 +360,7 @@ describe("cleanupScratchDir — force-detaching what is still mounted", () => {
       },
     });
 
-    cleanupScratchDir(SCRATCH_DIR, undefined, h.deps);
+    cleanupScratchDir(SCRATCH_DIR, {}, h.deps);
 
     expect(h.exec).toStrictEqual([]);
     expect(h.removed).toStrictEqual([SCRATCH_DIR]);
@@ -371,16 +369,24 @@ describe("cleanupScratchDir — force-detaching what is still mounted", () => {
   // A failed unmount must not abort cleanup: the delete still has to run, or
   // the scratch dir is left behind for good.
   it("warns and keeps going when one unmount fails", () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.fn();
     const h = host({ mountinfo, unmountFails: 1 });
 
-    cleanupScratchDir(SCRATCH_DIR, undefined, h.deps);
+    cleanupScratchDir(SCRATCH_DIR, { warn }, h.deps);
 
     expect(h.exec.length).toBe(2);
     expect(h.removed).toStrictEqual([SCRATCH_DIR]);
-    expect(log.mock.calls.map((c) => String(c[0]))).toStrictEqual([
-      `::warning::Failed to unmount ${SCRATCH_DIR}/rootfs before cleanup: target is busy`,
+    expect(warn.mock.calls.map((c) => String(c[0]))).toStrictEqual([
+      `Failed to unmount ${SCRATCH_DIR}/rootfs before cleanup: target is busy`,
     ]);
+  });
+
+  // The caller decides where it lands; without one there is nothing to tell.
+  it("keeps going when no warning sink was given at all", () => {
+    const h = host({ mountinfo, unmountFails: 1 });
+
+    expect(() => cleanupScratchDir(SCRATCH_DIR, {}, h.deps)).not.toThrow();
+    expect(h.removed).toStrictEqual([SCRATCH_DIR]);
   });
 });
 
@@ -401,10 +407,13 @@ describe("withScratchDir — deterministic naming", () => {
     const expected = scratchDirFor(containerName);
     let captured: string | undefined;
 
-    withScratchDir((dir) => {
-      captured = dir;
-      writeFileSync(join(dir, "marker"), "x");
-    }, containerName);
+    withScratchDir(
+      (dir) => {
+        captured = dir;
+        writeFileSync(join(dir, "marker"), "x");
+      },
+      { containerName },
+    );
 
     expect(captured).toBe(expected);
     expect(existsSync(expected)).toBe(false);

@@ -166,6 +166,26 @@ function getState(name) {
 	return process.env[`STATE_${name}`] || "";
 }
 //#endregion
+//#region src/core/lib/actions/annotation.ts
+function createAnnotation(enabled) {
+	return enabled ? {
+		notice(message) {
+			console.log(`::notice::${message}`);
+		},
+		warning(message) {
+			console.log(`::warning::${message}`);
+		},
+		error(message) {
+			console.log(`::error::${message}`);
+		}
+	} : {
+		notice() {},
+		warning() {},
+		error() {}
+	};
+}
+const annotate = createAnnotation(!0);
+//#endregion
 //#region src/core/lib/docker/args.ts
 function buildComposeDownArgs({ composeFile, projectName }) {
 	return [
@@ -186,26 +206,6 @@ async function readLocalImageOverride(env, log = console.log) {
 function resolveComposeFile(override) {
 	return override?.composeFile ?? DEFAULT_COMPOSE_FILE;
 }
-//#endregion
-//#region src/core/lib/actions/annotation.ts
-function createAnnotation(enabled) {
-	return enabled ? {
-		notice(message) {
-			console.log(`::notice::${message}`);
-		},
-		warning(message) {
-			console.log(`::warning::${message}`);
-		},
-		error(message) {
-			console.log(`::error::${message}`);
-		}
-	} : {
-		notice() {},
-		warning() {},
-		error() {}
-	};
-}
-const annotate = createAnnotation(!0);
 //#endregion
 //#region src/core/lib/errors.ts
 var ActionError = class extends Error {
@@ -373,7 +373,7 @@ function defaultRemove(path) {
 		force: !0
 	});
 }
-function unmountAllUnder(dir, deps) {
+function unmountAllUnder(dir, deps, warn) {
 	let { readMountinfo = defaultReadMountinfo, exec = defaultExec } = deps, mountPoints;
 	try {
 		mountPoints = parseMountsUnder(readMountinfo(), dir);
@@ -388,7 +388,7 @@ function unmountAllUnder(dir, deps) {
 			mountPoint
 		]);
 	} catch (e) {
-		annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+		warn?.(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
 function removeScratchDir(dir, deps) {
@@ -409,8 +409,8 @@ function removeScratchDir(dir, deps) {
 		}
 	}, { retryOn: (e) => e.code === "EBUSY" });
 }
-function cleanupScratchDir(dir, ephemeralRoots, deps = {}) {
-	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps), removeScratchDir(dir, deps);
+function cleanupScratchDir(dir, { ephemeralRoots, warn } = {}, deps = {}) {
+	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps, warn), removeScratchDir(dir, deps);
 }
 function assertUnderScratchBase(dir) {
 	let abs = (0, node_path.resolve)(dir);
@@ -426,16 +426,19 @@ function startedByThisStep(containerName, env, readOwner) {
 	let owner = readOwner(containerName);
 	return owner === null || owner === ownerToken(env);
 }
-function planPostCleanup(state, env, { readOwner = readContainerOwner, fileExists = node_fs.existsSync, removeScratchDir = cleanupScratchDir } = {}) {
+function planPostCleanup(state, env, annotation, { readOwner = readContainerOwner, fileExists = node_fs.existsSync, removeScratchDir = cleanupScratchDir } = {}) {
 	let { targets, problems } = resolvePostState(state);
-	for (let problem of problems) annotate.error(`run post-cleanup: ${problem}`);
+	for (let problem of problems) annotation.error(`run post-cleanup: ${problem}`);
 	if (!targets) return null;
-	if (!startedByThisStep(targets.containerName, env, readOwner)) return annotate.error("run post-cleanup: the proxy container named in GITHUB_STATE was started by a different step. Skipping all post-step cleanup: tearing it down would stop that step's proxy and delete its sandbox scratch directory."), null;
+	if (!startedByThisStep(targets.containerName, env, readOwner)) return annotation.error("run post-cleanup: the proxy container named in GITHUB_STATE was started by a different step. Skipping all post-step cleanup: tearing it down would stop that step's proxy and delete its sandbox scratch directory."), null;
 	try {
 		let scratchDir = scratchDirFor(targets.containerName);
-		fileExists(scratchDir) && removeScratchDir(scratchDir, targets.ephemeralRoots);
+		fileExists(scratchDir) && removeScratchDir(scratchDir, {
+			ephemeralRoots: targets.ephemeralRoots,
+			warn: annotation.warning
+		});
 	} catch (e) {
-		annotate.warning(`run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
+		annotation.warning(`run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
 	}
 	return targets;
 }
@@ -458,7 +461,7 @@ function main() {
 	let targets = planPostCleanup({
 		containerName: getState("container_name"),
 		ephemeralRoots: getState("ephemeral_overlay_roots")
-	}, process.env);
+	}, process.env, annotate);
 	targets && stopProxyContainer(targets);
 }
 process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main();
