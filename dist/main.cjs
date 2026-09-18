@@ -19443,6 +19443,17 @@ function splitHostPort(authority) {
 		port: authority.slice(colon + 1)
 	};
 }
+function parseObservedUrl(url) {
+	let match = /^(https?):\/\/([^/?#]+)([^?#]*)/.exec(url);
+	if (!match) return null;
+	let [, scheme, authority, path] = match, { host, port } = splitHostPort(authority);
+	return {
+		scheme,
+		host,
+		port: port ?? DEFAULT_PORT[scheme],
+		path: path || "/"
+	};
+}
 //#endregion
 //#region src/core/lib/report/render/inspect-example.ts
 const METHOD_ORDER = [
@@ -19456,13 +19467,13 @@ const METHOD_ORDER = [
 ];
 function parseRequest(request) {
 	if (request.url === void 0 || request.method === void 0) return null;
-	let match = /^(https?):\/\/([^/?#]+)([^?#]*)/.exec(request.url);
-	if (!match) return null;
-	let [, scheme, authority, rawPath] = match, { host, port } = splitHostPort(authority);
+	let parsed = parseObservedUrl(request.url);
+	if (!parsed) return null;
+	let { scheme, host, port, path } = parsed;
 	return {
-		origin: port && port === DEFAULT_PORT[scheme] ? `${scheme}://${host}` : `${scheme}://${authority}`,
+		origin: port === DEFAULT_PORT[scheme] ? `${scheme}://${host}` : `${scheme}://${host}:${port}`,
 		method: request.method,
-		path: rawPath || "/"
+		path
 	};
 }
 function commonPrefixSegments(paths) {
@@ -19689,10 +19700,8 @@ function reasonFor(logged, terminationState) {
 function actionFor(refused, isAudit) {
 	return refused ? "block" : isAudit ? "audit" : "allow";
 }
-const URL_AUTHORITY = /^https?:\/\/([^/?#]+)/;
 function hostOf(url) {
-	let match = URL_AUTHORITY.exec(url);
-	return match ? splitHostPort(match[1]).host : url;
+	return parseObservedUrl(url)?.host ?? url;
 }
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
