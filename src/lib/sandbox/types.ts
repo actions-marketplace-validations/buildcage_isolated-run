@@ -43,3 +43,11 @@ export interface HostMount {
 export interface HasMounts {
   mounts: MountEntry[];
 }
+
+/** One overlay root's physical directories: the host path the overlay covers,
+ *  and the upper/work dirs created for it under this run's scratch dir. */
+export interface OverlayDirs {
+  path: string;
+  upper: string;
+  work: string;
+}

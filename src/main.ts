@@ -110,11 +110,7 @@ async function main(): Promise<void> {
     env,
   );
   if (filesystemMode === "ephemeral") {
-    for (const line of formatFilesystemPlanLog(
-      filesystemMode,
-      overlayRoots.map((r) => r.path),
-      writeThroughPaths,
-    )) {
+    for (const line of formatFilesystemPlanLog(filesystemMode, overlayRoots, writeThroughPaths)) {
       core.info(line);
     }
   }
@@ -160,7 +156,7 @@ async function main(): Promise<void> {
     if (env.GITHUB_STATE) {
       core.saveState("container_name", containerName);
       if (filesystemMode === "ephemeral") {
-        core.saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots.map((r) => r.path)));
+        core.saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots));
       }
     }
 

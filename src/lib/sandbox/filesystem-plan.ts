@@ -16,11 +16,7 @@
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import type { FilesystemMode } from "../filesystem-mode.ts";
-import {
-  determineOverlayRoots,
-  formatFilesystemPlanLog,
-  type OverlayRoot,
-} from "./ephemeral-fs.ts";
+import { determineOverlayRoots, formatFilesystemPlanLog } from "./ephemeral-fs.ts";
 import {
   resolveWriteThroughPaths,
   ensureWriteThroughTargetsExist,
@@ -73,7 +69,7 @@ export function validateFilesystemInputs(
 
 export interface FilesystemPlan {
   /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots). [] in persistent mode. */
-  overlayRoots: OverlayRoot[];
+  overlayRoots: string[];
   /** Already resolved (resolveWriteThroughPaths) and pre-created
    *  (ensureWriteThroughTargetsExist), in either filesystem mode. */
   writeThroughPaths: string[];

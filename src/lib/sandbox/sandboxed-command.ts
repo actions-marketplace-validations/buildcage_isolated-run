@@ -6,7 +6,7 @@ import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import type { ProxyEngine } from "../engine.ts";
 import type { FilesystemMode } from "../filesystem-mode.ts";
-import { createOverlayScratchDirs, type OverlayRoot } from "./ephemeral-fs.ts";
+import { createOverlayScratchDirs } from "./ephemeral-fs.ts";
 import { extractRuncBootstrap } from "./runc-bootstrap.ts";
 import { extractCaCert, writeCaTrustFiles } from "./ca-trust.ts";
 import { resolveSandboxGid } from "./identity.ts";
@@ -76,7 +76,7 @@ export interface RunSandboxedCommandOptions {
   proxyEngine: ProxyEngine;
   filesystemMode: FilesystemMode;
   /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots), not raw candidates. */
-  overlayRoots: OverlayRoot[];
+  overlayRoots: string[];
 }
 
 /**
@@ -255,6 +255,6 @@ export function runSandboxedCommand(
       });
     },
     containerName,
-    filesystemMode === "ephemeral" ? overlayRoots.map((r) => r.path) : undefined,
+    filesystemMode === "ephemeral" ? overlayRoots : undefined,
   );
 }

@@ -125,7 +125,7 @@ describe("resolveFilesystemPlan", () => {
     // GitHub-hosted runner), so it folds away; GITHUB_WORKSPACE is also
     // nested under HOME here, so it folds away too -- only HOME and /tmp
     // are left.
-    expect(plan.overlayRoots.map((r) => r.path).sort()).toStrictEqual([ENV.HOME, "/tmp"].sort());
+    expect(plan.overlayRoots.sort()).toStrictEqual([ENV.HOME, "/tmp"].sort());
   });
 
   it("resolves and pre-creates write_through targets, then excludes only what's actually covered by them", () => {
@@ -159,9 +159,7 @@ describe("resolveFilesystemPlan", () => {
     ]);
     // RUNNER_TEMP still folds away under HOME as usual; GITHUB_WORKSPACE
     // keeps its own overlay since it isn't nested under HOME here.
-    expect(plan.overlayRoots.map((r) => r.path).sort()).toStrictEqual(
-      [ENV.HOME, "/tmp", "/workspace"].sort(),
-    );
+    expect(plan.overlayRoots.sort()).toStrictEqual([ENV.HOME, "/tmp", "/workspace"].sort());
   });
 
   it("wraps a missing well-known runner file as WRITE_THROUGH_TARGET_MISSING", () => {

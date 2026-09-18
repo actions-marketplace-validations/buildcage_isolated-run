@@ -1,4 +1,4 @@
-import type { OciSpec, BuiltOciSpec, HostMount } from "./types.ts";
+import type { OciSpec, BuiltOciSpec, HostMount, OverlayDirs } from "./types.ts";
 import { resolveProtectedPaths } from "./oci-protected-paths.ts";
 import {
   ephemeralLayers,
@@ -8,7 +8,6 @@ import {
   withHostShmSize,
   writableDirsOf,
   RESOLV_CONF_DESTINATION,
-  type OverlayDirs,
 } from "./oci-mounts.ts";
 import { realHostProbes, type HostProbes, type NofileLimit } from "./host-probes.ts";
 import { caTrustAdditions, type CaTrustFiles } from "./ca-trust.ts";

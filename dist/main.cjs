@@ -18093,13 +18093,13 @@ function determineOverlayRoots(candidates, writeThroughPaths, { exists = node_fs
 		} catch {
 			return !0;
 		}
-	}).map((path) => ({ path }));
+	});
 }
 function slugify(path) {
 	return path.replace(/\//g, "_") || "_root";
 }
 function createOverlayScratchDirs(scratchDir, roots, { mkdir = node_fs.mkdirSync } = {}) {
-	return roots.map(({ path }) => {
+	return roots.map((path) => {
 		let base = (0, node_path.join)(scratchDir, "ephemeral", slugify(path)), upper = (0, node_path.join)(base, "upper"), work = (0, node_path.join)(base, "work");
 		return mkdir(upper, { recursive: !0 }), mkdir(work, { recursive: !0 }), {
 			path,
@@ -18871,7 +18871,7 @@ function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThrough
 			dns,
 			targetIp: "172.20.0.101"
 		});
-	}, containerName, filesystemMode === "ephemeral" ? overlayRoots.map((r) => r.path) : void 0);
+	}, containerName, filesystemMode === "ephemeral" ? overlayRoots : void 0);
 }
 //#endregion
 //#region src/core/lib/docker/health.ts
@@ -64959,7 +64959,7 @@ async function main() {
 	let { filesystemMode, writeThroughInput } = readFilesystemInputs();
 	validateFilesystemInputs(filesystemMode, splitWriteThroughInput(writeThroughInput)), checkPasswordlessSudo(), filesystemMode === "ephemeral" && checkOverlayfsSupport();
 	let annotation = createAnnotation(!!env.GITHUB_STEP_SUMMARY), { overlayRoots, writeThroughPaths, createdDirs } = resolveFilesystemPlan(filesystemMode, writeThroughInput, env);
-	if (filesystemMode === "ephemeral") for (let line of formatFilesystemPlanLog(filesystemMode, overlayRoots.map((r) => r.path), writeThroughPaths)) info(line);
+	if (filesystemMode === "ephemeral") for (let line of formatFilesystemPlanLog(filesystemMode, overlayRoots, writeThroughPaths)) info(line);
 	try {
 		let { imageRef, pullPolicy } = await resolveVerifiedImage({
 			actionRef,
@@ -64977,7 +64977,7 @@ async function main() {
 			logRules("HTTPS", httpsRules), logRules("HTTP", httpRules), logRules("IP", ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
 		});
 		let containerName = generateContainerName(), projectName = deriveProjectName(containerName);
-		env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots.map((r) => r.path))));
+		env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots)));
 		let composeEnv = buildComposeEnv({
 			containerName,
 			proxyMode,

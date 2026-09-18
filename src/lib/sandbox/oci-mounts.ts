@@ -9,7 +9,7 @@
  * read-only.
  */
 
-import type { HasMounts, MountEntry } from "./types.ts";
+import type { HasMounts, MountEntry, OverlayDirs } from "./types.ts";
 import { assertScratchBaseNotWritable, isAtOrUnder, WritablePathConflictError } from "./paths.ts";
 import { SHM_DESTINATION } from "./host-probes.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
@@ -198,11 +198,4 @@ export function scratchBaseLayers(execDir: string): MountEntry[] {
     // `ro` covers only the top mount. execDir has no submounts of its own.
     { destination: execDir, type: "none", source: execDir, options: ["bind", "ro"] },
   ];
-}
-
-/** One overlay root, already resolved by ephemeral-fs.ts. */
-export interface OverlayDirs {
-  path: string;
-  upper: string;
-  work: string;
 }
