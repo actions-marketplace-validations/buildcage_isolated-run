@@ -8,29 +8,15 @@ import { describe, it, expect } from "vitest";
 import { imageTagFromRef } from "./image-tag.ts";
 
 describe("imageTagFromRef", () => {
-  it("converts a 40-char hex SHA to sha-<sha>", () => {
-    const sha = "a".repeat(40);
-    expect(imageTagFromRef(sha)).toBe(`sha-${"a".repeat(40)}`);
+  it("converts a 40-char hex SHA to sha-<sha>, lowercased", () => {
+    expect(imageTagFromRef("a".repeat(40))).toBe(`sha-${"a".repeat(40)}`);
+    const mixed = "ABCDEF1234".padEnd(40, "0");
+    expect(imageTagFromRef(mixed)).toBe(`sha-${mixed.toLowerCase()}`);
   });
 
-  it("lowercases the SHA", () => {
-    const sha = "ABCDEF1234".padEnd(40, "0");
-    expect(imageTagFromRef(sha)).toBe(`sha-${sha.toLowerCase()}`);
-  });
-
-  it("strips leading 'v' from a version tag", () => {
+  it("strips a leading 'v' from a version, prerelease or major-only tag", () => {
     expect(imageTagFromRef("v1.1.0")).toBe("1.1.0");
-  });
-
-  it("strips leading 'v' from a prerelease tag", () => {
     expect(imageTagFromRef("v1.1.0-rc1")).toBe("1.1.0-rc1");
-  });
-
-  it("appends the inspect engine suffix after a prerelease tag", () => {
-    expect(imageTagFromRef("v1.1.0-rc1", "inspect")).toBe("1.1.0-rc1-inspect");
-  });
-
-  it("strips 'v' from a major-only tag", () => {
     expect(imageTagFromRef("v1")).toBe("1");
   });
 
@@ -38,18 +24,12 @@ describe("imageTagFromRef", () => {
     expect(imageTagFromRef("main")).toBe("main");
   });
 
-  it("returns empty string for empty input", () => {
-    expect(imageTagFromRef("")).toBe("");
-  });
-
-  it("returns empty string for undefined", () => {
-    expect(imageTagFromRef(undefined)).toBe("");
-  });
-
   // With no ref there is no version to tag, so there is nothing for a suffix
   // to attach to: "-inspect" alone is not a tag any image is published under,
   // and asking the registry for it would be a lookup that cannot succeed.
-  it("returns empty string with no ref even when an engine is named", () => {
+  it("returns empty string with no ref, whether or not an engine is named", () => {
+    expect(imageTagFromRef("")).toBe("");
+    expect(imageTagFromRef(undefined)).toBe("");
     expect(imageTagFromRef("", "inspect")).toBe("");
     expect(imageTagFromRef(undefined, "inspect")).toBe("");
   });
@@ -62,5 +42,11 @@ describe("imageTagFromRef", () => {
   it("appends the inspect engine suffix when requested", () => {
     expect(imageTagFromRef("v1.1.0", "inspect")).toBe("1.1.0-inspect");
     expect(imageTagFromRef("a".repeat(40), "inspect")).toBe(`sha-${"a".repeat(40)}-inspect`);
+  });
+
+  it("gives every non-default engine its own suffix", () => {
+    // A new engine is a separately published image, so forgetting the suffix
+    // would silently pull the universal one.
+    expect(imageTagFromRef("v1.1.0", "proxy")).toBe("1.1.0-proxy");
   });
 });
