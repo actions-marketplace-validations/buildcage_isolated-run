@@ -1,7 +1,7 @@
 import { withLogGroupAsync } from "#core/lib/actions/log.ts";
 import { execFileSync } from "node:child_process";
 
-import { describeDockerFailure, type DockerErrorLike } from "#core/lib/actions/docker-error.ts";
+import { capturedStderr, describeDockerFailure } from "#core/lib/actions/docker-error.ts";
 import type { Annotation } from "#core/lib/actions/annotation.ts";
 import type { RunDocker } from "#core/lib/docker/client.ts";
 import {
@@ -115,9 +115,9 @@ function readProxyState(
 /** Anything other than the expected missing container is worth seeing, even
  *  though the compose failure is what gets reported. */
 function reportInspectFailure(e: unknown): void {
-  const stderr = ((e && typeof e === "object" ? e : {}) as DockerErrorLike).stderr ?? "";
-  if (stderr.trim() && !/no such object/i.test(stderr)) {
-    console.log(`buildcage: could not read the sandbox proxy container's state: ${stderr.trim()}`);
+  const stderr = capturedStderr(e);
+  if (stderr && !/no such object/i.test(stderr)) {
+    console.log(`buildcage: could not read the sandbox proxy container's state: ${stderr}`);
   }
 }
 

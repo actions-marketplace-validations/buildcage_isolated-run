@@ -2,7 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { capturedStderr } from "#core/lib/actions/docker-error.ts";
 import { SandboxError } from "./errors.ts";
+import { retryOnBusy } from "./retry-on-busy.ts";
 import { SANDBOX_SCRATCH_BASE, ensureOwnScratchBase } from "./sandbox/scratch-dir.ts";
 
 type ExecLike = typeof execFileSync;
@@ -21,8 +23,7 @@ const REQUIREMENT =
  * unit-testable the same way as sudo-preflight.ts's describeSudoFailure.
  */
 export function describeOverlayFailure(e: unknown): string {
-  const err = (e && typeof e === "object" ? e : {}) as { stderr?: unknown };
-  const captured = typeof err.stderr === "string" ? err.stderr.trim() : "";
+  const captured = capturedStderr(e);
   return `overlayfs probe mount failed. ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
 
@@ -41,16 +42,9 @@ export function describeOverlayFailure(e: unknown): string {
  * short, bounded window.
  */
 function removeProbeDir(dir: string, exec: ExecLike): void {
-  const maxAttempts = 5;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      exec("sudo", ["-n", "rm", "-rf", dir], { stdio: ["ignore", "ignore", "pipe"] });
-      return;
-    } catch (e) {
-      if (attempt === maxAttempts) throw e;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-    }
-  }
+  retryOnBusy(() =>
+    exec("sudo", ["-n", "rm", "-rf", dir], { stdio: ["ignore", "ignore", "pipe"] }),
+  );
 }
 
 export interface CheckOverlayfsSupportOptions {

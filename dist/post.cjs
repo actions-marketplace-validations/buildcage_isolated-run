@@ -217,11 +217,15 @@ var ActionError = class extends Error {
 function errorMessage(e) {
 	return e instanceof Error ? e.message : String(e);
 }
+function capturedStderr(e) {
+	let err = e && typeof e == "object" ? e : {};
+	return typeof err.stderr == "string" ? err.stderr.trim() : "";
+}
 function describeDockerFailure(e, { operation = "docker", env = process.env, exists = node_fs.existsSync } = {}) {
 	let err = e && typeof e == "object" ? e : {}, slimNote = isLikelySlimRunner(env, exists) ? " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\") — these ship a Docker client with no daemon and are not supported for this action." : "", whatHappened;
 	if (err.code === "ENOENT") whatHappened = `The "docker" command was not found on this runner's PATH while running ${operation}.`;
 	else {
-		let captured = typeof err.stderr == "string" ? err.stderr.trim() : "";
+		let captured = capturedStderr(e);
 		whatHappened = `${operation} failed${captured ? `: ${captured}` : " (see the Docker output above for the underlying error)"}.`;
 	}
 	return `${whatHappened}${slimNote} Buildcage requires a working Docker installation (client and daemon) on the runner, on Docker Engine 25.0 or later with Compose v2.20.2 or later. Lightweight runner images such as GitHub-hosted "ubuntu-slim" ship a Docker client but no daemon and are not supported for this action — use "ubuntu-latest" (or another runner with a full Docker install) instead. See README.md and docs/security.md for details.`;
@@ -318,6 +322,17 @@ function parseEphemeralRoots(raw) {
 	if (Array.isArray(parsed)) return parsed.every((p) => typeof p == "string" && (0, node_path.isAbsolute)(p) && !/[\x00-\x1f\x7f]/.test(p)) ? parsed : void 0;
 }
 //#endregion
+//#region src/lib/retry-on-busy.ts
+function retryOnBusy(fn, options = {}) {
+	let { attempts = 5, delayMs = 200, retryOn = () => !0 } = options;
+	for (let attempt = 1;; attempt++) try {
+		return fn();
+	} catch (e) {
+		if (attempt >= attempts || !retryOn(e)) throw e;
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+	}
+}
+//#endregion
 //#region src/lib/sandbox/mountinfo.ts
 function parseMountinfo(mountinfoContent) {
 	return mountinfoContent.split("\n").filter(Boolean).map((line) => {
@@ -374,12 +389,11 @@ function unmountAllUnder(dir, deps) {
 }
 function removeScratchDir(dir, deps) {
 	let { exec = defaultExec, lstat = node_fs.lstatSync, remove = defaultRemove } = deps;
-	for (let attempt = 1; attempt <= 5; attempt++) try {
-		remove(dir);
-		return;
-	} catch (e) {
-		let code = e.code;
-		if (code === "EACCES") {
+	retryOnBusy(() => {
+		try {
+			remove(dir);
+		} catch (e) {
+			if (e.code !== "EACCES") throw e;
 			let st = lstat(dir);
 			if (!st.isDirectory() || st.uid !== process.getuid()) throw new SandboxError(`Refusing to sudo rm -rf ${dir}: not a directory owned by uid ${process.getuid()}.`, "SCRATCH_DIR_UNSAFE");
 			exec("sudo", [
@@ -388,11 +402,8 @@ function removeScratchDir(dir, deps) {
 				"-rf",
 				dir
 			]);
-			return;
 		}
-		if (code !== "EBUSY" || attempt === 5) throw e;
-		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-	}
+	}, { retryOn: (e) => e.code === "EBUSY" });
 }
 function cleanupScratchDir(dir, ephemeralRoots, deps = {}) {
 	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps), removeScratchDir(dir, deps);
