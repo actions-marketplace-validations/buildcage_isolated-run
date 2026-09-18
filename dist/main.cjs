@@ -65,6 +65,44 @@ node_https = __toESM(node_https, 1);
 let stream = require("stream");
 stream = __toESM(stream, 1);
 let buffer = require("buffer");
+//#region src/core/lib/errors.ts
+var ActionError = class extends Error {
+	code;
+	constructor(message, code) {
+		super(message), this.name = new.target.name, this.code = code;
+	}
+};
+function errorMessage(e) {
+	return e instanceof Error ? e.message : String(e);
+}
+//#endregion
+//#region src/core/lib/actions/annotation.ts
+function createAnnotation(enabled) {
+	return enabled ? {
+		notice(message) {
+			console.log(`::notice::${message}`);
+		},
+		warning(message) {
+			console.log(`::warning::${message}`);
+		},
+		error(message) {
+			console.log(`::error::${message}`);
+		}
+	} : {
+		notice() {},
+		warning() {},
+		error() {}
+	};
+}
+const annotate = createAnnotation(!0);
+//#endregion
+//#region src/core/lib/actions/fatal.ts
+function exitOnFatalError(context) {
+	return (err) => {
+		err instanceof ActionError ? annotate.error(err.message) : annotate.error(`Unexpected error in ${context}: ${errorMessage(err)}`), process.exit(1);
+	};
+}
+//#endregion
 //#region node_modules/.pnpm/@actions+core@3.0.1/node_modules/@actions/core/lib/utils.js
 function toCommandValue(input) {
 	return input == null ? "" : typeof input == "string" || input instanceof String ? input : JSON.stringify(input);
@@ -10612,17 +10650,6 @@ function resolveBuildcageImageRef({ imageDigest, actionRepository }) {
 	return `${`ghcr.io/${actionRepository}`.toLowerCase()}@${imageDigest}`;
 }
 //#endregion
-//#region src/core/lib/errors.ts
-var ActionError = class extends Error {
-	code;
-	constructor(message, code) {
-		super(message), this.name = new.target.name, this.code = code;
-	}
-};
-function errorMessage(e) {
-	return e instanceof Error ? e.message : String(e);
-}
-//#endregion
 //#region src/core/lib/provenance/errors.ts
 var VerifyImageError = class extends Error {
 	code;
@@ -17262,26 +17289,6 @@ async function verifyImageDigestOrThrow({ actionRef, actionRepo, proxyEngine }) 
 	return requireDigest(digest, actionRef);
 }
 //#endregion
-//#region src/core/lib/actions/annotation.ts
-function createAnnotation(enabled) {
-	return enabled ? {
-		notice(message) {
-			console.log(`::notice::${message}`);
-		},
-		warning(message) {
-			console.log(`::warning::${message}`);
-		},
-		error(message) {
-			console.log(`::error::${message}`);
-		}
-	} : {
-		notice() {},
-		warning() {},
-		error() {}
-	};
-}
-const annotate = createAnnotation(!0);
-//#endregion
 //#region src/core/lib/actions/log.ts
 function logRules(label, rules) {
 	console.log(`${label} rules:${rules.length === 0 ? " (none)" : ""}`);
@@ -17304,11 +17311,9 @@ async function withLogGroupAsync(title, fn) {
 	}
 }
 //#endregion
-//#region src/core/lib/actions/fatal.ts
-function exitOnFatalError(context) {
-	return (err) => {
-		err instanceof ActionError ? annotate.error(err.message) : annotate.error(`Unexpected error in ${context}: ${errorMessage(err)}`), process.exit(1);
-	};
+//#region src/core/lib/docker/compose-project-name.ts
+function deriveProjectName(containerName) {
+	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
 }
 //#endregion
 //#region src/lib/errors.ts
@@ -18443,11 +18448,6 @@ function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}
 	}
 }
 //#endregion
-//#region src/core/lib/docker/compose-project-name.ts
-function deriveProjectName(containerName) {
-	return `buildcage-${(0, node_crypto.createHash)("sha256").update(containerName).digest("hex").slice(0, 12)}`;
-}
-//#endregion
 //#region src/lib/sandbox/runc-bootstrap.ts
 function generateBaseOciSpec(runcPath, bundleDir, { execIn = defaultExecIn, readFile = defaultReadFile } = {}) {
 	return execIn(runcPath, ["spec"], bundleDir), JSON.parse(readFile((0, node_path.join)(bundleDir, "config.json")));
@@ -18794,7 +18794,7 @@ function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, 
 //#endregion
 //#region src/lib/sandbox/sandboxed-command.ts
 init_core();
-const realDeps$1 = {
+const realDeps$2 = {
 	withScratchDir,
 	extractRuncBootstrap,
 	extractCaCert,
@@ -18815,7 +18815,7 @@ const realDeps$1 = {
 };
 function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThroughPaths, env, proxyEngine, filesystemMode, overlayRoots }, overrides = {}) {
 	let { withScratchDir, extractRuncBootstrap, extractCaCert, writeCaTrustFiles, createOverlayScratchDirs, writeResolvConf, writeRunScript, writeEnvLoader, listHostMounts, resolveSandboxGid, buildOciConfig, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated, mkdir, info } = {
-		...realDeps$1,
+		...realDeps$2,
 		...overrides
 	}, dns = "172.20.0.1";
 	return withScratchDir((dir) => {
@@ -64932,7 +64932,7 @@ async function uploadTrafficArtifact(report, containerName, annotation, { upload
 }
 //#endregion
 //#region src/lib/step-report.ts
-const realDeps = {
+const realDeps$1 = {
 	fetchReport,
 	readActionVersion,
 	writeReportSummary,
@@ -64943,7 +64943,7 @@ const realDeps = {
 };
 async function reportStepTraffic({ containerName, proxyEngine, parameters, annotation, actionRepo, actionRef, runCommand }, overrides = {}) {
 	let { fetchReport, readActionVersion, writeReportSummary, wantsTrafficArtifact, uploadTrafficArtifact, readFailOnBlocked, readStepLabel } = {
-		...realDeps,
+		...realDeps$1,
 		...overrides
 	}, phase = "fetch sandbox report";
 	try {
@@ -64963,15 +64963,42 @@ async function reportStepTraffic({ containerName, proxyEngine, parameters, annot
 	}
 }
 //#endregion
-//#region src/main.ts
+//#region src/lib/sandbox-step.ts
 init_core();
-async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
+const realDeps = {
+	readRunCommand,
+	readEngineInputs,
+	readFilesystemInputs,
+	readRuleInputs,
+	validateFilesystemInputs,
+	checkPasswordlessSudo,
+	checkOverlayfsSupport,
+	createAnnotation,
+	resolveFilesystemPlan,
+	readLocalImageOverride,
+	verifyImageDigestOrThrow,
+	checkUrlAndTlsRuleSupport,
+	logRules,
+	withLogGroup,
+	generateContainerName,
+	getContainerNetns,
+	startSandboxProxy,
+	stopSandboxProxy,
+	runSandboxedCommand,
+	reportStepTraffic,
+	removeCreatedDirsIfEmpty,
+	saveState,
+	info,
+	log: console.log,
+	notice: annotate.notice
+};
+async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }, { verifyImageDigestOrThrow, log }) {
 	let digest = await verifyImageDigestOrThrow({
 		actionRef,
 		actionRepo,
 		proxyEngine
 	});
-	return console.log(`Image provenance verified for ref: ${JSON.stringify(actionRef)} (digest ${digest}).`), {
+	return log(`Image provenance verified for ref: ${JSON.stringify(actionRef)} (digest ${digest}).`), {
 		imageRef: resolveBuildcageImageRef({
 			imageDigest: digest,
 			actionRepository: actionRepo
@@ -64979,10 +65006,16 @@ async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }) {
 		pullPolicy: "always"
 	};
 }
-async function main() {
-	let env = process.env, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs(annotate.notice);
-	console.log(`Proxy engine: ${proxyEngine}`);
-	let { filesystemMode, writeThroughInput } = readFilesystemInputs(annotate.notice);
+function saveCleanupState(env, { containerName, filesystemMode, overlayRoots }, saveState) {
+	env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots)));
+}
+async function runSandboxStep(env, overrides = {}) {
+	let { readRunCommand, readEngineInputs, readFilesystemInputs, readRuleInputs, validateFilesystemInputs, checkPasswordlessSudo, checkOverlayfsSupport, createAnnotation, resolveFilesystemPlan, readLocalImageOverride, verifyImageDigestOrThrow, checkUrlAndTlsRuleSupport, logRules, withLogGroup, generateContainerName, getContainerNetns, startSandboxProxy, stopSandboxProxy, runSandboxedCommand, reportStepTraffic, removeCreatedDirsIfEmpty, saveState, info, log, notice } = {
+		...realDeps,
+		...overrides
+	}, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs(notice);
+	log(`Proxy engine: ${proxyEngine}`);
+	let { filesystemMode, writeThroughInput } = readFilesystemInputs(notice);
 	validateFilesystemInputs(filesystemMode, splitWriteThroughInput(writeThroughInput)), checkPasswordlessSudo(), filesystemMode === "ephemeral" && checkOverlayfsSupport();
 	let annotation = createAnnotation(!!env.GITHUB_STEP_SUMMARY), { overlayRoots, writeThroughPaths, createdDirs } = resolveFilesystemPlan(filesystemMode, writeThroughInput, env);
 	if (filesystemMode === "ephemeral") for (let line of formatFilesystemPlanLog(filesystemMode, overlayRoots, writeThroughPaths)) info(line);
@@ -64991,8 +65024,11 @@ async function main() {
 			actionRef,
 			actionRepo,
 			proxyEngine
+		}, {
+			verifyImageDigestOrThrow,
+			log
 		});
-		console.log(`buildcage: proxy image: ${imageRef}`);
+		log(`buildcage: proxy image: ${imageRef}`);
 		let composeFile = resolveComposeFile(localOverride), { proxyMode, httpsRules, httpRules, ipRules, urlRules, tlsRules, knownBlockedRules } = readRuleInputs();
 		checkUrlAndTlsRuleSupport({
 			proxyEngine,
@@ -65003,7 +65039,11 @@ async function main() {
 			logRules("HTTPS", httpsRules), logRules("HTTP", httpRules), logRules("IP", ipRules), logRules("URL", urlRules), logRules("TLS", tlsRules), logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
 		});
 		let containerName = generateContainerName(), projectName = deriveProjectName(containerName);
-		env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots)));
+		saveCleanupState(env, {
+			containerName,
+			filesystemMode,
+			overlayRoots
+		}, saveState);
 		let composeEnv = buildComposeEnv({
 			containerName,
 			proxyMode,
@@ -65059,7 +65099,7 @@ async function main() {
 				annotation
 			});
 		}
-		exitCode !== 0 && (process.exitCode = exitCode);
+		return exitCode;
 	} finally {
 		try {
 			removeCreatedDirsIfEmpty(createdDirs);
@@ -65068,5 +65108,9 @@ async function main() {
 		}
 	}
 }
-process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && main().catch(exitOnFatalError("sandbox"));
+//#endregion
+//#region src/main.ts
+process.argv[1] === (0, node_url.fileURLToPath)(require("url").pathToFileURL(__filename).href) && runSandboxStep(process.env).then((exitCode) => {
+	exitCode !== 0 && (process.exitCode = exitCode);
+}).catch(exitOnFatalError("sandbox"));
 //#endregion
