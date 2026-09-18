@@ -39,10 +39,14 @@ describe("truncateForStepSummary", () => {
 
     const truncated = truncateForStepSummary(md, false);
     expect(Buffer.byteLength(truncated, "utf8") <= 1024 * 1024).toBe(true);
-    // Every kept line of the log survived whole -- no line is cut mid-way.
-    for (const line of truncated.split("\n")) {
-      expect(line.startsWith("✅ 00:00.") ? lines.includes(line) : true).toBe(true);
-    }
+    // Every kept line of the log survived whole -- no line is cut mid-way. A
+    // Set, not lines.includes: 40000 lines in and ~17000 kept is 680M string
+    // comparisons, which put this one test within reach of the 5s timeout.
+    const known = new Set(lines);
+    const kept = truncated.split("\n").filter((l) => l.startsWith("✅ 00:00."));
+    // A cut that kept no log line at all would satisfy the check below.
+    expect(kept.length > 0).toBe(true);
+    expect(kept.every((l) => known.has(l))).toBe(true);
   });
 
   it("closes a fence left open by the cut, so nothing after it renders as code", () => {
