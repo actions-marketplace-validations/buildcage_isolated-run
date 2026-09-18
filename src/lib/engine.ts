@@ -5,9 +5,9 @@ import { SandboxError } from "./errors.ts";
  * Each accepted value maps to a separately published, separately tagged
  * Docker image (see provenance/image-tag.ts's imageTagFromRef).
  *
- * Lives here rather than in main.ts because lib/ modules need the type:
- * defining it in the entry point made compose-env.ts and
- * engine-rule-support.ts import back out of it, and left report.ts writing
+ * Lives here rather than beside the input reads because lib/ modules need
+ * the type: defining it with the reads made compose-env.ts and
+ * engine-rule-support.ts import back out of them, and left report.ts writing
  * the union out a second time by hand to avoid doing so.
  */
 const ENGINES = ["universal", "inspect"] as const;

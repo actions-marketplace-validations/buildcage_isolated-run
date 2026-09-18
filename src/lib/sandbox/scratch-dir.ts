@@ -1,7 +1,6 @@
 import { mkdtempSync, mkdirSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { annotate } from "#core/lib/actions/annotation.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { SandboxError } from "../errors.ts";
 import { isValidContainerName, scratchDirNameFor } from "../container.ts";
@@ -43,7 +42,7 @@ export function parseMountsUnder(mountinfoContent: string, dir: string): string[
 /**
  * Force-detaches any mount points still nested under `dir` before it's
  * recursively deleted. This is the safety net for rootfsBindDir (a
- * `mount --rbind /` of the entire host filesystem — see main.ts) surviving
+ * `mount --rbind /` of the entire host filesystem — see run-isolated.sh) surviving
  * past run-isolated.sh's own cleanup trap: if that trap never runs (e.g.
  * run-isolated.sh itself is SIGKILL'd, which bypasses traps entirely) or
  * its `umount -R` fails (EBUSY), a plain recursive delete of `dir` would
@@ -85,7 +84,7 @@ function defaultMkdir(path: string, mode: number): void {
 }
 /* v8 ignore stop */
 
-function unmountAllUnder(dir: string, deps: ScratchDirDeps): void {
+function unmountAllUnder(dir: string, deps: ScratchDirDeps, warn?: Warn): void {
   const { readMountinfo = defaultReadMountinfo, exec = defaultExec } = deps;
   let mountPoints;
   try {
@@ -97,7 +96,7 @@ function unmountAllUnder(dir: string, deps: ScratchDirDeps): void {
     try {
       exec("sudo", ["umount", "-R", "-l", mountPoint]);
     } catch (e) {
-      annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+      warn?.(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
     }
   }
 }
@@ -150,29 +149,40 @@ function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
   );
 }
 
+/** Where a message about the cleanup itself goes. Supplied by the caller: a
+ *  module under lib/ doesn't decide where its output lands, and both of this
+ *  one's real callers reach an entry point that does. Omitted only where there
+ *  is no run to report to -- this repo's own tests use withScratchDir as a
+ *  plain temp dir. */
+export type Warn = (message: string) => void;
+
+export interface CleanupScratchDirOptions {
+  /** filesystem_mode: ephemeral's own already-folded overlay-root paths (see
+   *  ephemeral-fs.ts's determineOverlayRoots) -- logged right before the
+   *  upper/work dirs holding those writes are deleted, so there's a visible
+   *  record of what was discarded. Omitted by withScratchDir's own
+   *  stale-remnant-clearing call (this isn't the current run's own discard)
+   *  and by every persistent-mode call. */
+  ephemeralRoots?: string[];
+  warn?: Warn;
+}
+
 /**
  * Force-detach anything still mounted under `dir` (the rootfs bind-mount
  * safety net — see unmountAllUnder) and then recursively remove it. Exported
  * so post.ts can reclaim a scratch dir orphaned by a hard kill that bypassed
  * withScratchDir's own finally. No-ops safely when `dir` doesn't exist.
- *
- * `ephemeralRoots`, when given, is filesystem_mode: ephemeral's own already-folded
- * overlay-root paths (see ephemeral-fs.ts's determineOverlayRoots) -- logged
- * here, right before the upper/work dirs holding those writes are deleted,
- * so there's a visible record of what was discarded. Omitted by
- * withScratchDir's own stale-remnant-clearing call (this isn't the current
- * run's own discard) and by every persistent-mode call.
  */
 export function cleanupScratchDir(
   dir: string,
-  ephemeralRoots?: string[],
+  { ephemeralRoots, warn }: CleanupScratchDirOptions = {},
   deps: ScratchDirDeps = {},
 ): void {
   assertUnderScratchBase(dir);
   if (ephemeralRoots && ephemeralRoots.length > 0) {
     console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`);
   }
-  unmountAllUnder(dir, deps);
+  unmountAllUnder(dir, deps, warn);
   removeScratchDir(dir, deps);
 }
 
@@ -262,27 +272,32 @@ export function ensureOwnScratchBase(
   }
 }
 
+export interface WithScratchDirOptions extends CleanupScratchDirOptions {
+  /** Names the dir deterministically (scratchDirFor) so post.ts can reclaim it
+   *  after a hard kill. Without it a random mkdtemp name is used, which is
+   *  what makes this usable as a plain temp dir in tests. */
+  containerName?: string;
+}
+
 /**
  * Create/remove a scratch directory for this step's OCI bundle + run-script.
- * With `containerName` the dir is named deterministically (scratchDirFor) so
- * post.ts can reclaim it after a hard kill; without it a random mkdtemp name
- * is used (unit tests). Cleaned up on every exit path that unwinds — a
- * SIGKILL bypasses this finally, which is exactly what post.ts covers.
+ * Cleaned up on every exit path that unwinds — a SIGKILL bypasses this
+ * finally, which is exactly what post.ts covers.
  *
- * `ephemeralRoots` (filesystem_mode: ephemeral only) is passed through only to
- * the run's own final cleanup, not the stale-remnant clear above (that dir,
- * if any, is left over from a previous, already-reported run).
+ * `ephemeralRoots` reaches only the run's own final cleanup, not the
+ * stale-remnant clear below (that dir, if any, is left over from a previous,
+ * already-reported run).
  */
 export function withScratchDir<T>(
   fn: (dir: string) => T,
-  containerName?: string,
-  ephemeralRoots?: string[],
+  { containerName, ephemeralRoots, warn }: WithScratchDirOptions = {},
 ): T {
   let dir: string;
   ensureOwnScratchBase();
   if (containerName) {
     dir = scratchDirFor(containerName);
-    cleanupScratchDir(dir); // clear any stale remnant at this deterministic path (unmount-safe)
+    // Clear any stale remnant at this deterministic path (unmount-safe).
+    cleanupScratchDir(dir, { warn });
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   } else {
     dir = mkdtempSync(join(SANDBOX_SCRATCH_BASE, "sandbox-"));
@@ -290,6 +305,6 @@ export function withScratchDir<T>(
   try {
     return fn(dir);
   } finally {
-    cleanupScratchDir(dir, ephemeralRoots);
+    cleanupScratchDir(dir, { ephemeralRoots, warn });
   }
 }

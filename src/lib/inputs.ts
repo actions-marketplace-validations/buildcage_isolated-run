@@ -3,7 +3,7 @@
  * strings into validated values, in one place — so what the action reads is
  * answerable from one file rather than by grepping the entry point.
  *
- * Read in several calls rather than one because main() needs them at
+ * Read in several calls rather than one because the step needs them at
  * different points: the engine before it resolves the image, the filesystem
  * inputs before the privileged preflight checks, the rules only after the
  * image is verified. Folding them together would reorder validation against
@@ -75,16 +75,6 @@ export function resolveWriteThroughInput(
     return writable;
   }
   return writeThrough;
-}
-
-/** The write_through: input as bare lines, for the pre-resolution check in
- *  main(). Resolution proper (variables, ~/, relative paths) is
- *  resolveWriteThroughPaths' job. */
-export function splitWriteThroughInput(input: string): string[] {
-  return input
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------

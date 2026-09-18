@@ -5,6 +5,7 @@ import {
   resolveWriteThroughPaths,
   ensureWriteThroughTargetsExist,
   removeCreatedDirsIfEmpty,
+  splitWriteThroughInput,
   WriteThroughTargetMissingError,
   WriteThroughTargetUncreatableError,
 } from "./write-through.ts";
@@ -348,5 +349,16 @@ describe("resolveWriteThroughEntry — a tilde with no HOME to expand to", () =>
     const resolved = resolveWriteThroughEntry("~/cache", { ...ENV, HOME: undefined });
     expect(resolved).not.toContain("undefined");
     expect(resolved.endsWith("/cache")).toBe(true);
+  });
+});
+
+describe("splitWriteThroughInput", () => {
+  it("splits on newlines, trims, and drops blank lines", () => {
+    expect(splitWriteThroughInput(" /opt/cache \n\n./dist\n")).toStrictEqual([
+      "/opt/cache",
+      "./dist",
+    ]);
+    expect(splitWriteThroughInput("")).toStrictEqual([]);
+    expect(splitWriteThroughInput(undefined)).toStrictEqual([]);
   });
 });

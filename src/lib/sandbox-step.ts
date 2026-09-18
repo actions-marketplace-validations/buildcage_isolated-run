@@ -26,19 +26,15 @@ import {
   readFilesystemInputs,
   readRuleInputs,
   readRunCommand,
-  splitWriteThroughInput,
 } from "./inputs.ts";
 import { checkUrlAndTlsRuleSupport } from "./engine-rule-support.ts";
 import { readLocalImageOverride, resolveComposeFile } from "./compose-file.ts";
 import { buildComposeEnv } from "./compose-env.ts";
 import { checkPasswordlessSudo } from "./sudo-preflight.ts";
 import { checkOverlayfsSupport } from "./overlayfs-preflight.ts";
-import { removeCreatedDirsIfEmpty } from "./sandbox/write-through.ts";
-import {
-  formatFilesystemPlanLog,
-  resolveFilesystemPlan,
-  validateFilesystemInputs,
-} from "./sandbox/filesystem-plan.ts";
+import { removeCreatedDirsIfEmpty, splitWriteThroughInput } from "./sandbox/write-through.ts";
+import { resolveFilesystemPlan, validateFilesystemInputs } from "./sandbox/filesystem-plan.ts";
+import { formatFilesystemPlanLog } from "./sandbox/ephemeral-fs.ts";
 import { generateContainerName, getContainerNetns } from "./container.ts";
 import { runSandboxedCommand } from "./sandbox/sandboxed-command.ts";
 import { startSandboxProxy, stopSandboxProxy } from "./proxy-lifecycle.ts";
@@ -82,6 +78,10 @@ export interface SandboxStepDeps {
   /** A renamed input's migration message, printed whether or not this is a
    *  real action run -- unlike the suppressible `annotation` below. */
   notice: (message: string) => void;
+  /** Where the sandbox's own warnings go. Always on for the same reason: they
+   *  are about the step's environment and its cleanup, which a run without a
+   *  report still needs to hear about. */
+  warn: (message: string) => void;
 }
 
 const realDeps: SandboxStepDeps = {
@@ -110,6 +110,7 @@ const realDeps: SandboxStepDeps = {
   info: core.info,
   log: console.log,
   notice: annotate.notice,
+  warn: annotate.warning,
 };
 
 /**
@@ -187,6 +188,7 @@ export async function runSandboxStep(
     info,
     log,
     notice,
+    warn,
   } = { ...realDeps, ...overrides };
 
   // Empty (not `??`-catchable) for local-path `uses: ./` invocations.
@@ -306,6 +308,7 @@ export async function runSandboxStep(
         proxyEngine,
         filesystemMode,
         overlayRoots,
+        warn,
       });
     } finally {
       // Never throws, so the teardown below is always reached.
@@ -324,6 +327,7 @@ export async function runSandboxStep(
         actionRepo,
         actionRef,
         runCommand: runInput,
+        env,
       });
       await stopSandboxProxy({ composeFile, projectName, composeEnv, annotation });
     }

@@ -109,19 +109,28 @@ export function resolveWriteThroughEntry(rawLine: string, env: NodeJS.ProcessEnv
   return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
 
-/** Parse + resolve the whole write_through: input. Newline-separated (not
+/** The write_through: input as bare lines. Newline-separated (not
  *  whitespace-split like the ACL rule inputs) since paths can legitimately
- *  contain spaces. Duplicates are folded, so the same path listed twice (or
- *  reached twice through different spellings) is only acted on once. */
+ *  contain spaces. Used on its own for the step's pre-resolution check, which
+ *  runs before anything privileged; resolution proper (variables, ~/, relative
+ *  paths) is resolveWriteThroughPaths' job below. */
+export function splitWriteThroughInput(input: string | undefined): string[] {
+  return (
+    input
+      ?.split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean) ?? []
+  );
+}
+
+/** Parse + resolve the whole write_through: input. Duplicates are folded, so
+ *  the same path listed twice (or reached twice through different spellings)
+ *  is only acted on once. */
 export function resolveWriteThroughPaths(
   input: string | undefined,
   env: NodeJS.ProcessEnv,
 ): string[] {
-  const lines =
-    input
-      ?.split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean) ?? [];
+  const lines = splitWriteThroughInput(input);
   return [...new Set(lines.map((line) => resolveWriteThroughEntry(line, env)))];
 }
 

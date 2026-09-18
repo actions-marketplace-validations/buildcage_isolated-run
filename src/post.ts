@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as core from "@actions/core";
 
+import { annotate } from "#core/lib/actions/annotation.ts";
 import { buildComposeDownArgs } from "#core/lib/docker/args.ts";
 import { readLocalImageOverride, resolveComposeFile } from "./lib/compose-file.ts";
 import { planPostCleanup } from "./lib/post-cleanup.ts";
@@ -37,6 +38,9 @@ function main(): void {
       ephemeralRoots: core.getState("ephemeral_overlay_roots"),
     },
     process.env,
+    // Always on: the post step has no report to suppress annotations for, and
+    // what it has to say is about cleanup that either happened or didn't.
+    annotate,
   );
   // No catch: a failure here should crash this script the same way the
   // original synchronous execFileSync call did (an uncaught error, non-zero

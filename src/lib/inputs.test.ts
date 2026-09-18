@@ -14,7 +14,6 @@ import {
   readRunCommand,
   readStepLabel,
   resolveWriteThroughInput,
-  splitWriteThroughInput,
 } from "./inputs.ts";
 import { buildACLRules, InvalidRulesError } from "#core/lib/acl/rules.ts";
 import { SandboxError } from "./errors.ts";
@@ -66,16 +65,6 @@ describe("resolveWriteThroughInput", () => {
 
   it("returns an empty string when nothing is set", () => {
     expect(resolveWriteThroughInput(inputs(), silent)).toBe("");
-  });
-});
-
-describe("splitWriteThroughInput", () => {
-  it("splits on newlines, trims, and drops blank lines", () => {
-    expect(splitWriteThroughInput(" /opt/cache \n\n./dist\n")).toStrictEqual([
-      "/opt/cache",
-      "./dist",
-    ]);
-    expect(splitWriteThroughInput("")).toStrictEqual([]);
   });
 });
 

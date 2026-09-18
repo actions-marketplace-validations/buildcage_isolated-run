@@ -49,6 +49,9 @@ export interface ReportStepOptions {
   actionRepo: string;
   actionRef: string;
   runCommand: string;
+  /** The step's own environment, which is where the summary's destinations
+   *  come from -- see writeReportSummary. */
+  env: NodeJS.ProcessEnv;
 }
 
 /**
@@ -69,6 +72,7 @@ export async function reportStepTraffic(
     actionRepo,
     actionRef,
     runCommand,
+    env,
   }: ReportStepOptions,
   overrides: Partial<ReportStepDeps> = {},
 ): Promise<void> {
@@ -106,6 +110,7 @@ export async function reportStepTraffic(
       // Only the inspect engine produces a traffic JSON, so only its summary
       // may point at one; uploadTrafficArtifact warns about the mismatch.
       wantsArtifact && report.engine === "inspect",
+      env,
     );
     if (wantsArtifact) {
       phase = "upload the traffic artifact";

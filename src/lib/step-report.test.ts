@@ -26,6 +26,7 @@ const annotation = { warning: vi.fn(), notice: vi.fn(), error: vi.fn() };
 function options(overrides: Partial<ReportStepOptions> = {}): ReportStepOptions {
   return {
     containerName: CONTAINER,
+    env: {},
     proxyEngine: "inspect",
     parameters: {
       mode: "restrict",

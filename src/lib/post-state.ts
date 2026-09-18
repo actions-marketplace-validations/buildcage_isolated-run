@@ -25,7 +25,7 @@ export interface PostStateResult {
  * projectName isn't one of the inputs: it's a pure function of
  * containerName, so it's derived here instead of being read from state.
  *
- * A missing containerName is the ordinary case (main.ts was never reached)
+ * A missing containerName is the ordinary case (the step was never reached)
  * and yields null with no problems. An invalid one is reported and also
  * yields null: the only path derivable from it is one this action can't
  * confirm it wrote, so no cleanup runs at all.

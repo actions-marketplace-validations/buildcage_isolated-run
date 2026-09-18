@@ -30,6 +30,7 @@ const mocks = {
   runIsolated: vi.fn(),
   mkdir: vi.fn(),
   info: vi.fn(),
+  warn: vi.fn(),
 };
 
 // A bag of doubles, not a partially-typed stand-in: every step is replaced, so
@@ -55,6 +56,7 @@ function options(overrides: Partial<RunSandboxedCommandOptions> = {}): RunSandbo
     proxyEngine: "universal",
     filesystemMode: "persistent",
     overlayRoots: [],
+    warn: mocks.warn,
     ...overrides,
   };
 }
@@ -156,7 +158,16 @@ describe("runSandboxedCommand", () => {
       allowWrite: ["/opt/cache"],
     });
     // The scratch dir has to be told which roots it discarded writes for.
-    expect(mocks.withScratchDir.mock.calls[0][2]).toStrictEqual(["/usr"]);
+    expect(mocks.withScratchDir.mock.calls[0][1].ephemeralRoots).toStrictEqual(["/usr"]);
+  });
+
+  // Both of the sandbox's own warnings come from modules it calls, so the sink
+  // has to reach each of them rather than being resolved here.
+  it("hands its warning sink to the scratch dir and the environment resolver", () => {
+    runSandboxedCommand(options(), deps);
+
+    expect(mocks.withScratchDir.mock.calls[0][1].warn).toBe(mocks.warn);
+    expect(mocks.resolveSandboxEnv).toHaveBeenCalledWith(expect.anything(), undefined, mocks.warn);
   });
 
   it("leaves persistent mode with no overlay at all", () => {
@@ -164,7 +175,7 @@ describe("runSandboxedCommand", () => {
 
     expect(mocks.createOverlayScratchDirs).not.toHaveBeenCalled();
     expect(mocks.buildOciConfig.mock.calls[0][1].ephemeral).toBeUndefined();
-    expect(mocks.withScratchDir.mock.calls[0][2]).toBeUndefined();
+    expect(mocks.withScratchDir.mock.calls[0][1].ephemeralRoots).toBeUndefined();
   });
 
   // Every one of these is set by a real runner, but this action is also driven

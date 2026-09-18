@@ -1,16 +1,20 @@
 import { existsSync } from "node:fs";
 
-import { annotate } from "#core/lib/actions/annotation.ts";
+import type { Annotation } from "#core/lib/actions/annotation.ts";
 import { errorMessage } from "#core/lib/errors.ts";
 import { ownerToken, readContainerOwner } from "./container.ts";
 import { resolvePostState, type PostCleanupTargets } from "./post-state.ts";
-import { cleanupScratchDir, scratchDirFor } from "./sandbox/scratch-dir.ts";
+import {
+  cleanupScratchDir,
+  scratchDirFor,
+  type CleanupScratchDirOptions,
+} from "./sandbox/scratch-dir.ts";
 
 /** Injectable seams for testing without a real Docker daemon or scratch dir. */
 export interface PostCleanupDeps {
   readOwner?: (containerName: string) => string | null;
   fileExists?: (path: string) => boolean;
-  removeScratchDir?: (dir: string, ephemeralRoots?: string[]) => void;
+  removeScratchDir?: (dir: string, options: CleanupScratchDirOptions) => void;
 }
 
 /**
@@ -19,7 +23,7 @@ export interface PostCleanupDeps {
  * container just as easily as a malformed one. What the container itself
  * records about the step that started it is what decides.
  *
- * No container behind the name leaves nothing to protect -- main.ts starts
+ * No container behind the name leaves nothing to protect -- the step starts
  * the proxy before the scratch dir and stops it after, so a live sandbox
  * always has one, and anything left under that name is a dead run's
  * leftovers. Reclaiming those is what this fallback exists for.
@@ -47,6 +51,7 @@ function startedByThisStep(
 export function planPostCleanup(
   state: { containerName: string; ephemeralRoots: string },
   env: NodeJS.ProcessEnv,
+  annotation: Annotation,
   {
     readOwner = readContainerOwner,
     fileExists = existsSync,
@@ -55,12 +60,12 @@ export function planPostCleanup(
 ): PostCleanupTargets | null {
   const { targets, problems } = resolvePostState(state);
   for (const problem of problems) {
-    annotate.error(`run post-cleanup: ${problem}`);
+    annotation.error(`run post-cleanup: ${problem}`);
   }
   if (!targets) return null;
 
   if (!startedByThisStep(targets.containerName, env, readOwner)) {
-    annotate.error(
+    annotation.error(
       `run post-cleanup: the proxy container named in GITHUB_STATE was started by a ` +
         `different step. Skipping all post-step cleanup: tearing it down would stop that step's ` +
         `proxy and delete its sandbox scratch directory.`,
@@ -68,7 +73,7 @@ export function planPostCleanup(
     return null;
   }
 
-  // Reclaim this step's sandbox scratch dir if a hard kill bypassed main.ts's
+  // Reclaim this step's sandbox scratch dir if a hard kill bypassed the run's
   // own withScratchDir finally. Its path is derived deterministically from
   // containerName (scratchDirFor), so no separately recorded path is needed.
   // cleanupScratchDir force-detaches the rootfs bind-mount before deleting, so
@@ -78,10 +83,15 @@ export function planPostCleanup(
   try {
     const scratchDir = scratchDirFor(targets.containerName);
     if (fileExists(scratchDir)) {
-      removeScratchDir(scratchDir, targets.ephemeralRoots);
+      removeScratchDir(scratchDir, {
+        ephemeralRoots: targets.ephemeralRoots,
+        warn: annotation.warning,
+      });
     }
   } catch (e) {
-    annotate.warning(`run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`);
+    annotation.warning(
+      `run post-cleanup: failed to remove sandbox scratch dir: ${errorMessage(e)}`,
+    );
   }
 
   return targets;

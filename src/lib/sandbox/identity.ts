@@ -97,7 +97,7 @@ export interface ResolveSandboxGidOptions {
 
 /**
  * Only supplementary groups are dropped for the sandboxed process (see
- * main.ts); the primary GID passes through unchanged. If it belongs to a
+ * oci-config.ts); the primary GID passes through unchanged. If it belongs to a
  * group that grants container/VM runtime access, substitutes a safe GID
  * instead. Complements the socket masking in runtime-sockets.ts: that
  * closes specific paths, this closes the GID-membership route itself.

@@ -17598,9 +17598,6 @@ function resolveWriteThroughInput({ writeThrough, writable, allowWrite }, notice
 	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
 	return !writeThrough.trim() && writable.trim() ? (notice("writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
 }
-function splitWriteThroughInput(input) {
-	return input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-}
 function readRunCommand(getInput$3 = getInput) {
 	let runInput = getInput$3("run", { trimWhitespace: !1 });
 	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
@@ -17849,7 +17846,7 @@ function defaultRemove(path) {
 function defaultMkdir(path, mode) {
 	(0, node_fs.mkdirSync)(path, { mode });
 }
-function unmountAllUnder(dir, deps) {
+function unmountAllUnder(dir, deps, warn) {
 	let { readMountinfo = defaultReadMountinfo, exec = defaultExec$2 } = deps, mountPoints;
 	try {
 		mountPoints = parseMountsUnder(readMountinfo(), dir);
@@ -17864,7 +17861,7 @@ function unmountAllUnder(dir, deps) {
 			mountPoint
 		]);
 	} catch (e) {
-		annotate.warning(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
+		warn?.(`Failed to unmount ${mountPoint} before cleanup: ${errorMessage(e)}`);
 	}
 }
 function removeScratchDir(dir, deps) {
@@ -17885,8 +17882,8 @@ function removeScratchDir(dir, deps) {
 		}
 	}, { retryOn: (e) => e.code === "EBUSY" });
 }
-function cleanupScratchDir(dir, ephemeralRoots, deps = {}) {
-	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps), removeScratchDir(dir, deps);
+function cleanupScratchDir(dir, { ephemeralRoots, warn } = {}, deps = {}) {
+	assertUnderScratchBase(dir), ephemeralRoots && ephemeralRoots.length > 0 && console.log(`Discarded ephemeral writes under ${ephemeralRoots.join(", ")}`), unmountAllUnder(dir, deps, warn), removeScratchDir(dir, deps);
 }
 function assertUnderScratchBase(dir) {
 	let abs = (0, node_path.resolve)(dir);
@@ -17906,16 +17903,19 @@ function ensureOwnScratchBase(base = SANDBOX_SCRATCH_BASE, { mkdir = defaultMkdi
 	let st = lstat(base), uid = process.getuid();
 	if (!st.isDirectory() || st.uid !== uid || st.mode & 63) throw new SandboxError(`${base} exists but is not a private directory owned by uid ${uid} (mode ${(st.mode & 4095).toString(8)}, uid ${st.uid}). Another user may have created it. Remove it and re-run.`, "SCRATCH_BASE_UNSAFE");
 }
-function withScratchDir(fn, containerName, ephemeralRoots) {
+function withScratchDir(fn, { containerName, ephemeralRoots, warn } = {}) {
 	let dir;
-	ensureOwnScratchBase(), containerName ? (dir = scratchDirFor(containerName), cleanupScratchDir(dir), (0, node_fs.mkdirSync)(dir, {
+	ensureOwnScratchBase(), containerName ? (dir = scratchDirFor(containerName), cleanupScratchDir(dir, { warn }), (0, node_fs.mkdirSync)(dir, {
 		recursive: !0,
 		mode: 448
 	})) : dir = (0, node_fs.mkdtempSync)((0, node_path.join)(SANDBOX_SCRATCH_BASE, "sandbox-"));
 	try {
 		return fn(dir);
 	} finally {
-		cleanupScratchDir(dir, ephemeralRoots);
+		cleanupScratchDir(dir, {
+			ephemeralRoots,
+			warn
+		});
 	}
 }
 //#endregion
@@ -18001,8 +18001,11 @@ function resolveWriteThroughEntry(rawLine, env) {
 	if (normalized === "/" && rawLine.trim() !== "/") throw Error(`write_through entry ${JSON.stringify(rawLine)} resolves to "/", the sentinel for dropping the read-only restriction entirely. Write it as a literal "/" if that is what you meant; otherwise check the "../" count.`);
 	return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
+function splitWriteThroughInput(input) {
+	return input?.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) ?? [];
+}
 function resolveWriteThroughPaths(input, env) {
-	let lines = input?.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) ?? [];
+	let lines = splitWriteThroughInput(input);
 	return [...new Set(lines.map((line) => resolveWriteThroughEntry(line, env)))];
 }
 var WriteThroughTargetMissingError = class extends Error {}, WriteThroughTargetUncreatableError = class extends Error {};
@@ -18713,13 +18716,13 @@ const ENV_BLOB_TERMINATOR = "__BUILDCAGE_ENV_END__", ENV_KEY = /^[A-Za-z_][A-Za-
 function isRunnerOnly(key) {
 	return RUNNER_ONLY_ENV_KEYS.has(key) || ACTION_INPUT_ENV_KEYS.has(key);
 }
-function resolveSandboxEnv(env, caTrust) {
+function resolveSandboxEnv(env, caTrust, warn) {
 	let merged = {
 		...env,
 		...caTrust ? caTrustAdditions(caTrust, env).env : void 0
 	}, resolved = {}, skipped = [];
 	for (let [key, value] of Object.entries(merged)) value !== void 0 && (isRunnerOnly(key) || (ENV_KEY.test(key) ? resolved[key] = value : skipped.push(key)));
-	return skipped.length > 0 && annotate.warning(`Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`), resolved;
+	return skipped.length > 0 && warn?.(`Not passing environment variables whose names a shell cannot export: ${skipped.join(", ")}`), resolved;
 }
 function buildEnvBlob(resolved) {
 	let records = [...Object.entries(resolved).map(([k, v]) => `${k}=${v}`), ENV_BLOB_TERMINATOR];
@@ -18891,14 +18894,14 @@ function assembleBundle(dir, options, deps) {
 	};
 }
 function runSandboxedCommand(options, overrides = {}) {
-	let { containerName, proxyNetns, env, filesystemMode, overlayRoots } = options, deps = {
+	let { containerName, proxyNetns, env, filesystemMode, overlayRoots, warn } = options, deps = {
 		...realDeps$2,
 		...overrides
 	}, { withScratchDir, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated } = deps;
 	return withScratchDir((dir) => {
 		let { config, runcPath, caTrust, netnsName, rootfsBindDir } = assembleBundle(dir, options, deps);
 		return writeOciConfig(config, dir), runIsolated({
-			envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust)),
+			envBlob: buildEnvBlob(resolveSandboxEnv(env, caTrust, warn)),
 			runcPath,
 			proxyNetns,
 			bundleDir: dir,
@@ -18909,7 +18912,11 @@ function runSandboxedCommand(options, overrides = {}) {
 			dns: PROXY_IP,
 			targetIp: "172.20.0.101"
 		});
-	}, containerName, filesystemMode === "ephemeral" ? overlayRoots : void 0);
+	}, {
+		containerName,
+		ephemeralRoots: filesystemMode === "ephemeral" ? overlayRoots : void 0,
+		warn
+	});
 }
 //#endregion
 //#region src/core/lib/docker/health.ts
@@ -19926,11 +19933,11 @@ function computeReportOutcome(report, { stepLabel, failOnBlocked, actionRepo, ac
 		shouldFail
 	};
 }
-async function writeReportSummary(report, annotation, options, artifactAvailable) {
+async function writeReportSummary(report, annotation, options, artifactAvailable, env, { appendFile = node_fs.appendFileSync } = {}) {
 	let outcome = computeReportOutcome(report, options);
-	await writeStepSummary(truncateForStepSummary(outcome.markdown, artifactAvailable), process.env.GITHUB_STEP_SUMMARY);
-	let debugSummaryFile = process.env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
-	debugSummaryFile && (0, node_fs.appendFileSync)(debugSummaryFile, outcome.markdown), applyOutcomeAnnotation(annotation, outcome);
+	await writeStepSummary(truncateForStepSummary(outcome.markdown, artifactAvailable), env.GITHUB_STEP_SUMMARY);
+	let debugSummaryFile = env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
+	debugSummaryFile && appendFile(debugSummaryFile, outcome.markdown), applyOutcomeAnnotation(annotation, outcome);
 }
 //#endregion
 //#region src/core/lib/report/outcome/traffic-output.ts
@@ -64967,7 +64974,7 @@ const realDeps$1 = {
 	readFailOnBlocked,
 	readStepLabel
 };
-async function reportStepTraffic({ containerName, proxyEngine, parameters, annotation, actionRepo, actionRef, runCommand }, overrides = {}) {
+async function reportStepTraffic({ containerName, proxyEngine, parameters, annotation, actionRepo, actionRef, runCommand, env }, overrides = {}) {
 	let { fetchReport, readActionVersion, writeReportSummary, wantsTrafficArtifact, uploadTrafficArtifact, readFailOnBlocked, readStepLabel } = {
 		...realDeps$1,
 		...overrides
@@ -64983,7 +64990,7 @@ async function reportStepTraffic({ containerName, proxyEngine, parameters, annot
 			actionVersion: readActionVersion(containerName, proxyEngine),
 			stepLabel: readStepLabel(),
 			failOnBlocked
-		}, wantsArtifact && report.engine === "inspect"), wantsArtifact && (phase = "upload the traffic artifact", await uploadTrafficArtifact(report, containerName, annotation));
+		}, wantsArtifact && report.engine === "inspect", env), wantsArtifact && (phase = "upload the traffic artifact", await uploadTrafficArtifact(report, containerName, annotation));
 	} catch (e) {
 		annotation.warning(`Failed to ${phase}: ${errorMessage(e)}`);
 	}
@@ -65016,7 +65023,8 @@ const realDeps = {
 	saveState,
 	info,
 	log: console.log,
-	notice: annotate.notice
+	notice: annotate.notice,
+	warn: annotate.warning
 };
 async function resolveVerifiedImage({ actionRef, actionRepo, proxyEngine }, { verifyImageDigestOrThrow, log }) {
 	let digest = await verifyImageDigestOrThrow({
@@ -65036,7 +65044,7 @@ function saveCleanupState(env, { containerName, filesystemMode, overlayRoots }, 
 	env.GITHUB_STATE && (saveState("container_name", containerName), filesystemMode === "ephemeral" && saveState("ephemeral_overlay_roots", JSON.stringify(overlayRoots)));
 }
 async function runSandboxStep(env, overrides = {}) {
-	let { readRunCommand, readEngineInputs, readFilesystemInputs, readRuleInputs, validateFilesystemInputs, checkPasswordlessSudo, checkOverlayfsSupport, createAnnotation, resolveFilesystemPlan, readLocalImageOverride, verifyImageDigestOrThrow, checkUrlAndTlsRuleSupport, logRules, withLogGroup, generateContainerName, getContainerNetns, startSandboxProxy, stopSandboxProxy, runSandboxedCommand, reportStepTraffic, removeCreatedDirsIfEmpty, saveState, info, log, notice } = {
+	let { readRunCommand, readEngineInputs, readFilesystemInputs, readRuleInputs, validateFilesystemInputs, checkPasswordlessSudo, checkOverlayfsSupport, createAnnotation, resolveFilesystemPlan, readLocalImageOverride, verifyImageDigestOrThrow, checkUrlAndTlsRuleSupport, logRules, withLogGroup, generateContainerName, getContainerNetns, startSandboxProxy, stopSandboxProxy, runSandboxedCommand, reportStepTraffic, removeCreatedDirsIfEmpty, saveState, info, log, notice, warn } = {
 		...realDeps,
 		...overrides
 	}, actionRef = env.GITHUB_ACTION_REF || "v1", actionRepo = env.GITHUB_ACTION_REPOSITORY || "buildcage/isolated-run", runInput = readRunCommand(), { proxyEngine } = readEngineInputs(notice);
@@ -65100,7 +65108,8 @@ async function runSandboxStep(env, overrides = {}) {
 				env,
 				proxyEngine,
 				filesystemMode,
-				overlayRoots
+				overlayRoots,
+				warn
 			});
 		} finally {
 			await reportStepTraffic({
@@ -65117,7 +65126,8 @@ async function runSandboxStep(env, overrides = {}) {
 				annotation,
 				actionRepo,
 				actionRef,
-				runCommand: runInput
+				runCommand: runInput,
+				env
 			}), await stopSandboxProxy({
 				composeFile,
 				projectName,

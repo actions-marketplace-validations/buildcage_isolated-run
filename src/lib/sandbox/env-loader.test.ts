@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,6 +86,28 @@ describe("resolveSandboxEnv", () => {
   it("drops keys a shell cannot export", () => {
     const resolved = resolveSandboxEnv({ "BASH_FUNC_x%%": "() { :; }", "1BAD": "x", OK: "y" });
     expect(resolved).toStrictEqual({ OK: "y" });
+  });
+
+  // Dropping a variable the step set is worth saying out loud, but where it is
+  // said is the caller's call, not this module's.
+  it("names the dropped keys to the sink it was given", () => {
+    const warn = vi.fn();
+
+    resolveSandboxEnv({ "BASH_FUNC_x%%": "() { :; }", "1BAD": "x", OK: "y" }, undefined, warn);
+
+    expect(warn.mock.calls[0][0]).toBe(
+      "Not passing environment variables whose names a shell cannot export: BASH_FUNC_x%%, 1BAD",
+    );
+  });
+
+  // The runner sets these for this action alone, so they are withheld before
+  // the check above ever sees them -- nothing for the user to act on.
+  it("says nothing about the inputs it withholds by design", () => {
+    const warn = vi.fn();
+
+    resolveSandboxEnv({ INPUT_RUN: "echo hi", OK: "y" }, undefined, warn);
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
