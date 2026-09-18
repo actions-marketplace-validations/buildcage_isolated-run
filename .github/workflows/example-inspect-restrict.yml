@@ -32,7 +32,7 @@ jobs:
           fail_on_blocked: false
           run: |
             npm init -y
-            npm install --ignore-scripts express
+            npm install --ignore-scripts @hono/node-server
 
             python3 -m pip install --user --quiet requests
 
