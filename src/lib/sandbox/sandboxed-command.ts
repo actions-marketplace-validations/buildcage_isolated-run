@@ -16,6 +16,51 @@ import { buildEnvBlob, resolveSandboxEnv, writeEnvLoader } from "./env-loader.ts
 import { runIsolated } from "./run.ts";
 import { withScratchDir } from "./scratch-dir.ts";
 
+/**
+ * The steps this function sequences. Declared rather than imported straight
+ * into the body so a test can watch the order and the arguments without
+ * standing in for ten modules at once; each one is tested in its own file.
+ */
+export interface RunSandboxedCommandDeps {
+  withScratchDir: typeof withScratchDir;
+  extractRuncBootstrap: typeof extractRuncBootstrap;
+  extractCaCert: typeof extractCaCert;
+  writeCaTrustFiles: typeof writeCaTrustFiles;
+  createOverlayScratchDirs: typeof createOverlayScratchDirs;
+  writeResolvConf: typeof writeResolvConf;
+  writeRunScript: typeof writeRunScript;
+  writeEnvLoader: typeof writeEnvLoader;
+  listHostMounts: typeof listHostMounts;
+  resolveSandboxGid: typeof resolveSandboxGid;
+  buildOciConfig: typeof buildOciConfig;
+  writeOciConfig: typeof writeOciConfig;
+  resolveSandboxEnv: typeof resolveSandboxEnv;
+  buildEnvBlob: typeof buildEnvBlob;
+  runIsolated: typeof runIsolated;
+  mkdir: (path: string, options: { mode: number }) => void;
+  info: (message: string) => void;
+}
+
+const realDeps: RunSandboxedCommandDeps = {
+  withScratchDir,
+  extractRuncBootstrap,
+  extractCaCert,
+  writeCaTrustFiles,
+  createOverlayScratchDirs,
+  writeResolvConf,
+  writeRunScript,
+  writeEnvLoader,
+  listHostMounts,
+  resolveSandboxGid,
+  buildOciConfig,
+  writeOciConfig,
+  resolveSandboxEnv,
+  buildEnvBlob,
+  runIsolated,
+  mkdir: mkdirSync,
+  info: core.info,
+};
+
 export interface RunSandboxedCommandOptions {
   containerName: string;
   proxyNetns: string;
@@ -37,16 +82,38 @@ export interface RunSandboxedCommandOptions {
  * OCI bundle, and runs the user's command inside it via run-isolated.sh.
  * Returns the isolated command's exit code.
  */
-export function runSandboxedCommand({
-  containerName,
-  proxyNetns,
-  runInput,
-  writeThroughPaths,
-  env,
-  proxyEngine,
-  filesystemMode,
-  overlayRoots,
-}: RunSandboxedCommandOptions): number {
+export function runSandboxedCommand(
+  {
+    containerName,
+    proxyNetns,
+    runInput,
+    writeThroughPaths,
+    env,
+    proxyEngine,
+    filesystemMode,
+    overlayRoots,
+  }: RunSandboxedCommandOptions,
+  overrides: Partial<RunSandboxedCommandDeps> = {},
+): number {
+  const {
+    withScratchDir,
+    extractRuncBootstrap,
+    extractCaCert,
+    writeCaTrustFiles,
+    createOverlayScratchDirs,
+    writeResolvConf,
+    writeRunScript,
+    writeEnvLoader,
+    listHostMounts,
+    resolveSandboxGid,
+    buildOciConfig,
+    writeOciConfig,
+    resolveSandboxEnv,
+    buildEnvBlob,
+    runIsolated,
+    mkdir,
+    info,
+  } = { ...realDeps, ...overrides };
   // Fixed addressing for the direct veth link to the proxy's buildcage0 interface.
   const gateway = "172.20.0.1";
   const dns = "172.20.0.1";
@@ -108,7 +175,7 @@ export function runSandboxedCommand({
         // The only part of the scratch dir buildOciConfig leaves visible to
         // the sandbox, so nothing it doesn't have to exec goes in here.
         const execDir = join(dir, "exec");
-        mkdirSync(execDir, { mode: 0o700 });
+        mkdir(execDir, { mode: 0o700 });
         const scriptPath = writeRunScript(runInput, execDir);
         const envLoaderPath = writeEnvLoader(execDir);
         // Real host mount table, read now (before run-isolated.sh's `mount
@@ -122,7 +189,7 @@ export function runSandboxedCommand({
         // privileged group. See identity.ts.
         const { gid, substitutedFrom } = resolveSandboxGid(process.getgid!(), env);
         if (substitutedFrom !== undefined) {
-          core.info(
+          info(
             `buildcage: sandbox GID substituted (${substitutedFrom} -> ${gid}) -- the runner's ` +
               "primary group grants container/VM runtime access",
           );

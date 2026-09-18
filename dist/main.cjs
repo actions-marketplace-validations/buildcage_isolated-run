@@ -18739,8 +18739,30 @@ function runIsolated({ runcPath, proxyNetns, bundleDir, containerId, netnsName, 
 //#endregion
 //#region src/lib/sandbox/sandboxed-command.ts
 init_core();
-function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThroughPaths, env, proxyEngine, filesystemMode, overlayRoots }) {
-	let dns = "172.20.0.1";
+const realDeps = {
+	withScratchDir,
+	extractRuncBootstrap,
+	extractCaCert,
+	writeCaTrustFiles,
+	createOverlayScratchDirs,
+	writeResolvConf,
+	writeRunScript,
+	writeEnvLoader,
+	listHostMounts,
+	resolveSandboxGid,
+	buildOciConfig,
+	writeOciConfig,
+	resolveSandboxEnv,
+	buildEnvBlob,
+	runIsolated,
+	mkdir: node_fs.mkdirSync,
+	info
+};
+function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThroughPaths, env, proxyEngine, filesystemMode, overlayRoots }, overrides = {}) {
+	let { withScratchDir, extractRuncBootstrap, extractCaCert, writeCaTrustFiles, createOverlayScratchDirs, writeResolvConf, writeRunScript, writeEnvLoader, listHostMounts, resolveSandboxGid, buildOciConfig, writeOciConfig, resolveSandboxEnv, buildEnvBlob, runIsolated, mkdir, info } = {
+		...realDeps,
+		...overrides
+	}, dns = "172.20.0.1";
 	return withScratchDir((dir) => {
 		let runcPath, seccompProfile, baseSpec;
 		try {
@@ -18753,14 +18775,15 @@ function runSandboxedCommand({ containerName, proxyNetns, runInput, writeThrough
 		}
 		let caTrust;
 		if (proxyEngine === "inspect") try {
-			caTrust = writeCaTrustFiles(extractCaCert(containerName, dir), dir);
+			let caCertPath = extractCaCert(containerName, dir);
+			caTrust = writeCaTrustFiles(caCertPath, dir);
 		} catch (e) {
 			throw new SandboxError(`Failed to extract the proxy's CA from the proxy image: ${errorMessage(e)}`, "CA_EXTRACT_FAILED");
 		}
 		let workdir = env.GITHUB_WORKSPACE || "", home = env.HOME || "", netnsName = containerName.replace(/^buildcage-proxy-/, "buildcage-sandbox-"), rootfsBindDir = (0, node_path.join)(dir, "rootfs"), config;
 		try {
 			let overlayScratchPaths = filesystemMode === "ephemeral" ? createOverlayScratchDirs(dir, overlayRoots) : [], resolvConfPath = writeResolvConf(dns, dir), execDir = (0, node_path.join)(dir, "exec");
-			(0, node_fs.mkdirSync)(execDir, { mode: 448 });
+			mkdir(execDir, { mode: 448 });
 			let scriptPath = writeRunScript(runInput, execDir), envLoaderPath = writeEnvLoader(execDir), hostMounts = listHostMounts(), { gid, substitutedFrom } = resolveSandboxGid(process.getgid(), env);
 			substitutedFrom !== void 0 && info(`buildcage: sandbox GID substituted (${substitutedFrom} -> ${gid}) -- the runner's primary group grants container/VM runtime access`), config = buildOciConfig(baseSpec, {
 				identity: {
@@ -64797,9 +64820,10 @@ function fetchReport(containerName, parameters, proxyEngine) {
 	let docker = createDocker();
 	return proxyEngine === "inspect" ? buildInspectReportData(readRotatedLog(docker, containerName, HAPROXY_LOG_DIR), readRotatedLog(docker, containerName, "/var/log/coredns"), parameters) : buildUniversalReportData(readRotatedLog(docker, containerName, HAPROXY_LOG_DIR), parameters);
 }
-function readActionVersion(containerName, proxyEngine) {
+function readActionVersion(containerName, proxyEngine, docker) {
+	let client = docker ?? createDocker();
 	try {
-		let label = createDocker().readLabels(containerName)["org.opencontainers.image.version"];
+		let label = client.readLabels(containerName)["org.opencontainers.image.version"];
 		if (!label) return;
 		let suffix = `-${proxyEngine}`;
 		return `v${label.endsWith(suffix) ? label.slice(0, -suffix.length) : label}`;
