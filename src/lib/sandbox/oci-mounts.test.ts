@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 
-import { freshMountDestinationsFrom, withHostShmSize } from "./oci-mounts.ts";
+import {
+  ephemeralLayers,
+  freshMountDestinationsFrom,
+  persistentLayers,
+  scratchBaseLayers,
+  withHostShmSize,
+  writableDirsOf,
+} from "./oci-mounts.ts";
+import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 
 describe("freshMountDestinationsFrom", () => {
   it("collects every mounts[].destination from the base spec", () => {
@@ -49,5 +57,164 @@ describe("withHostShmSize", () => {
   it("leaves every other mount alone, size= included", () => {
     // /dev is a separate tmpfs holding device nodes only; 64MB is ample there.
     expect(withHostShmSize([other], 1024)).toStrictEqual([other]);
+  });
+});
+
+describe("writableDirsOf", () => {
+  it("keeps workdir, home, /tmp and RUNNER_TEMP, plus whatever write_through named", () => {
+    expect(
+      writableDirsOf({
+        workdir: "/home/runner/work/repo/repo",
+        home: "/home/runner",
+        runnerTemp: "/opt/actions-runner/_work/_temp",
+        writablePaths: ["/var/cache/app"],
+      }),
+    ).toStrictEqual([
+      "/home/runner/work/repo/repo",
+      "/home/runner",
+      "/tmp",
+      "/opt/actions-runner/_work/_temp",
+      "/var/cache/app",
+    ]);
+  });
+
+  it("drops the ones the environment never set, rather than binding undefined", () => {
+    expect(writableDirsOf({})).toStrictEqual(["/tmp"]);
+  });
+
+  it("dedupes, so a RUNNER_TEMP that is already a writable path is bound once", () => {
+    // Nested under $HOME on a GitHub-hosted runner, and a write_through entry
+    // may name it too. Either way it must not be bind-mounted twice.
+    expect(
+      writableDirsOf({ home: "/home/runner", runnerTemp: "/tmp", writablePaths: ["/home/runner"] }),
+    ).toStrictEqual(["/home/runner", "/tmp"]);
+  });
+});
+
+describe("persistentLayers", () => {
+  const fresh = new Set(["/proc"]);
+
+  it("binds each writable dir read-write and reports it as writable", () => {
+    const { mounts, writablePaths } = persistentLayers(["/home/runner", "/tmp"], fresh, {
+      disableReadonly: false,
+    });
+    expect(mounts).toStrictEqual([
+      {
+        destination: "/home/runner",
+        type: "none",
+        source: "/home/runner",
+        options: ["rbind", "rw"],
+      },
+      { destination: "/tmp", type: "none", source: "/tmp", options: ["rbind", "rw"] },
+    ]);
+    expect(writablePaths).toStrictEqual(new Set(["/home/runner", "/tmp"]));
+  });
+
+  it("mounts nothing under `writable: /`, the whole root being writable already", () => {
+    // Still reports the paths, since oci-protected-paths.ts reads them to
+    // decide what not to force read-only.
+    const { mounts, writablePaths } = persistentLayers(["/home/runner"], fresh, {
+      disableReadonly: true,
+    });
+    expect(mounts).toStrictEqual([]);
+    expect(writablePaths).toStrictEqual(new Set(["/home/runner"]));
+  });
+
+  it("refuses a writable dir inside a destination runc mounts fresh content at", () => {
+    // The bind would shadow it: `write_through: /proc` would hand the sandbox
+    // the host's real procfs and undo the PID-namespace separation.
+    expect(() => persistentLayers(["/proc/sys"], fresh, { disableReadonly: false })).toThrow(
+      /which the sandbox mounts itself/,
+    );
+  });
+});
+
+describe("ephemeralLayers", () => {
+  const fresh = new Set(["/proc"]);
+  const root = (path: string) => ({
+    path,
+    upper: `/scratch${path}/upper`,
+    work: `/scratch${path}/work`,
+  });
+
+  it("stacks an overlay per root, lowerdir being the untouched host path", () => {
+    const { mounts } = ephemeralLayers({ overlayRoots: [root("/home")], allowWrite: [] }, fresh);
+    expect(mounts).toStrictEqual([
+      {
+        destination: "/home",
+        type: "overlay",
+        source: "overlay",
+        options: ["lowerdir=/home", "upperdir=/scratch/home/upper", "workdir=/scratch/home/work"],
+      },
+    ]);
+  });
+
+  it("punches each write_through entry back through as a plain rw rbind", () => {
+    const { mounts } = ephemeralLayers({ overlayRoots: [], allowWrite: ["/var/cache"] }, fresh);
+    expect(mounts).toStrictEqual([
+      { destination: "/var/cache", type: "none", source: "/var/cache", options: ["rbind", "rw"] },
+    ]);
+  });
+
+  it("orders overlays shallow-first, then the write_through entries shallow-first", () => {
+    // A deeper mount applied before the shallower one containing it would be
+    // buried by it.
+    const { mounts } = ephemeralLayers(
+      {
+        overlayRoots: [root("/home/runner/deep"), root("/home")],
+        allowWrite: ["/home/runner/deep/allow", "/allow"],
+      },
+      fresh,
+    );
+    expect(mounts.map((m) => m.destination)).toStrictEqual([
+      "/home",
+      "/home/runner/deep",
+      "/allow",
+      "/home/runner/deep/allow",
+    ]);
+  });
+
+  it("reports both the overlay roots and the write_through paths as writable", () => {
+    const { writablePaths } = ephemeralLayers(
+      { overlayRoots: [root("/home")], allowWrite: ["/var/cache"] },
+      fresh,
+    );
+    expect(writablePaths).toStrictEqual(new Set(["/home", "/var/cache"]));
+  });
+
+  it("refuses a write_through entry inside a destination runc mounts fresh content at", () => {
+    expect(() => ephemeralLayers({ overlayRoots: [], allowWrite: ["/proc/sys"] }, fresh)).toThrow(
+      /which the sandbox mounts itself/,
+    );
+  });
+});
+
+describe("scratchBaseLayers", () => {
+  const execDir = `${SANDBOX_SCRATCH_BASE}/sandbox-xyz/exec`;
+
+  it("covers the scratch base with an empty tmpfs the sandbox can only traverse", () => {
+    // The rootfs rbind sweeps in every other concurrent run's scratch dir, and
+    // their 0700 modes separate nothing without a user namespace. An empty
+    // tmpfs does.
+    const [mask] = scratchBaseLayers(execDir);
+    expect(mask).toStrictEqual({
+      destination: SANDBOX_SCRATCH_BASE,
+      type: "tmpfs",
+      source: "tmpfs",
+      options: ["nosuid", "nodev", "mode=0555"],
+    });
+  });
+
+  it("reveals this run's own execDir again, after the mask", () => {
+    const layers = scratchBaseLayers(execDir);
+    expect(layers.map((m) => m.destination)).toStrictEqual([SANDBOX_SCRATCH_BASE, execDir]);
+  });
+
+  it("reveals it with `bind`, never `rbind`, which would pull in the whole host /", () => {
+    // By this point the scratch dir also holds the live `mount --rbind /`
+    // rootfs. A recursive bind would carry that in as a second copy of the
+    // host's own /, read-write at that, since `ro` covers only the top mount.
+    const [, reveal] = scratchBaseLayers(execDir);
+    expect(reveal.options).toStrictEqual(["bind", "ro"]);
   });
 });

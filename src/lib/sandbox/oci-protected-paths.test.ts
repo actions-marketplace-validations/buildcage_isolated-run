@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 
-import { computeReadonlyHostMounts } from "./oci-protected-paths.ts";
+import { computeReadonlyHostMounts, resolveProtectedPaths } from "./oci-protected-paths.ts";
 import { parseMountinfo } from "./mountinfo.ts";
+import type { HostMount } from "./types.ts";
 
 // Realistic /proc/self/mountinfo lines (see parseMountinfo's doc comment
 // for the field layout). Each has one optional field ("shared:N") before
@@ -55,5 +56,85 @@ describe("computeReadonlyHostMounts", () => {
     ];
     const result = computeReadonlyHostMounts(withSecurityfs, new Set(), freshMountDestinations);
     expect(result.includes("/sys/kernel/security")).toBeTruthy();
+  });
+});
+
+describe("resolveProtectedPaths", () => {
+  const base = {
+    baseMaskedPaths: ["/proc/kcore"],
+    baseReadonlyPaths: ["/proc/bus", "/proc/sysrq-trigger"],
+    uid: 1000,
+    env: {} as NodeJS.ProcessEnv,
+    hostMounts: [] as HostMount[],
+    writablePaths: new Set<string>(),
+    freshMountDestinations: new Set<string>(),
+    disableReadonly: false,
+  };
+
+  it("adds this action's own masked paths on top of runc's, rather than replacing them", () => {
+    const { maskedPaths } = resolveProtectedPaths(base);
+    expect(maskedPaths).toContain("/proc/kcore"); // runc's own
+    expect(maskedPaths).toContain("/proc/kallsyms"); // this action's
+    expect(maskedPaths).toContain("/run/docker.sock");
+    expect(maskedPaths).toContain("/run/netns");
+    expect(maskedPaths).toContain("/run/user/1000");
+  });
+
+  // Masked and read-only on the same path is not belt and braces: in the
+  // order runc applies them the read-only remount lands on top and makes the
+  // mask pointless. A path can reach readonlyPaths two ways, and both are
+  // filtered here.
+  it("takes a path it masks out of the readonlyPaths runc's own base spec listed", () => {
+    const { readonlyPaths } = resolveProtectedPaths(base);
+    expect(readonlyPaths).not.toContain("/proc/sysrq-trigger");
+    expect(readonlyPaths).toContain("/proc/bus");
+  });
+
+  it("takes a path it masks out of the readonlyPaths the host-mount sweep produced", () => {
+    // /run/user/<uid> is a real tmpfs mount on the host, so the sweep would
+    // otherwise re-add what perUserRuntimeDirs just masked.
+    const { maskedPaths, readonlyPaths } = resolveProtectedPaths({
+      ...base,
+      hostMounts: [
+        { mountPoint: "/run/user/1000", fsType: "tmpfs" },
+        { mountPoint: "/mnt", fsType: "ext4" },
+      ],
+    });
+    expect(maskedPaths).toContain("/run/user/1000");
+    expect(readonlyPaths).not.toContain("/run/user/1000");
+    expect(readonlyPaths).toContain("/mnt");
+  });
+
+  it("leaves a path the mount layers keep writable out of readonlyPaths", () => {
+    const { readonlyPaths } = resolveProtectedPaths({
+      ...base,
+      hostMounts: [
+        { mountPoint: "/home/runner", fsType: "ext4" },
+        { mountPoint: "/mnt", fsType: "ext4" },
+      ],
+      writablePaths: new Set(["/home/runner"]),
+    });
+    expect(readonlyPaths).not.toContain("/home/runner");
+    expect(readonlyPaths).toContain("/mnt");
+  });
+
+  it("masks the rootless runtime sockets only once $XDG_RUNTIME_DIR names a directory", () => {
+    expect(resolveProtectedPaths(base).maskedPaths).not.toContain("/run/user/1000/docker.sock");
+    const { maskedPaths } = resolveProtectedPaths({
+      ...base,
+      env: { XDG_RUNTIME_DIR: "/run/user/1000" },
+    });
+    expect(maskedPaths).toContain("/run/user/1000/docker.sock");
+  });
+
+  it("skips the host-mount sweep under `writable: /`, still masking what it masks", () => {
+    const { maskedPaths, readonlyPaths } = resolveProtectedPaths({
+      ...base,
+      hostMounts: [{ mountPoint: "/mnt", fsType: "ext4" }],
+      disableReadonly: true,
+    });
+    expect(readonlyPaths).not.toContain("/mnt");
+    expect(readonlyPaths).toContain("/proc/bus");
+    expect(maskedPaths).toContain("/run/user/1000");
   });
 });

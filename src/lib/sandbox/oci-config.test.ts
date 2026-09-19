@@ -23,14 +23,12 @@ const PROC_LIMITS = [
  * non-Linux host looks like -- supplied rather than read, since otherwise the
  * suite silently covers something different on a macOS dev machine than in CI.
  */
-function pinnedProbes({
-  absent = [],
-}: { absent?: ("setpriv" | "shm" | "nofile")[] } = {}): HostProbes {
+function pinnedProbes({ absent = [] }: { absent?: ("setpriv" | "nofile")[] } = {}): HostProbes {
   return {
     setprivPath: () => (absent.includes("setpriv") ? "setpriv" : "/usr/bin/setpriv"),
     nofileRlimit: () =>
       absent.includes("nofile") ? undefined : parseNofileLimit(PROC_LIMITS, 1073741816),
-    shmSizeBytes: () => (absent.includes("shm") ? undefined : SHM_BYTES),
+    shmSizeBytes: () => SHM_BYTES,
     hostname: () => HOSTNAME,
   };
 }
@@ -192,21 +190,13 @@ describe("buildOciConfig", () => {
       expect(config.hostname).toBe(HOSTNAME);
     });
 
+    // What withHostShmSize does with a size is its own (see oci-mounts.test.ts);
+    // what this says is that the size reaching it is the one the host reported.
     it("resizes /dev/shm to the host's own, away from runc's 64MB container default", () => {
       const config = build(fakeBaseSpec(), baseArgs);
       const shm = config.mounts.find((m) => m.destination === "/dev/shm");
       expect(shm?.options).not.toContain("size=65536k");
       expect(shm?.options).toContain(`size=${SHM_BYTES}`);
-    });
-
-    // Where /dev/shm is a plain directory rather than a mount of its own, statfs
-    // answers for the containing filesystem, and sizing a tmpfs to a whole disk
-    // would let a step exhaust the host's memory.
-    it("leaves /dev/shm unsized when the host has no tmpfs mounted there", () => {
-      probes = pinnedProbes({ absent: ["shm"] });
-      const config = build(fakeBaseSpec(), baseArgs);
-      const shm = config.mounts.find((m) => m.destination === "/dev/shm");
-      expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
     });
   });
 
@@ -517,34 +507,15 @@ describe("buildOciConfig", () => {
       expect(config.mounts.some((m) => m.destination === SANDBOX_SCRATCH_BASE)).toBe(true);
     });
 
-    it("fails closed when writable: lists the scratch base itself", () => {
+    // Which shapes the guard rejects is assertScratchBaseNotWritable's own
+    // (see paths.test.ts); what this says is that write_through reaches it.
+    it("fails closed when writable: names the scratch base", () => {
       expect(() =>
         build(fakeBaseSpec(), {
           ...baseArgs,
           writable: { ...baseArgs.writable, writablePaths: [SANDBOX_SCRATCH_BASE] },
         }),
       ).toThrow(/overlaps the sandbox's own scratch directory/);
-    });
-
-    it("fails closed when writable: lists an ancestor of the scratch base", () => {
-      expect(() =>
-        build(fakeBaseSpec(), {
-          ...baseArgs,
-          writable: { ...baseArgs.writable, writablePaths: ["/var/tmp"] },
-        }),
-      ).toThrow(/overlaps/);
-    });
-
-    it("fails closed when writable: lists a descendant of the scratch base", () => {
-      expect(() =>
-        build(fakeBaseSpec(), {
-          ...baseArgs,
-          writable: {
-            ...baseArgs.writable,
-            writablePaths: [`${SANDBOX_SCRATCH_BASE}/some-other-run`],
-          },
-        }),
-      ).toThrow(/overlaps/);
     });
 
     it("fails closed when $HOME or RUNNER_TEMP itself overlaps the scratch base", () => {
