@@ -151,7 +151,7 @@ describe("fetchBundle: fallback tag path", () => {
 
 // ── fail-closed paths ─────────────────────────────────────────────────────
 //
-// Every branch below refuses rather than returns. They are what stands between
+// Every branch below refuses rather than returns. Each is what stands between
 // a registry that answers oddly and an unverified image being pulled anyway, so
 // each case pins the code that comes back, not just that something threw.
 

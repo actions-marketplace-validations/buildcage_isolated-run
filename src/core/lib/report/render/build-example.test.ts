@@ -115,7 +115,7 @@ describe("buildRestrictExample", () => {
     );
   });
 
-  it("without a runCommand omits the run: block", () => {
+  it("without a runCommand, omits the run: block", () => {
     const rows = [{ host: "registry.npmjs.org", port: "443", ruleType: "HTTPS", count: 1 }];
     expect(buildRestrictExample(rows, REPO, REF)).toBe(
       restrictExampleBlock(
