@@ -37,7 +37,7 @@ inputs:
     required: false
     default: ""
   upload_traffic_artifact:
-    description: "Upload the observed traffic as a JSON artifact, fetchable afterwards by whoever turns out to want it — a later job in the same run via actions/download-artifact, or anyone else via the API, subject to the retention period below. Requires proxy_engine: inspect."
+    description: "Upload the observed traffic as a JSON artifact, fetchable afterwards by whoever turns out to want it: a later job in the same run via actions/download-artifact, or anyone else via the API, subject to the retention period below. Requires proxy_engine: inspect."
     required: false
     default: "false"
   traffic_artifact_retention_days:
@@ -49,7 +49,7 @@ inputs:
     required: false
     default: "true"
   known_blocked_rules:
-    description: "Domains expected to be blocked intentionally (wildcard or ~regex), separated by whitespace. A rule that names no port matches any port, a refused name having none. Blocked connections matching these rules don't fail the step even when fail_on_blocked is true — only unmatched (unexpected) blocked connections do. e.g., 'known-noisy.example.com:443'"
+    description: "Domains expected to be blocked intentionally (wildcard or ~regex), separated by whitespace. A rule that names no port matches any port, a refused name having none. Blocked connections matching these rules don't fail the step even when fail_on_blocked is true; only unmatched (unexpected) blocked connections do. e.g., 'known-noisy.example.com:443'"
     required: false
     default: ""
   write_through:
@@ -61,11 +61,11 @@ inputs:
     required: false
     default: ""
   filesystem_mode:
-    description: "persistent (default) keeps writes to $HOME/$RUNNER_TEMP/$GITHUB_WORKSPACE/tmp on the host after the step ends. ephemeral discards them instead (via an overlay), except for paths listed in write_through — use this to stop a step from planting files (e.g. GITHUB_ENV, ~/.bashrc, ~/.npmrc) that a later, non-isolated step would pick up."
+    description: "persistent (default) keeps writes to $HOME/$RUNNER_TEMP/$GITHUB_WORKSPACE/tmp on the host after the step ends. ephemeral discards them instead (via an overlay), except for paths listed in write_through. Use this to stop a step from planting files (e.g. GITHUB_ENV, ~/.bashrc, ~/.npmrc) that a later, non-isolated step would pick up."
     required: false
     default: "persistent"
   label:
-    description: "Label appended to this step's Job Summary heading, e.g. 'npm install' — useful to tell steps apart when `run` is used more than once in the same job"
+    description: "Label appended to this step's Job Summary heading, e.g. 'npm install'. Useful to tell steps apart when `run` is used more than once in the same job"
     required: false
     default: ""
 
