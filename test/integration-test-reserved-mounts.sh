@@ -3,7 +3,14 @@
 # entry that contains them, and that naming one of those paths directly (or a
 # destination runc mounts itself) is refused. Drives dist/main.cjs directly,
 # without the real action wrapper.
+#
+# Case 1 resolves and fetches a name to show DNS still works through the
+# action's own resolv.conf mount. It goes to the fixture origin in
+# compose.test-universal.yaml rather than a real site: what is under test is the
+# mount, so nothing here should turn on a third party being up.
 set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
 
@@ -14,6 +21,7 @@ TESTDIR=/etc/buildcage-reserved-test
 sudo -n mkdir -p "$TESTDIR"
 sudo -n chown "$(id -u):$(id -g)" "$TESTDIR"
 cleanup() {
+  docker compose -f "$REPO_ROOT/compose.test-universal.yaml" down -v >/dev/null 2>&1 || true
   sudo -n rm -rf "$TESTDIR"
   rm -rf "$WORKDIR"
 }
@@ -30,10 +38,11 @@ run_instance() {
   GITHUB_STEP_SUMMARY="$WORKDIR/summary.md" \
   BUILDCAGE_BUILD_TEST_HOOKS=1 \
   BUILDCAGE_LOCAL_IMAGE_REF="$BUILDCAGE_LOCAL_IMAGE_REF" \
-  INPUT_ALLOWED_HTTPS_RULES="example.com:443" \
+  BUILDCAGE_TEST_COMPOSE_FILE="$REPO_ROOT/docker/compose.action.test-universal.yaml" \
+  INPUT_ALLOWED_HTTPS_RULES="allowed.example.com:443" \
   INPUT_WRITE_THROUGH="$write_through" \
   INPUT_RUN="$run_script" \
-    node dist/main.cjs > "$WORKDIR/out.log" 2>&1
+    node "$REPO_ROOT/dist/main.cjs" > "$WORKDIR/out.log" 2>&1
   echo $? > "$WORKDIR/exit_code"
   cat "$WORKDIR/out.log"
 }
@@ -42,9 +51,13 @@ echo ""
 echo "=== Sandbox reserved-mount Assertions ==="
 echo ""
 
+echo "--- bringing up fixture origin (compose.test-universal.yaml) ---"
+docker compose -f "$REPO_ROOT/compose.test-universal.yaml" up -d --build --wait
+
 # Case 1: write_through: /etc persists writes under /etc without taking the
-# action's own DNS and CA mounts with it.
-run_instance "/etc" "curl -fsS --max-time 20 -o /dev/null https://example.com
+# action's own DNS and CA mounts with it. `-k` because the fixture origin's
+# certificate is self-signed and the universal engine never terminates TLS.
+run_instance "/etc" "curl -fsS -k --max-time 20 -o /dev/null https://allowed.example.com/
 cp /etc/resolv.conf \"\$GITHUB_WORKSPACE/sandbox-resolv.conf\"
 echo built > ${TESTDIR}/marker
 if echo nameserver 1.2.3.4 >> /etc/resolv.conf 2>/dev/null; then
