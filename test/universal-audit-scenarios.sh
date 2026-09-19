@@ -4,8 +4,9 @@
 #
 # ---------------------------------------------------------------------------
 # Rules under test: none -- audit mode records but does not enforce the
-# allowlist, so every name-based connection is expected to succeed except
-# the internal-address guard, which stays active unconditionally.
+# allowlist, so a connection only fails here for a reason that has nothing to
+# do with rules: the internal-address guard, an unresolvable name, or no name
+# to judge at all.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
@@ -76,5 +77,19 @@ if [ "$CODE" != "200" ]; then
 else
   fail "nxdomain.wildcard.example.com HTTP reached the origin"
 fi
+
+# [TLS ClientHello with no SNI extension at all. There is no name to judge, so
+# the connection is refused on that alone, audit mode or not -- the report
+# records the address it was headed for, which is the proxy's own.]
+echo "=== [HTTPS - missing-sni] ==="
+(printf '\x16\x03\x01\x00\x2d\x01\x00\x00\x29\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xff\x01\x00' \
+ | nc -w 5 blocked.example.com 443 > /dev/null 2>&1 || true)
+echo "  request sent (blocked expected in the report)"
+
+# [HTTP/1.0 request with no Host header, the plaintext counterpart of the
+# case above.]
+echo "=== [HTTP - missing-host-header] ==="
+((printf 'GET / HTTP/1.0\r\n\r\n'; sleep 1) | nc -w 5 blocked.example.com 80 > /dev/null 2>&1 || true)
+echo "  request sent (blocked expected in the report)"
 
 scenario_results
