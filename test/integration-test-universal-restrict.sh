@@ -64,9 +64,23 @@ assert_summary_contains "| allowed.example.com:80 | HTTP |" "allowed.example.com
 # case-insensitivity at all, only the Host-header (HTTP) path does.
 assert_summary_contains "| ALLOWED.example.com:80 | HTTP |" "uppercase host (HTTP) recorded as allowed"
 assert_summary_contains "| sub.wildcard.example.com:443 | HTTPS |" "wildcard-matched name recorded as allowed"
+# Each of these is the near miss for a rule the scenarios also request on its
+# matching side. From inside the sandbox every one of them looks the same --
+# "not 200" -- so the reason is what tells a rule that refused the name from a
+# fixture that was never reachable in the first place.
+assert_summary_contains "| not-ok.regex.example.com:443 | HTTPS | not-allowed |" "an anchorless regex did not match a name merely containing it, reason not-allowed"
+assert_summary_contains "| deep.sub.wildcard.example.com:443 | HTTPS | not-allowed |" "a wildcard did not reach a nested subdomain, reason not-allowed"
+assert_summary_contains "| ports.regex.example.com:80 | HTTP | not-allowed |" "a regex naming https ports only did not cover :80, reason not-allowed"
 assert_summary_contains "| blocked.example.com:443 | HTTPS | not-allowed |" "blocked.example.com:443 recorded as blocked, reason not-allowed"
+# The same name on the three other ports the scenarios request it on. The
+# keep-alive check further down reads blocked.example.com:80 out of the Allowed
+# Hosts table only, so it and the row below are about different tables.
+assert_summary_contains "| blocked.example.com:80 | HTTP | not-allowed |" "blocked.example.com:80 recorded as blocked, reason not-allowed"
+assert_summary_contains "| blocked.example.com:8443 | HTTPS | not-allowed |" "blocked.example.com:8443 recorded as blocked, reason not-allowed"
+assert_summary_contains "| blocked.example.com:8080 | HTTP | not-allowed |" "blocked.example.com:8080 recorded as blocked, reason not-allowed"
 assert_summary_contains "| 10.200.0.100:80 | IP | ip-not-allowed |" "direct IP recorded as blocked, reason ip-not-allowed"
 assert_summary_contains "| nxdomain.wildcard.example.com:443 | HTTPS | dns-failed |" "unresolvable allowlisted name recorded as dns-failed"
+assert_summary_contains "| nxdomain.wildcard.example.com:80 | HTTP | dns-failed |" "unresolvable allowlisted name recorded as dns-failed on the HTTP path too"
 assert_summary_contains "| v6only.wildcard.example.com:443 | HTTPS | dns-failed |" "allowlisted name with AAAA records only recorded as dns-failed"
 assert_summary_contains "| v6only.wildcard.example.com:80 | HTTP | dns-failed |" "allowlisted name with AAAA records only recorded as dns-failed on the HTTP path too"
 assert_summary_contains "| internal.wildcard.example.com:443 | HTTPS | internal-address |" "SSRF via allowlisted name recorded as blocked, reason internal-address"
