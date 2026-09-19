@@ -97,7 +97,6 @@ clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 test_integration_sandbox_linux: ## Run the action's integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF and a test-hook build of dist/main.cjs)
 	@./test/integration-test-ephemeral-fs.sh
 	@./test/integration-test-writable-dir.sh
-	@./test/integration-test-reserved-mounts.sh
 	@./test/integration-test-defaults.sh
 	@./test/integration-test-host-parity.sh
 	@./test/integration-test-seccomp.sh
@@ -114,15 +113,16 @@ test_integration_sandbox_linux: ## Run the action's integration tests (needs BUI
 # network in compose.test-universal.yaml (fake DNS + an origin under our own
 # control) instead of the real internet, which is what lets them cover cases
 # real hosts can't -- an allowlisted name resolving to an internal address,
-# NXDOMAIN, direct-IP blocking with no allowed_ip_rules, etc. The last two are
-# here for the other half of that: whatever they assert, a third-party site
-# being up is not something this suite should depend on.
+# NXDOMAIN, direct-IP blocking with no allowed_ip_rules, etc. The rest are here
+# for the other half of that: whatever they assert, a third-party site being up
+# is not something this suite should depend on.
 .PHONY: test_integration_sandbox_universal
 test_integration_sandbox_universal: ## Run the universal-engine fixture-based integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF built with test hooks)
 	@./test/integration-test-universal-restrict.sh
 	@./test/integration-test-universal-audit.sh
 	@./test/integration-test-concurrent.sh
 	@./test/integration-test-known-blocked-rules.sh
+	@./test/integration-test-reserved-mounts.sh
 
 # Separate from the above: these need an inspect-engine image (a different
 # Dockerfile/build) and the fixture origin network in compose.test-inspect.yaml.
