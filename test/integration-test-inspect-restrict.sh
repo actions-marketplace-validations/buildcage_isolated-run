@@ -86,15 +86,6 @@ echo ""
 echo "--- report assertions (Job Summary) ---"
 SUMMARY=$(cat "$SUMMARY_FILE")
 
-assert_summary_contains() {
-  local pattern="$1" label="$2"
-  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
-    pass "$label"
-  else
-    fail "$label -- not found in report"
-  fi
-}
-
 assert_summary_contains "| allowed.example.com:443 | HTTPS |" "allowed.example.com:443 recorded as allowed"
 assert_summary_contains "| allowed.example.com:80 | HTTP |" "allowed.example.com:80 recorded as allowed"
 assert_summary_contains "| blocked.example.com:443 | HTTPS |" "blocked.example.com:443 recorded as blocked"

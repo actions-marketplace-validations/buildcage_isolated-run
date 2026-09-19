@@ -11,16 +11,6 @@ echo ""
 
 SUMMARY=$(cat "$BUILDCAGE_RUN_DEBUG_SUMMARY_FILE")
 
-assert_summary_contains() {
-  local pattern="$1"
-  local label="$2"
-  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
-    pass "$label"
-  else
-    fail "$label -- not found in sandbox report"
-  fi
-}
-
 assert_summary_contains "example.com:443" "allowed URL-rule host recorded in report"
 assert_summary_contains "not-allowed" "the out-of-rule POST recorded with its refusal reason"
 assert_summary_contains "neverssl.com:443" "host outside allowed_url_rules recorded as blocked"
