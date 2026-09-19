@@ -4,13 +4,12 @@
 # test-e2e.yml for the one case that does exercise the real action.
 # The mount-composition/path-resolution rules themselves are already
 # unit-tested (ephemeral-fs.test.ts, oci-config.test.ts); this proves runc
-# actually honors them, matching the real-host smoke test performed during
-# development (see isolated-run-spec-filesystem.md and the R-H1 plan).
+# actually honors them.
 #
-# Case 10 from the spec's own test plan (§12: overlay probe failure ->
-# clear error) isn't exercised here -- it needs an environment where
-# overlayfs itself doesn't work, which contradicts everything else in this
-# file running successfully. Covered instead by the mac-only dev loop
+# One case is left out on purpose: the clear error an overlay probe failure
+# raises isn't exercised here -- it needs an environment where overlayfs
+# itself doesn't work, which contradicts everything else in this file
+# running successfully. Covered instead by the mac-only dev loop
 # (`make test_sandbox_dev`), where overlayfs-on-overlayfs is known to fail
 # (see overlayfs-preflight.ts's own doc comment).
 set -uo pipefail
