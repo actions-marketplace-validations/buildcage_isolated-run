@@ -5,27 +5,18 @@ import { resolveProxyEngine } from "./engine.ts";
 const silent = () => {};
 
 describe("resolveProxyEngine", () => {
-  it("defaults to universal for undefined", () => {
+  it("defaults to universal for undefined or an empty string", () => {
     expect(resolveProxyEngine(undefined, silent)).toBe("universal");
-  });
-
-  it("defaults to universal for empty string", () => {
     expect(resolveProxyEngine("", silent)).toBe("universal");
   });
 
-  it("accepts universal explicitly", () => {
+  it("accepts each engine that has an image of its own", () => {
     expect(resolveProxyEngine("universal", silent)).toBe("universal");
-  });
-
-  it("accepts inspect", () => {
     expect(resolveProxyEngine("inspect", silent)).toBe("inspect");
   });
 
-  it("throws SandboxError for an invalid value", () => {
+  it("throws SandboxError for a value that is not an engine, casing included", () => {
     expect(() => resolveProxyEngine("restrict", silent)).toThrow();
-  });
-
-  it("throws SandboxError for a value with different casing (case-sensitive)", () => {
     expect(() => resolveProxyEngine("Inspect", silent)).toThrow();
   });
 
