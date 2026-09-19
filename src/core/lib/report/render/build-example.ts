@@ -10,7 +10,8 @@ const ruleTypeToParam: Record<string, string> = {
 export type AuditedRow = Pick<AggregatedEntry, "host" | "port" | "ruleType">;
 
 export interface BuildRestrictExampleOptions {
-  /** the `run:` input, always included: isolated-run's action.yml requires it */
+  /** The `run:` input. isolated-run's action.yml requires it, so the real
+   *  caller always passes one. */
   runCommand?: string;
   /** Version to annotate the `uses:` line with, if known, as `# 3.1.4`. */
   actionVersion?: string;
@@ -32,7 +33,6 @@ export function buildRestrictExample(
 ): string {
   if (!auditedRows || auditedRows.length === 0) return "";
 
-  // Group by ruleType, preserving order of first appearance
   const groups = new Map<string, string[]>();
   for (const r of auditedRows) {
     const param = ruleTypeToParam[r.ruleType];
@@ -43,7 +43,6 @@ export function buildRestrictExample(
 
   if (groups.size === 0) return "";
 
-  // Build YAML lines
   let yaml = "";
   yaml += "- name: Start isolated-run\n";
   yaml += usesLine(actionRepo, actionRef, actionVersion);

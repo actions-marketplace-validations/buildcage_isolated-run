@@ -125,7 +125,7 @@ describe("buildVerifyOptions: SHA pin", () => {
   it("certificateIdentityURI accepts any version tag SAN (SHA checked via OID)", () => {
     const opts = buildVerifyOptions({ actionRef: pinSha, actionRepo: REPO })!;
     const regexp = new RegExp(opts.certificateIdentityURI!);
-    // should match some version tags (the SHA in OID is what pins to the commit)
+    // Should match any version tag: the SHA in the OID is what pins to the commit.
     expect(regexp.test(makeSAN("refs/tags/v2.1.0"))).toBeTruthy();
     expect(regexp.test(makeSAN("refs/tags/v3.0.0"))).toBeTruthy();
   });
