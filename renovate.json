@@ -18,6 +18,17 @@
       ]
     },
     {
+      "description": "The probe/throwaway containers the integration tests start, which the docker manager does not see because they are not FROM lines. Same image as the fixture Dockerfiles, so Renovate bumps all of them together.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/integration-test-listener-scope\\.sh$/",
+        "/^test/integration-test-proxy-gone\\.sh$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nALPINE_IMAGE=\"[^:\"]+:(?<currentValue>[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]+)\""
+      ]
+    },
+    {
       "customType": "regex",
       "managerFilePatterns": ["/\\.md$/"],
       "matchStrings": [
