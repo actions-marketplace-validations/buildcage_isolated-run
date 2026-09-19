@@ -6,7 +6,7 @@ import { buildInspectRestrictExample } from "./inspect-example.ts";
 import type { ReportData } from "../types.ts";
 
 export interface RenderReportMarkdownOptions {
-  /** Full heading text, e.g. "Outbound Traffic Report: npm install" when a
+  /** Full heading text, e.g. "Outbound Traffic Report — npm install" when a
    *  `label` is set. Defaults to a bare "Outbound Traffic Report". */
   title?: string;
   /** The `run:` input, included in the audit-mode restrict example. */
