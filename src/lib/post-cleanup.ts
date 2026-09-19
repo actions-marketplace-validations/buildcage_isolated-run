@@ -23,7 +23,7 @@ export interface PostCleanupDeps {
  * container just as easily as a malformed one. What the container itself
  * records about the step that started it is what decides.
  *
- * No container behind the name leaves nothing to protect -- the step starts
+ * No container behind the name leaves nothing to protect, the step starts
  * the proxy before the scratch dir and stops it after, so a live sandbox
  * always has one, and anything left under that name is a dead run's
  * leftovers. Reclaiming those is what this fallback exists for.

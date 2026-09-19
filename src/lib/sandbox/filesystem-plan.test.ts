@@ -17,7 +17,7 @@ describe("resolveFilesystemPlan", () => {
     RUNNER_TEMP: "/home/runner/work/_temp",
   };
   // Everything "exists" by default (candidates + write_through targets) unless
-  // a test narrows it -- keeps each test focused on the one thing it checks.
+  // a test narrows it, keeps each test focused on the one thing it checks.
   const alwaysExists = () => true;
 
   it("returns an empty plan for persistent mode with no write_through:, without touching the filesystem", () => {
@@ -123,14 +123,14 @@ describe("resolveFilesystemPlan", () => {
     expect(plan.writeThroughPaths).toStrictEqual([]);
     // RUNNER_TEMP is nested under HOME in this fixture's ENV (as on a real
     // GitHub-hosted runner), so it folds away; GITHUB_WORKSPACE is also
-    // nested under HOME here, so it folds away too -- only HOME and /tmp
+    // nested under HOME here, so it folds away too: only HOME and /tmp
     // are left.
     expect(plan.overlayRoots.sort()).toStrictEqual([ENV.HOME, "/tmp"].sort());
   });
 
   it("resolves and pre-creates write_through targets, then excludes only what's actually covered by them", () => {
     // Self-hosted-style ENV: GITHUB_WORKSPACE isn't nested under HOME here,
-    // so its own overlay survives folding -- letting this test show, through
+    // so its own overlay survives folding, letting this test show, through
     // resolveFilesystemPlan end-to-end, that a candidate merely containing a
     // narrower write_through entry (./dist under the workspace) keeps its own
     // overlay rather than being dropped (see determineOverlayRoots' "covered
@@ -216,9 +216,9 @@ describe("resolveFilesystemPlan", () => {
   });
 
   it("wraps a determineOverlayRoots failure as FILESYSTEM_PLAN_FAILED, not a write_through problem", () => {
-    // exists() throwing here isn't about write_through's own input at all --
+    // exists() throwing here isn't about write_through's own input at all:
     // it's determineOverlayRoots reading one of the fixed candidate paths
-    // (e.g. a permissions error on $HOME) -- so it must not come back
+    // (e.g. a permissions error on $HOME), so it must not come back
     // labeled as a write_through syntax issue.
     expect.assertions(2);
     try {

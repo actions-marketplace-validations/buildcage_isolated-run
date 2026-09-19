@@ -23,7 +23,7 @@ export const DEFAULT_COMPOSE_FILE = join(__dirname, "../docker/compose.action.ya
  * is not signed yet), never by a consumer of a published action. rolldown's
  * replacePlugin substitutes BUILDCAGE_BUILD_TEST_HOOKS with the *build's* env,
  * so without that flag the condition is constant-false and the dynamic import
- * below is tree-shaken out of dist entirely -- see rolldown.config.js.
+ * below is tree-shaken out of dist entirely; see rolldown.config.js.
  */
 export async function readLocalImageOverride(
   env: NodeJS.ProcessEnv,

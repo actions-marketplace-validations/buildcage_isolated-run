@@ -42,7 +42,7 @@ describe("parseMountinfo", () => {
 
   it("leaves a path that really contains a backslash alone, rather than rescanning it", () => {
     // The kernel writes a literal backslash as \134, so "\134040" is the
-    // four characters \, 0, 4, 0 -- not an escaped space.
+    // four characters \, 0, 4, 0, not an escaped space.
     expect(
       parseMountinfo("9 1 0:9 / /mnt/\\134040 rw,relatime shared:9 - ext4 /dev/sdf1 rw")[0]
         .mountPoint,

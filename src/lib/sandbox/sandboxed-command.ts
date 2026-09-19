@@ -82,14 +82,14 @@ export interface RunSandboxedCommandOptions {
   /** Already resolved (resolveWriteThroughPaths) and pre-created
    *  (ensureWriteThroughTargetsExist) by the step before this runs. Opens holes
    *  in the read-only set in persistent mode, and in the overlay in ephemeral
-   *  mode -- see buildOciConfig. */
+   *  mode; see buildOciConfig. */
   writeThroughPaths: string[];
   env: NodeJS.ProcessEnv;
   proxyEngine: ProxyEngine;
   filesystemMode: FilesystemMode;
-  /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots), not raw candidates. */
+  /** filesystem_mode: ephemeral only, already folded (determineOverlayRoots), not raw candidates. */
   overlayRoots: string[];
-  /** Where this module's own warnings go -- a scratch dir that would not
+  /** Where this module's own warnings go, a scratch dir that would not
    *  unmount, and the environment variables a shell cannot export. Passed in
    *  rather than chosen here: which emitter those land on is the caller's
    *  decision, not the sandbox's. */
@@ -114,10 +114,10 @@ function extractBootstrap(
   { extractRuncBootstrap }: RunSandboxedCommandDeps,
 ): RuncBootstrap {
   try {
-    // Extracted into this run's own scratch dir — see extractRuncBootstrap.
+    // Extracted into this run's own scratch dir; see extractRuncBootstrap.
     // Run natively on the runner host (not `docker exec`, which would
     // resolve against the container's kernel/arch instead of the real
-    // one) — see gen-seccomp-profile/main.go.
+    // one); see gen-seccomp-profile/main.go.
     return extractRuncBootstrap({ containerName, destDir: dir });
   } catch (e) {
     if (e instanceof SandboxError) throw e;
@@ -130,7 +130,7 @@ function extractBootstrap(
 
 /**
  * inspect only: the proxy terminates TLS, so the sandboxed process has to be
- * made to trust its CA -- see ca-trust.ts for why this is a mount, not a write
+ * made to trust its CA; see ca-trust.ts for why this is a mount, not a write
  * into the sandbox's (real, host) rootfs.
  */
 function extractCaTrust(
@@ -164,7 +164,7 @@ interface BundleFiles {
 /**
  * The side-effecting half of the assembly (mkdir/write). Must happen before
  * run-isolated.sh's `mount --rbind /` and before runIsolated, the same timing
- * constraint ensureWriteThroughTargetsExist has -- see ephemeral-fs.ts.
+ * constraint ensureWriteThroughTargetsExist has; see ephemeral-fs.ts.
  */
 function writeBundleFiles(
   dir: string,
@@ -212,7 +212,7 @@ function resolveIdentity(
 
 /**
  * Everything the sandbox needs on disk, and the config.json describing it.
- * Separate from running it so the two can be read -- and tested -- apart:
+ * Separate from running it so the two can be read, and tested, apart:
  * this decides what the sandbox will be, runSandboxedCommand only starts it.
  */
 export function assembleBundle(
@@ -235,7 +235,7 @@ export function assembleBundle(
       writeBundleFiles(dir, options, deps);
     // Real host mount table, read now (before run-isolated.sh's `mount
     // --rbind /` duplicates it into rootfsBindDir) so buildOciConfig can
-    // force every real submount read-only individually -- root.readonly
+    // force every real submount read-only individually, root.readonly
     // alone only covers the top-level rootfs mount (see
     // computeReadonlyHostMounts).
     const hostMounts = listHostMounts();

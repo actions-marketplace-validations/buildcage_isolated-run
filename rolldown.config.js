@@ -4,7 +4,7 @@ import { replacePlugin } from "rolldown/plugins";
 // Plugin required to substitute BUILDCAGE_BUILD_TEST_HOOKS at build time.
 //
 // replacePlugin() substitutes BUILDCAGE_BUILD_TEST_HOOKS with the value from
-// this build's own env, not the resulting action's runtime env — see
+// this build's own env, not the resulting action's runtime env; see
 // readLocalImageOverride in src/lib/compose-file.ts.
 const mainPlugins = [
   replacePlugin({
@@ -28,7 +28,7 @@ const configs = [
   // function, so it needs the same build-time substitution to keep that
   // reachable only in a test build.
   // In a BUILDCAGE_BUILD_TEST_HOOKS=1 build, that gate is reachable, so its
-  // dynamic import needs the same codeSplitting: false as main.ts — without
+  // dynamic import needs the same codeSplitting: false as main.ts, without
   // it, rolldown wants a second chunk for the dynamic import, which
   // conflicts with output.file (single-file mode).
   { input: "src/post.ts", file: "dist/post.cjs", plugins: mainPlugins, codeSplitting: false },

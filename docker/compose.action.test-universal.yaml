@@ -9,7 +9,7 @@
 #
 # BUILDCAGE_TEST_COMPOSE_FILE only takes effect at all when
 # BUILDCAGE_BUILD_TEST_HOOKS=1 was set at build time (see
-# readLocalImageOverride in src/lib/compose-file.ts) -- unreachable, and
+# readLocalImageOverride in src/lib/compose-file.ts), unreachable, and
 # therefore irrelevant, in a published action's dist/main.cjs.
 services:
   proxy:

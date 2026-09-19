@@ -145,7 +145,7 @@ export interface StopSandboxProxyOptions {
 }
 
 /** Stops this step's proxy container via `docker compose down`. Reports
- *  failure as a warning rather than throwing — this runs in the step's
+ *  failure as a warning rather than throwing: this runs in the step's
  *  finally block, after the sandboxed command has already completed. */
 export async function stopSandboxProxy(
   { composeFile, projectName, composeEnv, annotation }: StopSandboxProxyOptions,

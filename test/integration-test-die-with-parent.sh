@@ -60,7 +60,7 @@ fi
 sleep 0.5
 
 # Sudo's `use_pty` setting (common on Ubuntu) forks a monitor process ahead
-# of the actual script, which also matches "run-isolated.sh" in its argv --
+# of the actual script, which also matches "run-isolated.sh" in its argv, so
 # this must target the real bash instance, not sudo's monitor (see
 # run-isolated.sh's own comment on this same distinction).
 mapfile -t BASH_PIDS < <(pgrep -f "/bin/bash .*/scripts/run-isolated.sh")

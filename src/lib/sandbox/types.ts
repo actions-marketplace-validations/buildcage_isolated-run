@@ -18,7 +18,7 @@ export interface OciSpec {
   process: Record<string, unknown>;
 }
 
-// buildOciConfig's actual, guaranteed-populated output shape — narrower than
+// buildOciConfig's actual, guaranteed-populated output shape, narrower than
 // the general OciSpec above, which also stands in for runc's raw, more
 // loosely-known `runc spec` input.
 export interface BuiltOciSpec extends OciSpec {

@@ -16,11 +16,11 @@ import { parseMountinfo } from "./mountinfo.ts";
 // itself is 1777 (writable by the non-root runner user) and execable, so
 // this own subdirectory inherits that without needing root to create it.
 // buildOciConfig fails closed if a step's `writable:` input tries to list
-// this directory (or an ancestor of it) as writable — see
+// this directory (or an ancestor of it) as writable; see
 // assertScratchBaseNotWritable.
 //
 // Suffixed with the runner's UID so two runners running as different users
-// on one host don't contend for the same base -- ensureOwnScratchBase below
+// on one host don't contend for the same base, ensureOwnScratchBase below
 // would otherwise reject the second one outright as looking like tampering.
 // getuid is asserted rather than probed, as everywhere else this uid is read:
 // the isolation is Linux-only, so a platform without it has nothing to run.
@@ -39,19 +39,6 @@ export function parseMountsUnder(mountinfoContent: string, dir: string): string[
     .sort((a, b) => b.length - a.length);
 }
 
-/**
- * Force-detaches any mount points still nested under `dir` before it's
- * recursively deleted. This is the safety net for rootfsBindDir (a
- * `mount --rbind /` of the entire host filesystem — see run-isolated.sh) surviving
- * past run-isolated.sh's own cleanup trap: if that trap never runs (e.g.
- * run-isolated.sh itself is SIGKILL'd, which bypasses traps entirely) or
- * its `umount -R` fails (EBUSY), a plain recursive delete of `dir` would
- * otherwise walk straight through the still-live bind-mount and delete
- * the real files on the host it points at, not a sandboxed copy. `-l`
- * (lazy) detaches each mount from the namespace immediately regardless of
- * busy references, so this step itself can't hang or fail the way a
- * normal (non-lazy) unmount could.
- */
 export interface ScratchDirDeps {
   /** This process's mount table, as /proc/self/mountinfo lines. */
   readMountinfo?: () => string;
@@ -84,6 +71,18 @@ function defaultMkdir(path: string, mode: number): void {
 }
 /* v8 ignore stop */
 
+/**
+ * Force-detaches any mount points still nested under `dir` before it is
+ * recursively deleted. The safety net for rootfsBindDir (a `mount --rbind /`
+ * of the entire host filesystem; see run-isolated.sh) surviving past
+ * run-isolated.sh's own cleanup trap: if that trap never runs (run-isolated.sh
+ * itself being SIGKILL'd bypasses traps entirely) or its `umount -R` fails
+ * (EBUSY), a plain recursive delete of `dir` would walk straight through the
+ * still-live bind-mount and delete the real files on the host it points at,
+ * not a sandboxed copy. `-l` (lazy) detaches each mount from the namespace
+ * immediately regardless of busy references, so this step itself cannot hang
+ * or fail the way a normal unmount could.
+ */
 function unmountAllUnder(dir: string, deps: ScratchDirDeps, warn?: Warn): void {
   const { readMountinfo = defaultReadMountinfo, exec = defaultExec } = deps;
   let mountPoints;
@@ -104,7 +103,7 @@ function unmountAllUnder(dir: string, deps: ScratchDirDeps, warn?: Warn): void {
 /**
  * Removes the scratch dir, retrying on EBUSY. A lazy unmount (see
  * unmountAllUnder) detaches a mount from the path-resolution tree
- * immediately -- it stops appearing in /proc/self/mountinfo right away --
+ * immediately, so it stops appearing in /proc/self/mountinfo right away,
  * but the kernel's underlying teardown of that now-orphaned mount can
  * still lag behind by a short, bounded window, which can make a
  * directory rmSync is about to delete spuriously report EBUSY even
@@ -116,10 +115,10 @@ function unmountAllUnder(dir: string, deps: ScratchDirDeps, warn?: Warn): void {
  * runc running as root, and the kernel's own overlayfs implementation
  * writes bookkeeping content directly into each root's `work` dir while
  * mounted (notably a "work/work" subdirectory used for atomic rename
- * during copy-up) -- content that stays on disk, root-owned and not
+ * during copy-up), content that stays on disk, root-owned and not
  * traversable by the unprivileged runner user, once the mount itself is
  * gone. The plain (unprivileged) rmSync above stays the fast path, since
- * it's all persistent mode -- and every unit test -- ever needs.
+ * it's all persistent mode, and every unit test, ever needs.
  */
 function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
   const { exec = defaultExec, lstat = lstatSync, remove = defaultRemove } = deps;
@@ -152,13 +151,13 @@ function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
 /** Where a message about the cleanup itself goes. Supplied by the caller: a
  *  module under lib/ doesn't decide where its output lands, and both of this
  *  one's real callers reach an entry point that does. Omitted only where there
- *  is no run to report to -- this repo's own tests use withScratchDir as a
+ *  is no run to report to: this repo's own tests use withScratchDir as a
  *  plain temp dir. */
 export type Warn = (message: string) => void;
 
 export interface CleanupScratchDirOptions {
   /** filesystem_mode: ephemeral's own already-folded overlay-root paths (see
-   *  ephemeral-fs.ts's determineOverlayRoots) -- logged right before the
+   *  ephemeral-fs.ts's determineOverlayRoots), logged right before the
    *  upper/work dirs holding those writes are deleted, so there's a visible
    *  record of what was discarded. Omitted by withScratchDir's own
    *  stale-remnant-clearing call (this isn't the current run's own discard)
@@ -169,7 +168,7 @@ export interface CleanupScratchDirOptions {
 
 /**
  * Force-detach anything still mounted under `dir` (the rootfs bind-mount
- * safety net — see unmountAllUnder) and then recursively remove it. Exported
+ * safety net; see unmountAllUnder) and then recursively remove it. Exported
  * so post.ts can reclaim a scratch dir orphaned by a hard kill that bypassed
  * withScratchDir's own finally. No-ops safely when `dir` doesn't exist.
  */
@@ -228,8 +227,8 @@ export function scratchDirFor(containerName: string): string {
 
 /**
  * Create SANDBOX_SCRATCH_BASE, or verify that an existing one is genuinely
- * ours. /var/tmp is 1777, so any local user can pre-create this path -- as a
- * symlink, or as a world-writable directory -- and thereby redirect the OCI
+ * ours. /var/tmp is 1777, so any local user can pre-create this path, as a
+ * symlink, or as a world-writable directory, and thereby redirect the OCI
  * bundle (whose run-script.sh holds the step's command verbatim, secrets
  * included when the workflow inlined one), the root-run `mount --rbind /`,
  * and cleanup's `sudo umount`/`rmSync`.
@@ -239,7 +238,7 @@ export function scratchDirFor(containerName: string): string {
  *
  * Strictly speaking, another local OS user is outside this action's threat
  * model: isolated-run exists to contain a malicious `run:` command, not to
- * defend against a separate, already-present actor on the host -- someone
+ * defend against a separate, already-present actor on the host, someone
  * with real root (or the proxy container's own internals) is unstoppable by
  * design, and that's an accepted limitation elsewhere in this codebase. But
  * this particular hole needs neither: an ordinary, unprivileged local
@@ -281,7 +280,7 @@ export interface WithScratchDirOptions extends CleanupScratchDirOptions {
 
 /**
  * Create/remove a scratch directory for this step's OCI bundle + run-script.
- * Cleaned up on every exit path that unwinds — a SIGKILL bypasses this
+ * Cleaned up on every exit path that unwinds, a SIGKILL bypasses this
  * finally, which is exactly what post.ts covers.
  *
  * `ephemeralRoots` reaches only the run's own final cleanup, not the

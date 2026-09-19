@@ -12,7 +12,7 @@ ARG COREDNS_SHA256_ARM64=bf26782d19b5340e3e6cb50f1ed6df72f58e4a30932c79d167f0f0a
 # installing whatever the new Alpine carries.
 ARG HAPROXY_BRANCH=3.4
 
-# Prepare dependencies — runc's official release binaries are already
+# Prepare dependencies: runc's official release binaries are already
 # statically linked (including libseccomp), so no compilation is needed,
 # only a checksum-pinned download, same as docker/universal/Dockerfile.
 # CoreDNS ships the same way.
@@ -37,7 +37,7 @@ RUN apk add --no-cache curl && \
     echo "${COREDNS_SHA}  /tmp/coredns.tgz" | sha256sum -c && \
     tar -C /usr/local/bin -xz -f /tmp/coredns.tgz coredns
 
-# Building gen-seccomp-profile here only compiles the binary — it's
+# Building gen-seccomp-profile here only compiles the binary: it's
 # extracted onto the runner host and run natively there, not at image
 # build time; see gen-seccomp-profile/main.go for why. Pure Go
 # (CGO_ENABLED=0), so this cross-compiles natively via BUILDPLATFORM
@@ -51,8 +51,8 @@ RUN go mod download
 COPY docker/gen-seccomp-profile/main.go ./
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags="-s -w" -o /out/gen-seccomp-profile .
 
-# Bundle the QuickJS scripts (rolldown; see rolldown.scripts.config.js) —
-# qjs has no TypeScript support. Architecture-independent output, so
+# Bundle the QuickJS scripts (rolldown; see rolldown.scripts.config.js),
+# since qjs has no TypeScript support. Architecture-independent output, so
 # pinned to --platform=$BUILDPLATFORM like gen-seccomp-profile-build above
 # (no QEMU).
 FROM --platform=$BUILDPLATFORM ghcr.io/pnpm/pnpm:11@sha256:e26f380828856f205feaaf42abd157df9ce41bc8e17b662eeaa3379a9638dee0 AS qjs-build
@@ -109,7 +109,7 @@ RUN apk add --no-cache --virtual .setcap libcap-utils && \
 
 RUN mkdir -p /etc/haproxy/rules /etc/coredns /var/log/haproxy /var/log/coredns
 
-# Tools (QuickJS scripts, rolldown-bundled by qjs-build above) —
+# Tools (QuickJS scripts, rolldown-bundled by qjs-build above).
 # gen-configs.js is used by init-inspect-cfg to generate both haproxy.cfg
 # and the CoreDNS Corefile from one shared rule parse, so the two can't
 # describe different allowlists. No report-action.js here: src/lib/report.ts
@@ -117,11 +117,11 @@ RUN mkdir -p /etc/haproxy/rules /etc/coredns /var/log/haproxy /var/log/coredns
 # container, same as docker/universal/Dockerfile.
 COPY --from=qjs-build /build/dist/qjs/docker/inspect/scripts/gen-configs.js /opt/buildcage/scripts/gen-configs.js
 
-# runc — extracted onto the runner host at action startup and used by
+# runc, extracted onto the runner host at action startup and used by
 # run-isolated.sh to execute the isolated command (see docs/development.md)
 COPY --from=deps /opt/buildcage/bin/runc /opt/buildcage/bin/runc
 
-# gen-seccomp-profile — extracted onto the runner host and run natively
+# gen-seccomp-profile, extracted onto the runner host and run natively
 # there (not inside this container) to produce the seccomp filter embedded
 # in runc's config.json; see the build stage comment above for why.
 COPY --from=gen-seccomp-profile-build /out/gen-seccomp-profile /opt/buildcage/bin/gen-seccomp-profile

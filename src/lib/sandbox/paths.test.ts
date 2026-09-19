@@ -76,7 +76,7 @@ describe("assertScratchBaseNotWritable", () => {
   });
 
   // The class is what lets a caller report the misconfiguration under its own
-  // code instead of a generic build failure -- see sandboxed-command.ts.
+  // code instead of a generic build failure; see sandboxed-command.ts.
   it("throws WritablePathConflictError", () => {
     expect(() => assertScratchBaseNotWritable(["/var/tmp"])).toThrow(WritablePathConflictError);
   });

@@ -7,7 +7,7 @@
 # See identity.ts (GID substitution) and oci-config.ts's maskedPaths (the
 # per-path and per-user-runtime-dir masking) for the two independent
 # layers that close this. Drives dist/main.cjs directly, without the real
-# action wrapper -- see test-e2e.yml's test_sandbox_enforcement for the
+# action wrapper; see test-e2e.yml's test_sandbox_enforcement for the
 # one case that does exercise the real action.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
@@ -66,8 +66,8 @@ echo "=== Runtime Socket Escape Assertions ==="
 echo ""
 
 # --- always run: sandbox must start regardless of what exists on the host
-# (in particular, /run/user/<uid> not existing at all -- masking a path
-# runc can't find is a no-op, not a failure -- see oci-config.ts)
+# (in particular, /run/user/<uid> not existing at all, masking a path
+# runc can't find is a no-op, not a failure; see oci-config.ts)
 if grep -q '^SANDBOX_GID=' "$WORKDIR/out.log"; then
   pass "sandbox started successfully"
 else

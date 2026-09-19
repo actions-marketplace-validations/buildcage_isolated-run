@@ -226,8 +226,8 @@ describe("runSandboxedCommand", () => {
     expect(error!.message).toContain("boom");
   });
 
-  // A step that already wrote for the user -- resolveSandboxGid's
-  // UNSAFE_PRIMARY_GID is the one that bites -- keeps its code and its words
+  // A step that already wrote for the user, resolveSandboxGid's
+  // UNSAFE_PRIMARY_GID is the one that bites, keeps its code and its words
   // instead of being restated as a generic failure of the step that called it.
   it.each([
     ["extractRuncBootstrap", () => mocks.extractRuncBootstrap, {}],
@@ -272,7 +272,7 @@ describe("assembleBundle", () => {
   });
 
   // buildOciConfig only records the paths; every one of them has to be on
-  // disk before runc is handed the bundle -- see writeBundleFiles.
+  // disk before runc is handed the bundle; see writeBundleFiles.
   it("writes the files the config points at before building it", () => {
     assembleBundle(SCRATCH, options({ filesystemMode: "ephemeral", overlayRoots: ["/tmp"] }), deps);
 

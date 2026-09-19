@@ -17,7 +17,7 @@ export interface DetermineOverlayRootsOptions {
   /** Device id of the filesystem containing `path` (fs.statSync(path).dev
    *  by default). Used only to tell a candidate nested under another
    *  candidate apart from one that's actually a distinct mount nested
-   *  inside it -- see the nesting-fold step below. */
+   *  inside it; see the nesting-fold step below. */
   deviceOf?: (path: string) => number;
 }
 
@@ -25,24 +25,24 @@ export interface DetermineOverlayRootsOptions {
  * Pure: fold the fixed candidate paths ($HOME, $RUNNER_TEMP, /tmp,
  * $GITHUB_WORKSPACE) down to the set that actually needs an overlay:
  * 1. Drop any candidate that doesn't exist on disk. Checked first, before
- *    the nesting fold below, so a *different*, existing candidate's own
- *    coverage can never be affected by whether some other candidate
- *    happens to exist -- otherwise an absent outer candidate could still
+ *    the nesting fold below, so one existing candidate's own coverage can
+ *    never be affected by whether some other candidate
+ *    happens to exist, otherwise an absent outer candidate could still
  *    "swallow" an existing inner one in step 3, then itself get dropped
  *    here, leaving the inner one with no overlay and no protection at all.
  * 2. Drop any candidate that's covered by (equals, or is a descendant of) a
- *    write_through entry -- that entry already persists everything under it,
- *    so no overlay is needed there. A candidate that merely *contains* a
+ *    write_through entry: that entry already persists everything under it,
+ *    so no overlay is needed there. A candidate that only contains a
  *    narrower write_through entry (the common case: write_through: ./dist
- *    under an otherwise-ephemeral $GITHUB_WORKSPACE) is kept -- its overlay
+ *    under an otherwise-ephemeral $GITHUB_WORKSPACE) is kept, its overlay
  *    still covers everything else under it, and the narrower entry's own rw
- *    bind (a later, and so winning, mount -- see buildOciConfig's ephemeral
+ *    bind (a later, and so winning, mount; see buildOciConfig's ephemeral
  *    branch) persists just that subtree on top. Dropping the candidate here
  *    too would make the rest of it read-only instead of ephemeral-writable,
  *    defeating the point of layering write_through over an overlay at all.
  * 3. Drop any remaining candidate nested under another remaining candidate
- *    (no nested overlays -- the outer one wins) -- but only when they're on
- *    the same filesystem. A candidate that's actually a *separate* mount
+ *    (no nested overlays, the outer one wins), but only when they're on
+ *    the same filesystem. A candidate that is its own separate mount
  *    nested inside another (an unusual but real self-hosted-runner layout)
  *    keeps its own overlay instead: overlayfs does not show a filesystem
  *    mounted inside its own lowerdir, so folding it away would leave that
@@ -67,7 +67,7 @@ export function determineOverlayRoots(
     try {
       return deviceOf(c) !== deviceOf(nestingParent);
     } catch {
-      // Can't tell -- keep it separate. An extra overlay root is harmless;
+      // Can't tell, keep it separate. An extra overlay root is harmless;
       // silently dropping coverage for a path that turns out to matter isn't.
       return true;
     }
@@ -84,7 +84,7 @@ function slugify(path: string): string {
 /**
  * Physical upper/work dirs for each overlay root: siblings of rootfsBindDir
  * under this run's own scratch dir (`<scratchDir>/ephemeral/<slug>/{upper,work}`),
- * never inside SANDBOX_SCRATCH_BASE's rootfs subtree itself -- see
+ * never inside SANDBOX_SCRATCH_BASE's rootfs subtree itself; see
  * assertScratchBaseNotWritable's invariant. Creates the directories as a
  * side effect; must run before runIsolated(), for the same reason
  * ensureWriteThroughTargetsExist does.
@@ -105,7 +105,7 @@ export function createOverlayScratchDirs(
 }
 
 /**
- * Setup-time log lines for `filesystem_mode: ephemeral` -- the already-folded
+ * Setup-time log lines for `filesystem_mode: ephemeral`, the already-folded
  * overlay roots and resolved write_through paths, never the raw input
  * strings. Empty (no lines at all) for `persistent` mode.
  */

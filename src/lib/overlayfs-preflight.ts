@@ -48,14 +48,14 @@ export function describeProbeCleanupFailure(dir: string, e: unknown): string {
  * itself runs as root (sudo unshare ... mount -t overlay ...), and the
  * kernel's own overlayfs implementation writes bookkeeping content directly
  * into workdir while mounted (notably a "work/work" subdirectory used for
- * atomic rename during copy-up) -- content that stays on disk, root-owned
+ * atomic rename during copy-up), content that stays on disk, root-owned
  * and not traversable by the unprivileged runner user, after the mount
  * itself is torn down when the `sudo unshare` child exits. A plain rmSync
  * here reliably fails with EACCES on any host where the probe mount
  * actually succeeded (confirmed in CI).
  *
- * The retry is insurance, not a mechanism anything here is known to hit --
- * unlike scratch-dir.ts's removeScratchDir, which lazily unmounts the very
+ * The retry is insurance, not a mechanism anything here is known to hit.
+ * Unlike scratch-dir.ts's removeScratchDir, which lazily unmounts the very
  * directory it then deletes and so races a teardown the kernel defers.
  * `--propagation private` keeps this probe's mount out of the caller's
  * namespace entirely, and the namespace it did live in is gone by the time
@@ -84,8 +84,8 @@ export interface CheckOverlayfsSupportOptions {
  * than a cryptic runc mount error deep inside runSandboxedCommand.
  *
  * The probe's throwaway lower/upper/work/merged dirs are created under
- * SANDBOX_SCRATCH_BASE itself -- the same filesystem createOverlayScratchDirs
- * will actually place the real upper/work dirs on -- not a generic mkdtemp
+ * SANDBOX_SCRATCH_BASE itself, the same filesystem createOverlayScratchDirs
+ * will actually place the real upper/work dirs on, not a generic mkdtemp
  * location (e.g. /tmp), which could be a different filesystem and so miss
  * the specific "upperdir/workdir can't themselves be on overlayfs" failure
  * this exists to catch (confirmed against a real kernel: an overlay mount
@@ -94,7 +94,7 @@ export interface CheckOverlayfsSupportOptions {
  *
  * `--propagation private` (same reasoning as run-isolated.sh's own use of
  * it) keeps the probe mount from ever becoming visible outside the
- * throwaway namespace it's created in, even transiently -- SANDBOX_SCRATCH_BASE
+ * throwaway namespace it's created in, even transiently, SANDBOX_SCRATCH_BASE
  * is generally a "shared" mount point, and without this the probe's overlay
  * mount could propagate back onto the real host namespace instead of
  * disappearing when the child process exits.
@@ -123,8 +123,8 @@ export function checkOverlayfsSupport({
 
   // Deliberately not a `finally`: an exception thrown from one replaces
   // whatever the block was already throwing, so a cleanup that failed too
-  // would erase the probe's own verdict -- REQUIREMENT, the reason this
-  // check exists at all -- and leave the caller with a bare `rm` error.
+  // would erase the probe's own verdict, REQUIREMENT, the reason this
+  // check exists at all, and leave the caller with a bare `rm` error.
   // The cleanup only gets to speak when the probe had nothing to say.
   try {
     removeProbeDir(probeDir, exec);

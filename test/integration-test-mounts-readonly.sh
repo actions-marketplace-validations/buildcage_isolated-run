@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verifies that a real mount which is not itself a writable exception is
 # visible inside the sandbox but forced read-only, by driving dist/main.cjs
-# directly, without the real action wrapper -- see test-e2e.yml's
+# directly, without the real action wrapper; see test-e2e.yml's
 # test_sandbox_enforcement for the one case that does. Two mounts, one sandbox:
 # they are the same property seen from two directions, and a start is not
 # cheap.
@@ -9,7 +9,7 @@
 # The first is a bind mount nested under $GITHUB_WORKSPACE. The writable
 # guarantee covers the exception paths themselves
 # (workdir/home/tmp/RUNNER_TEMP/write_through:), not everything mounted under
-# them -- computeReadonlyHostMounts checks protectedPaths by exact match, not
+# them, computeReadonlyHostMounts checks protectedPaths by exact match, not
 # by prefix, and this is the regression guard against that becoming a prefix
 # match. Ordinary files and directories under workdir, which are not separate
 # mount points, are integration-test-defaults.sh's business instead.
@@ -70,7 +70,7 @@ fi
 mp='$SECURITYFS_MOUNT'
 # securityfs's own directory entries are populated by kernel LSM subsystems,
 # not user-creatable, so creating a file there fails with EACCES whether the
-# mount is ro or rw -- which would not tell a fixed sandbox from a broken one.
+# mount is ro or rw, which would not tell a fixed sandbox from a broken one.
 # Read the mount options in this mount namespace instead.
 if [ ! -d \"\$mp\" ]; then
   echo 'UNEXPECTED: securityfs mount point not visible in sandbox'

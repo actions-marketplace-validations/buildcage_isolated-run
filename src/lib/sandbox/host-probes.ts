@@ -23,7 +23,7 @@ export const SETPRIV_CANDIDATE_PATHS = [
 
 /**
  * Pure: the first candidate that exists, in the documented order. Falls back
- * to bare "setpriv" (a PATH lookup) only if none do -- run-isolated.sh has
+ * to bare "setpriv" (a PATH lookup) only if none do, run-isolated.sh has
  * already verified setpriv is on root's PATH before we get here.
  */
 export function resolveSetprivPath(exists: (path: string) => boolean): string {

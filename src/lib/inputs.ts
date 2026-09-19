@@ -1,6 +1,6 @@
 /**
  * Every `core.getInput` this action makes, and the resolvers that turn those
- * strings into validated values, in one place — so what the action reads is
+ * strings into validated values, in one place, so what the action reads is
  * answerable from one file rather than by grepping the entry point.
  *
  * Read in several calls rather than one because the step needs them at
@@ -10,7 +10,7 @@
  * those steps and change which error a run with more than one problem reports.
  *
  * Nothing here imports `sandbox/`. What a value may be is a question about the
- * sandbox's own mounts, so it belongs to the module that makes them -- and a
+ * sandbox's own mounts, so it belongs to the module that makes them, and a
  * unit test of any reader here would otherwise run `sandbox/scratch-dir.ts`'s
  * uid-dependent top-level setup on the way in.
  */
@@ -175,7 +175,7 @@ export function readStepLabel(getInput: GetInput = core.getInput): string | unde
 /**
  * Several integration scripts invoke this action directly without setting
  * fail_on_blocked, unlike a real workflow where action.yml's own default
- * always supplies it — fall back to that same default.
+ * always supplies it, fall back to that same default.
  */
 export function readFailOnBlocked(
   getBooleanInput: GetBooleanInput = core.getBooleanInput,

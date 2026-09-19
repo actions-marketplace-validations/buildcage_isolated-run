@@ -2,7 +2,7 @@
 # Drives dist/main.cjs directly against a real inspect-engine proxy container
 # and a fixture origin network (compose.test-inspect.yaml), proving
 # method/path enforcement, DNS non-leak, SSRF/forged-Host guards, TLS
-# passthrough and CA trust end-to-end -- ported from buildcage/docker's
+# passthrough and CA trust end-to-end, ported from buildcage/docker's
 # test/Dockerfile.inspect-restrict + test/assert-inspect-restrict.sh, adapted
 # to a `run:` step instead of a buildkit build (see
 # test/inspect-restrict-scenarios.sh for the scenario list itself).
@@ -10,7 +10,7 @@
 # Also checks the CA-injection design this port introduces (see
 # src/lib/sandbox/ca-trust.ts): this sandbox's rootfs is the real host `/`,
 # so CA trust is injected as mounts, torn down with the rest of the
-# sandbox's mount namespace -- never written to the host. That is a
+# sandbox's mount namespace, never written to the host. That is a
 # regression risk unique to this repo, so it is checked here rather than
 # only in theory.
 set -uo pipefail
@@ -65,7 +65,7 @@ GET ~^https://ok\.wildcard\.example\.com/regexexact$
 # Never requested: this puts the characters haproxy's own config parser
 # folds in front of real haproxy. Unescaped, the '#' would comment the
 # line short and leave the regex as ^/frag(x, and the ' would open a
-# quoted string -- either way haproxy refuses the config and this test
+# quoted string, either way haproxy refuses the config and this test
 # fails, which is the point. A pattern that stayed valid when cut short
 # would regress in silence.
 GET ~^https://blocked\.example\.com/frag(x#y|'z)$" \

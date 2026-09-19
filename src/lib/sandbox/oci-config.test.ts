@@ -10,7 +10,7 @@ import { WritablePathConflictError } from "./paths.ts";
 import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
 
 // A minimal stand-in for what `runc spec` actually produces (see
-// runc-bootstrap.ts's generateBaseOciSpec) — only the fields buildOciConfig
+// runc-bootstrap.ts's generateBaseOciSpec): only the fields buildOciConfig
 // reads/overrides are included.
 const SHM_BYTES = 4 * 1024 * 1024 * 1024;
 const PROC_LIMITS = [
@@ -20,7 +20,7 @@ const PROC_LIMITS = [
 
 /**
  * A GitHub-hosted Linux runner's answers. `absent` drops one, which is what a
- * non-Linux host looks like -- supplied rather than read, since otherwise the
+ * non-Linux host looks like, supplied rather than read, since otherwise the
  * suite silently covers something different on a macOS dev machine than in CI.
  */
 function pinnedProbes({ absent = [] }: { absent?: ("setpriv" | "nofile")[] } = {}): HostProbes {
@@ -36,7 +36,7 @@ function pinnedProbes({ absent = [] }: { absent?: ("setpriv" | "nofile")[] } = {
 const HOSTNAME = "runner-abcdef";
 
 // Every buildOciConfig case runs against the same pinned host, so a case only
-// has to say so when it wants a different one -- which it does by reassigning
+// has to say so when it wants a different one, which it does by reassigning
 // `probes` before calling build().
 let probes: HostProbes;
 beforeEach(() => {
@@ -339,7 +339,7 @@ describe("buildOciConfig", () => {
           });
         expect(attempt).toThrow(/the sandbox mounts itself/);
         // The class is what keeps the misconfiguration reportable under its own
-        // code rather than a generic build failure -- see sandboxed-command.ts.
+        // code rather than a generic build failure; see sandboxed-command.ts.
         expect(attempt).toThrow(WritablePathConflictError);
       }
     });
@@ -416,11 +416,10 @@ describe("buildOciConfig", () => {
     });
 
     it("forces a kernel pseudo-fs into readonlyPaths when runc's own base spec doesn't mount it fresh", () => {
-      // Regression guard: a fixed allowlist of "pseudo-fs" filesystem types
-      // previously tolerated anything that merely looked like proc/sysfs/etc,
-      // even when runc's own base spec (fakeBaseSpec here only declares
-      // /proc and /sys) never actually gives it a fresh, isolated mount --
-      // e.g. securityfs at /sys/kernel/security, which is commonly mounted
+      // A fresh-mount exemption has to match runc's own base spec rather than
+      // merely look like proc/sysfs/etc: fakeBaseSpec here declares only /proc
+      // and /sys, so anything else never gets a fresh, isolated mount, e.g.
+      // securityfs at /sys/kernel/security, which is commonly mounted
       // read-write on AppArmor-enabled hosts.
       const hostMounts = [{ mountPoint: "/sys/kernel/security", fsType: "securityfs" }];
       const config = build(fakeBaseSpec(), {
@@ -597,7 +596,7 @@ describe("buildOciConfig", () => {
   });
 });
 
-describe("buildOciConfig — ephemeral mode", () => {
+describe("buildOciConfig: ephemeral mode", () => {
   const baseArgs = {
     identity: { uid: 1000, gid: 1000 },
     writable: {
@@ -739,9 +738,9 @@ describe("buildOciConfig — ephemeral mode", () => {
   });
 });
 
-// inspect engine only -- universal never passes caTrust, and the tests
+// inspect engine only: universal never passes caTrust, and the tests
 // above (which don't) already cover that this is fully opt-in.
-describe("buildOciConfig — caTrust", () => {
+describe("buildOciConfig: caTrust", () => {
   const baseArgs = {
     identity: { uid: 1000, gid: 1000 },
     writable: {

@@ -270,7 +270,7 @@ function host({
   };
 }
 
-describe("cleanupScratchDir — sudo rm fallback on EACCES", () => {
+describe("cleanupScratchDir: sudo rm fallback on EACCES", () => {
   it("re-checks ownership and then deletes as root", () => {
     const h = host({ removeFailures: [fsError("EACCES")] });
 
@@ -309,7 +309,7 @@ describe("cleanupScratchDir — sudo rm fallback on EACCES", () => {
   });
 });
 
-describe("cleanupScratchDir — EBUSY retry", () => {
+describe("cleanupScratchDir: EBUSY retry", () => {
   it("retries and succeeds once the lazily-detached mount has finished going away", () => {
     const h = host({ removeFailures: [fsError("EBUSY")] });
 
@@ -334,7 +334,7 @@ describe("cleanupScratchDir — EBUSY retry", () => {
   });
 });
 
-describe("cleanupScratchDir — force-detaching what is still mounted", () => {
+describe("cleanupScratchDir: force-detaching what is still mounted", () => {
   const mountinfo = [
     `1 0 0:1 / / rw,relatime shared:1 - ext4 /dev/root rw`,
     `2 1 0:2 / ${SCRATCH_DIR} rw,relatime shared:2 - tmpfs tmpfs rw`,
@@ -390,7 +390,7 @@ describe("cleanupScratchDir — force-detaching what is still mounted", () => {
   });
 });
 
-describe("ensureOwnScratchBase — mkdir failures other than EEXIST", () => {
+describe("ensureOwnScratchBase: mkdir failures other than EEXIST", () => {
   it("rethrows rather than falling through to the ownership check", () => {
     const mkdir = () => {
       throw fsError("EACCES");
@@ -401,7 +401,7 @@ describe("ensureOwnScratchBase — mkdir failures other than EEXIST", () => {
   });
 });
 
-describe("withScratchDir — deterministic naming", () => {
+describe("withScratchDir: deterministic naming", () => {
   it("derives the dir from the container name and removes it on the way out", () => {
     const containerName = "buildcage-proxy-abcd1234";
     const expected = scratchDirFor(containerName);

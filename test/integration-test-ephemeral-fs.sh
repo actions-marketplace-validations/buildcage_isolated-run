@@ -1,13 +1,13 @@
 #!/bin/bash
 # Verifies filesystem_mode: ephemeral / write_through: end-to-end by driving
-# dist/main.cjs directly, without the real action wrapper -- see
+# dist/main.cjs directly, without the real action wrapper; see
 # test-e2e.yml for the one case that does exercise the real action.
 # The mount-composition/path-resolution rules themselves are already
 # unit-tested (ephemeral-fs.test.ts, oci-config.test.ts); this proves runc
 # actually honors them.
 #
 # One case is left out on purpose: the clear error an overlay probe failure
-# raises isn't exercised here -- it needs an environment where overlayfs
+# raises isn't exercised here: it needs an environment where overlayfs
 # itself doesn't work, which contradicts everything else in this file
 # running successfully. Covered instead by the mac-only dev loop
 # (`make test_sandbox_dev`), where overlayfs-on-overlayfs is known to fail
@@ -20,9 +20,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
 
 # Runs dist/main.cjs with filesystem_mode: ephemeral against a fresh
-# $GITHUB_WORKSPACE/$RUNNER_TEMP (both under mktemp's default, i.e. /tmp --
+# $GITHUB_WORKSPACE/$RUNNER_TEMP (both under mktemp's default, i.e. /tmp,
 # never inside the real $HOME, so $HOME survives folding as its own overlay
-# root instead of being subsumed by GITHUB_WORKSPACE/RUNNER_TEMP -- see
+# root instead of being subsumed by GITHUB_WORKSPACE/RUNNER_TEMP; see
 # determineOverlayRoots). $1=workdir (already created) $2=write_through input
 # $3=run script. Writes $workdir/out.log and $workdir/exit_code.
 run_ephemeral() {
@@ -87,7 +87,7 @@ rm -rf "$CASE1"
 CASE2=$(mktemp -d)
 GITHUB_ENV_FILE2=$(mktemp)
 touch "$CASE2/state.env" "$CASE2/summary.md"
-# Not via run_ephemeral -- GITHUB_ENV/RUNNER_TEMP need to be set together
+# Not via run_ephemeral, GITHUB_ENV/RUNNER_TEMP need to be set together
 # below, unlike its fixed default env.
 GITHUB_ENV="$GITHUB_ENV_FILE2" \
 GITHUB_WORKSPACE="$CASE2" \
@@ -178,7 +178,7 @@ rm -rf "$CASE4"
 
 # --- Case 4b: a missing write_through target under a root-owned, non-runner
 # tree is still created (via sudo mkdir -p), but mirrors its nearest
-# existing ancestor's owner/mode -- so it stays unwritable by the
+# existing ancestor's owner/mode, so it stays unwritable by the
 # (non-root) sandboxed process, exactly as naming the existing ancestor
 # directly would. The denied write is what proves that ownership; the
 # directory is then empty, so the end-of-step cleanup gives it back.
@@ -246,7 +246,7 @@ fi
 rm -rf "$CASE7"
 
 # --- Case 9: the scratch dir (including the overlay upper/work dirs) is
-# fully cleaned up afterwards -- no directory left behind under
+# fully cleaned up afterwards, no directory left behind under
 # SANDBOX_SCRATCH_BASE from this run. Compares the directory listing
 # before/after rather than relying on knowing the (randomly generated)
 # container name.

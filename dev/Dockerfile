@@ -7,13 +7,13 @@
 # container's PID/netns via /proc, exactly like the real GitHub Actions
 # runner host does for the real proxy container in production. It is NOT
 # used in production or in CI's test_sandbox job (see
-# docs/development.md) — those run run-isolated.sh directly on the runner
+# docs/development.md), those run run-isolated.sh directly on the runner
 # host, matching what actually happens when a user's workflow executes.
 #
 # runc and gen-seccomp-profile are built directly into this image (mirroring
 # ../docker/Dockerfile's own stages) rather than `docker cp`-extracted from
 # the proxy image at runtime, so this dev loop doesn't need the Docker
-# socket mounted in just to reach a sibling container — it stays scoped to
+# socket mounted in just to reach a sibling container: it stays scoped to
 # testing run-isolated.sh itself.
 # renovate: datasource=github-releases depName=opencontainers/runc
 ARG RUNC_VERSION=v1.5.1

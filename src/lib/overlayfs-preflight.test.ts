@@ -125,7 +125,7 @@ describe("checkOverlayfsSupport", () => {
 
   // On any failure, since `sudo rm` reports an exit status and no errno, so
   // nothing here can tell one cause from another. The retry is insurance
-  // rather than a race this probe is known to lose -- see removeProbeDir.
+  // rather than a race this probe is known to lose; see removeProbeDir.
   it("retries the probe-dir cleanup and succeeds on a later attempt", () => {
     base = freshBasePath();
     let cleanupAttempts = 0;
@@ -158,7 +158,7 @@ describe("checkOverlayfsSupport", () => {
   });
 
   // A `finally` would have let the cleanup's own error replace this one,
-  // taking REQUIREMENT -- the reason the probe exists -- with it.
+  // taking REQUIREMENT, the reason the probe exists, with it.
   it("keeps the probe's verdict when the cleanup fails too", () => {
     base = freshBasePath();
     const exec = vi.fn((_cmd: string, args: readonly string[]) => {

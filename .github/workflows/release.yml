@@ -55,7 +55,7 @@ jobs:
             *-*)
               PRERELEASE_FLAG="--prerelease"
               # GitHub's --generate-notes picks the wrong previous tag for a
-              # prerelease (skips the actual latest release) — pin it to the
+              # prerelease (skips the actual latest release), pin it to the
               # latest non-prerelease tag ourselves.
               PREV_TAG=$(git tag --sort=-version:refname --list 'v*.*.*' | grep -vE '^v[0-9]+\.[0-9]+\.[0-9]+-' | head -1)
               if [ -n "$PREV_TAG" ]; then

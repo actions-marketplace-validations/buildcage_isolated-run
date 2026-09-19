@@ -35,13 +35,13 @@ export function isValidContainerName(name: string): boolean {
  * container name alone, long after the step that made it is gone.
  *
  * The Compose project name comes from the same container name but is hashed
- * rather than prefix-swapped, since Compose constrains the charset -- see
+ * rather than prefix-swapped, since Compose constrains the charset; see
  * deriveProjectName in core.
  */
 const CONTAINER_NAME_PREFIX_RE = new RegExp(`^${CONTAINER_NAME_PREFIX}`);
 
 /** The runc container id and `ip netns` name for the sandbox this container
- *  fronts -- a different ID namespace from Docker's, named after the container
+ *  fronts. A different ID namespace from Docker's, named after the container
  *  so `ip netns` and `docker ps` stay correlated per step. */
 export function netnsNameFor(containerName: string): string {
   return containerName.replace(CONTAINER_NAME_PREFIX_RE, "buildcage-sandbox-");
@@ -69,7 +69,7 @@ const OWNER_TOKEN_VARS = [
 /**
  * Identifies the step that started a proxy container. The post step compares
  * it against the container's own OWNER_LABEL so it only tears down what this
- * step started -- a well-formed container name proves nothing on its own,
+ * step started: a well-formed container name proves nothing on its own,
  * since the isolated command can write one into GITHUB_STATE.
  *
  * Empty when the environment isn't a real Actions step (this repo's own
@@ -86,7 +86,7 @@ export function ownerToken(env: NodeJS.ProcessEnv): string {
 
 /**
  * Distinguishes "this container doesn't exist" (docker's own wording, e.g.
- * `no such object`) from "docker itself is unusable on this runner" — both
+ * `no such object`) from "docker itself is unusable on this runner": both
  * phrasings are matched for resilience across docker CLI versions.
  */
 export function isContainerNotFoundError(e: unknown): boolean {
@@ -134,8 +134,8 @@ function inspectFormat(containerName: string, format: string, exec: RunDocker): 
 }
 
 /**
- * The container's network namespace as a *path* (Docker's own
- * NetworkSettings.SandboxKey), not a PID -- Docker holds this bind mount for
+ * The container's network namespace as a path (Docker's own
+ * NetworkSettings.SandboxKey), not a PID, Docker holds this bind mount for
  * the container's lifetime, so it can't be silently redirected by PID reuse
  * the way `/proc/<pid>/ns/net` could, and it vanishes cleanly if the
  * container dies. Null means "container doesn't exist yet" (see
@@ -146,7 +146,7 @@ export function getContainerNetns(
   { exec = captureDockerViaExec }: ContainerInspectOptions = {},
 ): string | null {
   // Empty when the container exists but has no network sandbox assigned
-  // (e.g. it's stopped) -- same "nothing to wire into" outcome as not found.
+  // (e.g. it's stopped), same "nothing to wire into" outcome as not found.
   return inspectFormat(containerName, "{{.NetworkSettings.SandboxKey}}", exec) || null;
 }
 

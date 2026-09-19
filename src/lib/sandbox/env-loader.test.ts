@@ -20,7 +20,7 @@ const caTrust = {
 /** The KEY=VALUE records of a blob, terminator excluded. */
 function records(blob: Buffer): string[] {
   const parts = blob.toString("utf8").split("\0");
-  expect(parts.at(-1)).toBe(""); // every record is NUL-*terminated*, not separated
+  expect(parts.at(-1)).toBe(""); // every record is NUL-terminated, not NUL-separated
   return parts.slice(0, -1);
 }
 
@@ -101,7 +101,7 @@ describe("resolveSandboxEnv", () => {
   });
 
   // The runner sets these for this action alone, so they are withheld before
-  // the check above ever sees them -- nothing for the user to act on.
+  // the check above ever sees them: nothing for the user to act on.
   it("says nothing about the inputs it withholds by design", () => {
     const warn = vi.fn();
 

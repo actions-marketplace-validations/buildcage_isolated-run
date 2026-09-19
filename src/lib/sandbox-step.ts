@@ -5,7 +5,7 @@
  * this is wiring: which check runs before which decides what a misconfigured
  * workflow is told, and whether a failure leaves a container or a
  * freshly-created directory behind. Those orderings are only visible from
- * here, so this is where they are tested -- same reasoning as step-report.ts
+ * here, so this is where they are tested, same reasoning as step-report.ts
  * and sandbox/sandboxed-command.ts.
  */
 
@@ -76,7 +76,7 @@ export interface SandboxStepDeps {
   info: (message: string) => void;
   log: (message: string) => void;
   /** A renamed input's migration message, printed whether or not this is a
-   *  real action run -- unlike the suppressible `annotation` below. */
+   *  real action run, unlike the suppressible `annotation` below. */
   notice: (message: string) => void;
   /** Where the sandbox's own warnings go. Always on for the same reason: they
    *  are about the step's environment and its cleanup, which a run without a
@@ -156,7 +156,7 @@ function saveCleanupState(
  * Runs one `run:` step start to finish and returns the exit code the workflow
  * step should take, which is the isolated command's own. Anything that stops
  * the command from running rejects instead. Never sets process.exitCode
- * itself -- that belongs to whoever invoked the action.
+ * itself: that belongs to whoever invoked the action.
  */
 export async function runSandboxStep(
   env: NodeJS.ProcessEnv,
@@ -211,8 +211,8 @@ export async function runSandboxStep(
   // probe). resolveFilesystemPlan re-checks the resolved paths.
   validateFilesystemInputs(filesystemMode, splitWriteThroughInput(writeThroughInput));
 
-  // Fail fast — before image verification or starting the proxy container —
-  // if the runner can't support the isolation setup at all. Deliberately
+  // Fail fast, before image verification or starting the proxy container, if
+  // the runner can't support the isolation setup at all. Deliberately
   // ahead of resolveFilesystemPlan below: ensureWriteThroughTargetsExist (part
   // of that call) itself shells out to sudo, and doing that before this check
   // risks a confusing WRITE_THROUGH_TARGET_UNCREATABLE in place of this more
@@ -220,13 +220,13 @@ export async function runSandboxStep(
   checkPasswordlessSudo();
   if (filesystemMode === "ephemeral") checkOverlayfsSupport();
 
-  // Same gate as writeReportSummary() — suppresses annotations when this
+  // Same gate as writeReportSummary(): suppresses annotations when this
   // script isn't running as the real action.
   const annotation = createAnnotation(Boolean(env.GITHUB_STEP_SUMMARY));
 
   // Resolved/pre-created here (not inside runSandboxedCommand) so a bad
   // write_through entry, or a target that can't be created, fails before the
-  // proxy container ever starts -- same reasoning as checkPasswordlessSudo
+  // proxy container ever starts, same reasoning as checkPasswordlessSudo
   // above.
   const { overlayRoots, writeThroughPaths, createdDirs } = resolveFilesystemPlan(
     filesystemMode,
@@ -263,9 +263,9 @@ export async function runSandboxStep(
       logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
     });
 
-    // Each `run` step gets its own throwaway proxy container — start, run
-    // the isolated command, report, and stop, all within this one step —
-    // rather than sharing one across steps in the same job.
+    // Each `run` step gets its own throwaway proxy container: start, run the
+    // isolated command, report, and stop, all within this one step, rather
+    // than sharing one across steps in the same job.
     const containerName = generateContainerName();
     const projectName = deriveProjectName(containerName);
     saveCleanupState(env, { containerName, filesystemMode, overlayRoots }, saveState);
@@ -336,7 +336,7 @@ export async function runSandboxStep(
   } finally {
     // Give back the directories pre-creating write_through targets made, if
     // the command left them empty. Covers every way out of the step, not just
-    // the ones that reach the proxy teardown -- image verification or a rule
+    // the ones that reach the proxy teardown, image verification or a rule
     // typo can throw after they were created. Deliberately not mirrored in
     // post.ts: the only way to hand this list to the post step is GITHUB_STATE,
     // which the sandboxed command can rewrite (see post-state.ts), and that

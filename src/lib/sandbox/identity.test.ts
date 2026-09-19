@@ -7,7 +7,7 @@ import { resolveSandboxGid, type HostGroups } from "./identity.ts";
 // runner-owned on Linux), nor on what the real /etc/group says.
 //
 // Every test passes runtimeSocketPaths explicitly (even as []) so a real
-// docker.sock on that machine never leaks in -- only the group file below
+// docker.sock on that machine never leaks in: only the group file below
 // and, where relevant, a named socket path decide the outcome.
 
 /** A host with the given /etc/group contents and socket owners. */

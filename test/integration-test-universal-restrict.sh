@@ -65,8 +65,8 @@ assert_summary_contains "| allowed.example.com:80 | HTTP |" "allowed.example.com
 assert_summary_contains "| ALLOWED.example.com:80 | HTTP |" "uppercase host (HTTP) recorded as allowed"
 assert_summary_contains "| sub.wildcard.example.com:443 | HTTPS |" "wildcard-matched name recorded as allowed"
 # Each of these is the near miss for a rule the scenarios also request on its
-# matching side. From inside the sandbox every one of them looks the same --
-# "not 200" -- so the reason is what tells a rule that refused the name from a
+# matching side. From inside the sandbox every one of them looks the same,
+# "not 200", so the reason is what tells a rule that refused the name from a
 # fixture that was never reachable in the first place.
 assert_summary_contains "| not-ok.regex.example.com:443 | HTTPS | not-allowed |" "an anchorless regex did not match a name merely containing it, reason not-allowed"
 assert_summary_contains "| deep.sub.wildcard.example.com:443 | HTTPS | not-allowed |" "a wildcard did not reach a nested subdomain, reason not-allowed"
@@ -88,7 +88,7 @@ assert_summary_contains "| internal.wildcard.example.com:80 | HTTP | internal-ad
 assert_summary_contains "| runner.wildcard.example.com:443 | HTTPS | internal-address |" "a name resolving to an address the runner holds recorded as blocked, reason internal-address"
 assert_summary_contains "| runner.wildcard.example.com:80 | HTTP | internal-address |" "a name resolving to an address the runner holds (HTTP) recorded as blocked, reason internal-address"
 # Neither of these names a host, so the row carries whatever address the
-# connection was headed for -- the proxy's own. The reason is the assertion.
+# connection was headed for, the proxy's own. The reason is the assertion.
 assert_summary_contains "| HTTPS | missing-sni |" "a TLS ClientHello with no SNI recorded as blocked, reason missing-sni"
 assert_summary_contains "| HTTP | missing-host-header |" "an HTTP request with no Host header recorded as blocked, reason missing-host-header"
 # The crafted SNI arrives as one row whose host cell is the sanitized name.

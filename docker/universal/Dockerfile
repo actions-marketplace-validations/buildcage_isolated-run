@@ -7,7 +7,7 @@ ARG RUNC_SHA256_ARM64=ca70e7dbd6616ca782a59b5d3ac86909123fdaa9fa3f89dcf29051c70e
 # installing whatever the new Alpine carries.
 ARG HAPROXY_BRANCH=3.4
 
-# Prepare dependencies — runc's official release binaries are already
+# Prepare dependencies: runc's official release binaries are already
 # statically linked (including libseccomp), so no compilation is needed,
 # only a checksum-pinned download (see docs/development.md).
 FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS deps
@@ -23,7 +23,7 @@ RUN apk add --no-cache curl && \
     echo "${EXPECTED_SHA256}  /opt/buildcage/bin/runc" | sha256sum -c && \
     chmod +x /opt/buildcage/bin/runc
 
-# Building gen-seccomp-profile here only compiles the binary — it's
+# Building gen-seccomp-profile here only compiles the binary: it's
 # extracted onto the runner host and run natively there, not at image
 # build time; see gen-seccomp-profile/main.go for why. Pure Go
 # (CGO_ENABLED=0), so this cross-compiles natively via BUILDPLATFORM
@@ -37,8 +37,8 @@ RUN go mod download
 COPY docker/gen-seccomp-profile/main.go ./
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags="-s -w" -o /out/gen-seccomp-profile .
 
-# Bundle the QuickJS scripts (rolldown; see rolldown.scripts.config.js) —
-# qjs has no TypeScript support. Architecture-independent output, so
+# Bundle the QuickJS scripts (rolldown; see rolldown.scripts.config.js),
+# since qjs has no TypeScript support. Architecture-independent output, so
 # pinned to --platform=$BUILDPLATFORM like gen-seccomp-profile-build above
 # (no QEMU).
 FROM --platform=$BUILDPLATFORM ghcr.io/pnpm/pnpm:11@sha256:e26f380828856f205feaaf42abd157df9ce41bc8e17b662eeaa3379a9638dee0 AS qjs-build
@@ -87,17 +87,17 @@ COPY docker/universal/files/dnsmasq.conf /etc/dnsmasq.conf
 RUN mkdir -p /etc/haproxy/rules /var/log/haproxy
 COPY docker/universal/files/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 
-# Tools (QuickJS scripts, rolldown-bundled by qjs-build above) — convert-rule.js is used
-# by init-haproxy-cfg. Self-contained bundle — no separate /opt/buildcage/shared/ copy
+# Tools (QuickJS scripts, rolldown-bundled by qjs-build above), convert-rule.js is used
+# by init-haproxy-cfg. Self-contained bundle, no separate /opt/buildcage/shared/ copy
 # is needed. No report-action.js here: src/lib/report.ts builds its own report
 # in-process instead of fetching one from the container.
 COPY --from=qjs-build /build/dist/qjs/src/core/scripts/convert-rule.js /opt/buildcage/scripts/convert-rule.js
 
-# runc — extracted onto the runner host at action startup and used by
+# runc, extracted onto the runner host at action startup and used by
 # run-isolated.sh to execute the isolated command (see docs/development.md)
 COPY --from=deps /opt/buildcage/bin/runc /opt/buildcage/bin/runc
 
-# gen-seccomp-profile — extracted onto the runner host and run natively
+# gen-seccomp-profile, extracted onto the runner host and run natively
 # there (not inside this container) to produce the seccomp filter embedded
 # in runc's config.json; see the build stage comment above for why.
 COPY --from=gen-seccomp-profile-build /out/gen-seccomp-profile /opt/buildcage/bin/gen-seccomp-profile
