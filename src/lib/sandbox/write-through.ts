@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, join, isAbsolute, normalize } from "node:path";
 
 /** Env vars a write_through: entry may reference via $NAME/${NAME}. Not
- *  arbitrary env, a step's own `env:` block could otherwise smuggle a
+ *  arbitrary env: a step's own `env:` block could otherwise smuggle a
  *  path override into what's meant to be a fixed, reviewable list. */
 const ALLOWED_WRITE_THROUGH_VARS = [
   "HOME",
@@ -104,8 +104,8 @@ export function resolveWriteThroughEntry(rawLine: string, env: NodeJS.ProcessEnv
   // A trailing slash (e.g. a "$HOME/" entry) would otherwise survive
   // normalize() and no longer string-equal the bare candidate paths this is
   // compared against elsewhere (determineOverlayRoots' coverage check, the
-  // overlay candidates themselves), stripped here, once, rather than at
-  // every comparison site. "/" itself is left alone.
+  // overlay candidates themselves). It is stripped here, once, rather than
+  // at every comparison site. "/" itself is left alone.
   return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
 
@@ -198,13 +198,13 @@ function pathSegmentsBetween(ancestor: string, descendant: string): string[] {
 /**
  * For each resolved write_through path that doesn't already exist:
  * - if it equals the current value of one of KNOWN_FILE_VARS, the runner was
- *   supposed to have already created it, throw rather than paper over a
+ *   supposed to have already created it; throw rather than paper over a
  *   broken assumption.
  * - otherwise, walk up to the nearest existing ancestor and `mkdir -p` the
  *   missing path *as that ancestor's owner*, using sudo only to become it
  *   (this action's isolation setup already requires passwordless sudo; see
  *   checkPasswordlessSudo), with that ancestor's mode. Ownership is never handed
- *   to the runner's own uid unconditionally, a target under an
+ *   to the runner's own uid unconditionally: a target under an
  *   already-restricted, non-runner-writable tree (e.g. /etc/test) ends up
  *   exactly as restricted as naming the existing /etc directly would have.
  * Already-existing entries are left completely untouched.
@@ -219,7 +219,7 @@ function pathSegmentsBetween(ancestor: string, descendant: string): string[] {
  * and leave a symlink in its place. `mkdir -p` refuses to follow a name it
  * created itself (it descends with O_NOFOLLOW), and with no chown/chmod left to
  * redirect, the worst a swap can still do is put a directory somewhere that uid
- * could already have created one, no privilege is lent to it.
+ * could already have created one; no privilege is lent to it.
  */
 export function ensureWriteThroughTargetsExist(
   resolvedPaths: string[],

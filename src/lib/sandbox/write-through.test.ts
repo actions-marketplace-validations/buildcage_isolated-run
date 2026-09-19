@@ -94,7 +94,7 @@ describe("resolveWriteThroughEntry", () => {
   });
 
   it("does not swallow a stray closing brace from a malformed reference", () => {
-    // "$GITHUB_WORKSPACE}suffix" is missing its opening brace, the "}"
+    // "$GITHUB_WORKSPACE}suffix" is missing its opening brace: the "}"
     // must be treated as literal text, not consumed into the match.
     expect(resolveWriteThroughEntry("$GITHUB_WORKSPACE}suffix", ENV)).toBe(
       `${ENV.GITHUB_WORKSPACE}}suffix`,

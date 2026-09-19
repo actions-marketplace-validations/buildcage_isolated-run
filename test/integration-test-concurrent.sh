@@ -22,7 +22,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The origin serves a self-signed certificate and the universal engine never
-# terminates TLS, so the client validates the origin's own cert, `-k` is what
+# terminates TLS, so the client validates the origin's own cert; `-k` is what
 # makes that a non-issue rather than the subject of this test.
 CURL="curl -fsS -k -o /dev/null --max-time 10"
 

@@ -17,7 +17,7 @@ describe("resolveFilesystemPlan", () => {
     RUNNER_TEMP: "/home/runner/work/_temp",
   };
   // Everything "exists" by default (candidates + write_through targets) unless
-  // a test narrows it, keeps each test focused on the one thing it checks.
+  // a test narrows it, which keeps each test focused on the one thing it checks.
   const alwaysExists = () => true;
 
   it("returns an empty plan for persistent mode with no write_through:, without touching the filesystem", () => {

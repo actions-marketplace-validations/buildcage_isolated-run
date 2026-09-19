@@ -28,9 +28,8 @@ export function writeRunScript(runInput: string, execDir: string): string {
 
 /**
  * Write the final OCI config to `bundleDir/config.json` (overwriting the
- * `runc spec` placeholder generateBaseOciSpec left there). Still 0600 now
- * that the step environment has moved out of it (see env-loader.ts): it
- * describes this sandbox's whole isolation policy, and only runc reads it.
+ * `runc spec` placeholder generateBaseOciSpec left there). 0600: it describes
+ * this sandbox's whole isolation policy, and only runc reads it.
  */
 export function writeOciConfig(config: unknown, bundleDir: string): string {
   const configPath = join(bundleDir, "config.json");

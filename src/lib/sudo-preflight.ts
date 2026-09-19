@@ -16,16 +16,16 @@ const REQUIREMENT =
 
 const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX}: these typically don't have passwordless sudo configured for this kind of privileged setup.`;
 
-/**
- * Kept pure (takes the error, not execFileSync's raw output) so it's
- * unit-testable the same way as core/lib/actions/docker-error.ts's
- * describeDockerFailure.
- */
 export interface DescribeSudoFailureOptions {
   env?: NodeJS.ProcessEnv;
   exists?: (path: string) => boolean;
 }
 
+/**
+ * Kept pure (takes the error, not execFileSync's raw output) so it's
+ * unit-testable the same way as core/lib/actions/docker-error.ts's
+ * describeDockerFailure.
+ */
 export function describeSudoFailure(
   e: unknown,
   { env = process.env, exists = existsSync }: DescribeSudoFailureOptions = {},

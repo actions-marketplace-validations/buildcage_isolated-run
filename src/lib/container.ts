@@ -135,7 +135,7 @@ function inspectFormat(containerName: string, format: string, exec: RunDocker): 
 
 /**
  * The container's network namespace as a path (Docker's own
- * NetworkSettings.SandboxKey), not a PID, Docker holds this bind mount for
+ * NetworkSettings.SandboxKey), not a PID. Docker holds this bind mount for
  * the container's lifetime, so it can't be silently redirected by PID reuse
  * the way `/proc/<pid>/ns/net` could, and it vanishes cleanly if the
  * container dies. Null means "container doesn't exist yet" (see

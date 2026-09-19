@@ -14,13 +14,13 @@ import { parseMountinfo } from "./mountinfo.ts";
 // otherwise the recursive writable rbind of that path would re-expose the
 // whole host `/` as a second, writable copy inside the sandbox. /var/tmp
 // itself is 1777 (writable by the non-root runner user) and execable, so
-// this own subdirectory inherits that without needing root to create it.
+// this subdirectory inherits that without needing root to create it.
 // buildOciConfig fails closed if a step's `writable:` input tries to list
 // this directory (or an ancestor of it) as writable; see
 // assertScratchBaseNotWritable.
 //
 // Suffixed with the runner's UID so two runners running as different users
-// on one host don't contend for the same base, ensureOwnScratchBase below
+// on one host don't contend for the same base; ensureOwnScratchBase below
 // would otherwise reject the second one outright as looking like tampering.
 // getuid is asserted rather than probed, as everywhere else this uid is read:
 // the isolation is Linux-only, so a platform without it has nothing to run.
@@ -227,8 +227,8 @@ export function scratchDirFor(containerName: string): string {
 
 /**
  * Create SANDBOX_SCRATCH_BASE, or verify that an existing one is genuinely
- * ours. /var/tmp is 1777, so any local user can pre-create this path, as a
- * symlink, or as a world-writable directory, and thereby redirect the OCI
+ * ours. /var/tmp is 1777, so any local user can pre-create this path (as a
+ * symlink, or as a world-writable directory) and thereby redirect the OCI
  * bundle (whose run-script.sh holds the step's command verbatim, secrets
  * included when the workflow inlined one), the root-run `mount --rbind /`,
  * and cleanup's `sudo umount`/`rmSync`.
@@ -238,13 +238,11 @@ export function scratchDirFor(containerName: string): string {
  *
  * Strictly speaking, another local OS user is outside this action's threat
  * model: isolated-run exists to contain a malicious `run:` command, not to
- * defend against a separate, already-present actor on the host, someone
- * with real root (or the proxy container's own internals) is unstoppable by
- * design, and that's an accepted limitation elsewhere in this codebase. But
- * this particular hole needs neither: an ordinary, unprivileged local
+ * defend against a separate, already-present actor on the host. Someone with
+ * real root (or the proxy container's own internals) is unstoppable by
+ * design. This particular hole needs neither: an ordinary, unprivileged local
  * account is enough to win the race, which is a much lower bar than root or
- * the `docker` group, so it's worth closing even though the general case is
- * out of scope.
+ * the `docker` group.
  *
  * Fails closed: an unexpected owner or mode is not repaired, because
  * nothing legitimate produces one.
@@ -280,7 +278,7 @@ export interface WithScratchDirOptions extends CleanupScratchDirOptions {
 
 /**
  * Create/remove a scratch directory for this step's OCI bundle + run-script.
- * Cleaned up on every exit path that unwinds, a SIGKILL bypasses this
+ * Cleaned up on every exit path that unwinds; a SIGKILL bypasses this
  * finally, which is exactly what post.ts covers.
  *
  * `ephemeralRoots` reaches only the run's own final cleanup, not the

@@ -42,7 +42,7 @@ export interface SandboxRuntimeWiring {
 }
 
 /** `filesystem_mode: ephemeral` only. Already fully resolved/folded by
- *  ephemeral-fs.ts and the step itself before this is called, buildOciConfig does
+ *  ephemeral-fs.ts and the step itself before this is called; buildOciConfig does
  *  no path resolution of its own here, only mount assembly and ordering. */
 export interface EphemeralPolicy {
   overlayRoots: OverlayDirs[];
@@ -76,10 +76,10 @@ export interface BuildOciConfigOptions {
  * overriding only what this sandbox needs to control:
  *
  * - root: a bind-mounted copy of the host's own `/` (rootfsBindDir, set up
- *   by run-isolated.sh before invoking runc, pivot_root can't target `/`
+ *   by run-isolated.sh before invoking runc; pivot_root can't target `/`
  *   itself), made read-only via `root.readonly` plus an explicit
  *   `linux.readonlyPaths` entry per real host mount point `--rbind`
- *   duplicated in (see oci-protected-paths.ts, root.readonly alone only
+ *   duplicated in (see oci-protected-paths.ts; root.readonly alone only
  *   covers the top-level mount), except workdir/home/tmp/runnerTemp/
  *   writablePaths. rootfsBindDir itself lives under SANDBOX_SCRATCH_BASE,
  *   which is never one of those writable exceptions, so the recursive
@@ -187,10 +187,10 @@ export function buildOciConfig(
       // two-hop chain: run-isolated.sh also wraps its own `runc run`
       // invocation in `setpriv --pdeathsig=KILL` (targeting itself), so if
       // run-isolated.sh is SIGKILL'd, `runc run` dies too, which then
-      // kills this process in turn, without the outer hop, `runc run`
+      // kills this process in turn. Without the outer hop, `runc run`
       // would merely become an orphan (still alive) and this process,
       // whose parent never actually died, would never receive anything.
-      // No other setpriv flags are needed here, uid/gid, capabilities,
+      // No other setpriv flags are needed here: uid/gid, capabilities,
       // and no_new_privs are already applied by runc itself (above/below)
       // before this execs.
       args: [probes.setprivPath(), "--pdeathsig=KILL", "--", envLoaderPath, scriptPath],

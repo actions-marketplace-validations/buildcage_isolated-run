@@ -54,8 +54,8 @@ export function describeProbeCleanupFailure(dir: string, e: unknown): string {
  * here reliably fails with EACCES on any host where the probe mount
  * actually succeeded (confirmed in CI).
  *
- * The retry is insurance, not a mechanism anything here is known to hit.
- * Unlike scratch-dir.ts's removeScratchDir, which lazily unmounts the very
+ * The retry is insurance, not a mechanism anything here is known to hit,
+ * unlike scratch-dir.ts's removeScratchDir, which lazily unmounts the very
  * directory it then deletes and so races a teardown the kernel defers.
  * `--propagation private` keeps this probe's mount out of the caller's
  * namespace entirely, and the namespace it did live in is gone by the time
@@ -94,7 +94,7 @@ export interface CheckOverlayfsSupportOptions {
  *
  * `--propagation private` (same reasoning as run-isolated.sh's own use of
  * it) keeps the probe mount from ever becoming visible outside the
- * throwaway namespace it's created in, even transiently, SANDBOX_SCRATCH_BASE
+ * throwaway namespace it's created in, even transiently. SANDBOX_SCRATCH_BASE
  * is generally a "shared" mount point, and without this the probe's overlay
  * mount could propagate back onto the real host namespace instead of
  * disappearing when the child process exits.

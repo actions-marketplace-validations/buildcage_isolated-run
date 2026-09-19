@@ -1,5 +1,5 @@
 #!/bin/bash
-# Verifies the sandbox does NOT re-expose a writable copy of the whole host
+# Verifies the sandbox does not re-expose a writable copy of the whole host
 # `/` through the scratch dir's `mount --rbind /` rootfs. That rootfs lives
 # under the scratch dir at /var/tmp/buildcage-<uid>/sandbox-*/rootfs; that
 # base isn't one of the writable exceptions, so the recursive writable

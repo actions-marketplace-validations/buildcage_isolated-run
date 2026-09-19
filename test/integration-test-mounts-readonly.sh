@@ -9,7 +9,7 @@
 # The first is a bind mount nested under $GITHUB_WORKSPACE. The writable
 # guarantee covers the exception paths themselves
 # (workdir/home/tmp/RUNNER_TEMP/write_through:), not everything mounted under
-# them, computeReadonlyHostMounts checks protectedPaths by exact match, not
+# them: computeReadonlyHostMounts checks protectedPaths by exact match, not
 # by prefix, and this is the regression guard against that becoming a prefix
 # match. Ordinary files and directories under workdir, which are not separate
 # mount points, are integration-test-defaults.sh's business instead.

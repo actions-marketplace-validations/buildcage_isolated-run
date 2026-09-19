@@ -44,7 +44,7 @@ const realHost: HostGroups = {
 /* v8 ignore stop */
 
 /** Parses a /etc/group-formatted file into gid -> group name(s). null if the
- *  file can't be read at all (missing, permission denied), callers fall
+ *  file can't be read at all (missing, permission denied); callers fall
  *  back to the runtime-socket-ownership check alone in that case. */
 function readGroupNamesByGid(groupFile: string, host: HostGroups): Map<number, string[]> | null {
   let content: string;

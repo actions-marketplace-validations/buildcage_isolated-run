@@ -95,7 +95,7 @@ export interface ReportOutcome {
 
 /**
  * Pure decision + rendering step, kept free of process.env/file I/O so it's
- * testable without touching the filesystem, writeReportSummary below is the
+ * testable without touching the filesystem. writeReportSummary below is the
  * side-effecting half (actual summary/annotation output).
  */
 export function computeReportOutcome(

@@ -195,7 +195,7 @@ describe("scratchBaseLayers", () => {
   it("covers the scratch base with an empty tmpfs the sandbox can only traverse", () => {
     // The rootfs rbind sweeps in every other concurrent run's scratch dir, and
     // their 0700 modes separate nothing without a user namespace. An empty
-    // tmpfs does.
+    // tmpfs over the scratch base is what separates them.
     const [mask] = scratchBaseLayers(execDir);
     expect(mask).toStrictEqual({
       destination: SANDBOX_SCRATCH_BASE,

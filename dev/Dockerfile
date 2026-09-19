@@ -5,9 +5,9 @@
 # container instead: this one runs with `pid: host` (see
 # ../docker/compose.sandbox-dev.yaml) so it can see the proxy
 # container's PID/netns via /proc, exactly like the real GitHub Actions
-# runner host does for the real proxy container in production. It is NOT
+# runner host does for the real proxy container in production. It is not
 # used in production or in CI's test_sandbox job (see
-# docs/development.md), those run run-isolated.sh directly on the runner
+# docs/development.md): those run run-isolated.sh directly on the runner
 # host, matching what actually happens when a user's workflow executes.
 #
 # runc and gen-seccomp-profile are built directly into this image (mirroring

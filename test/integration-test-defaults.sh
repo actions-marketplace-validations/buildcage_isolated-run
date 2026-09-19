@@ -17,7 +17,7 @@ trap 'rm -rf "$WORKDIR" "$RUNNER_TEMP_DIR"' EXIT
 touch "$WORKDIR/state.env" "$WORKDIR/summary.md"
 
 # Stand-ins for what the runner hands a JavaScript action: the first two are
-# withheld from the sandbox because a `run:` step has no such thing, the third
+# withheld from the sandbox because a `run:` step has no such thing; the third
 # reaches it because a `run:` step gets one too.
 ACTIONS_RUNTIME_TOKEN="fake-runtime-token" \
 ACTIONS_RESULTS_URL="https://results.invalid/" \

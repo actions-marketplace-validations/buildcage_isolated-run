@@ -87,8 +87,8 @@ COPY docker/universal/files/dnsmasq.conf /etc/dnsmasq.conf
 RUN mkdir -p /etc/haproxy/rules /var/log/haproxy
 COPY docker/universal/files/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 
-# Tools (QuickJS scripts, rolldown-bundled by qjs-build above), convert-rule.js is used
-# by init-haproxy-cfg. Self-contained bundle, no separate /opt/buildcage/shared/ copy
+# Tools (QuickJS scripts, rolldown-bundled by qjs-build above). convert-rule.js is used
+# by init-haproxy-cfg. Self-contained bundle: no separate /opt/buildcage/shared/ copy
 # is needed. No report-action.js here: src/lib/report.ts builds its own report
 # in-process instead of fetching one from the container.
 COPY --from=qjs-build /build/dist/qjs/src/core/scripts/convert-rule.js /opt/buildcage/scripts/convert-rule.js

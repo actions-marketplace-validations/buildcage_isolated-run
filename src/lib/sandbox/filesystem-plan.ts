@@ -148,7 +148,7 @@ export function resolveFilesystemPlan(
   if (filesystemMode !== "ephemeral") return { overlayRoots: [], writeThroughPaths, createdDirs };
 
   // Separate try/catch from the above: this only touches the fixed
-  // $HOME/$RUNNER_TEMP//tmp/$GITHUB_WORKSPACE candidates, not write_through's
+  // $HOME, $RUNNER_TEMP, /tmp and $GITHUB_WORKSPACE candidates, not write_through's
   // own input, so a failure here (e.g. a permissions error reading one of
   // those paths) must not be mislabeled as a write_through syntax problem.
   try {

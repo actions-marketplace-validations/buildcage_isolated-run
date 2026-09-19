@@ -2,9 +2,7 @@
 # Drives dist/main.cjs directly against a real inspect-engine proxy container
 # and a fixture origin network (compose.test-inspect.yaml), proving
 # method/path enforcement, DNS non-leak, SSRF/forged-Host guards, TLS
-# passthrough and CA trust end-to-end, ported from buildcage/docker's
-# test/Dockerfile.inspect-restrict + test/assert-inspect-restrict.sh, adapted
-# to a `run:` step instead of a buildkit build (see
+# passthrough and CA trust end-to-end (see
 # test/inspect-restrict-scenarios.sh for the scenario list itself).
 #
 # Also checks the CA-injection design this port introduces (see
