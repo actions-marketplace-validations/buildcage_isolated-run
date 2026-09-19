@@ -115,496 +115,518 @@ describe("buildOciConfig", () => {
     env: { FOO: "bar", UNSET: undefined },
   };
 
-  it("clears all five capability sets and sets noNewPrivileges", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.process.capabilities).toStrictEqual({
-      bounding: [],
-      effective: [],
-      permitted: [],
-      inheritable: [],
-      ambient: [],
+  describe("the process runc starts", () => {
+    it("clears all five capability sets and sets noNewPrivileges", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.process.capabilities).toStrictEqual({
+        bounding: [],
+        effective: [],
+        permitted: [],
+        inheritable: [],
+        ambient: [],
+      });
+      expect(config.process.noNewPrivileges).toBe(true);
     });
-    expect(config.process.noNewPrivileges).toBe(true);
-  });
 
-  it("replaces runc's 1024-file default with the host's own RLIMIT_NOFILE", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.process.rlimits).toStrictEqual([
-      { type: "RLIMIT_NOFILE", soft: 65536, hard: 65536 },
-    ]);
-  });
-
-  // runc reads config.json, so the key has to be gone from the serialised form,
-  // not merely undefined on the object.
-  it("drops rlimits entirely when the host exposes no limits to read", () => {
-    probes = pinnedProbes({ absent: ["nofile"] });
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(JSON.parse(JSON.stringify(config)).process).not.toHaveProperty("rlimits");
-  });
-
-  it('names the sandbox after the runner instead of runc\'s default "runc"', () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.hostname).toBe(HOSTNAME);
-  });
-
-  it("resizes /dev/shm to the host's own, away from runc's 64MB container default", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
-    expect(shm?.options).not.toContain("size=65536k");
-    expect(shm?.options).toContain(`size=${SHM_BYTES}`);
-  });
-
-  // Where /dev/shm is a plain directory rather than a mount of its own, statfs
-  // answers for the containing filesystem, and sizing a tmpfs to a whole disk
-  // would let a step exhaust the host's memory.
-  it("leaves /dev/shm unsized when the host has no tmpfs mounted there", () => {
-    probes = pinnedProbes({ absent: ["shm"] });
-    const config = build(fakeBaseSpec(), baseArgs);
-    const shm = config.mounts.find((m) => m.destination === "/dev/shm");
-    expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
-  });
-
-  it("sets uid/gid and cwd from the given options", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.process.user).toStrictEqual({ uid: 1000, gid: 1000 });
-    expect(config.process.cwd).toBe(baseArgs.writable.workdir);
-  });
-
-  it("wraps the script in `setpriv --pdeathsig=KILL` at the path the host reported", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.process.args).toStrictEqual([
-      "/usr/bin/setpriv",
-      "--pdeathsig=KILL",
-      "--",
-      baseArgs.runtime.envLoaderPath,
-      baseArgs.runtime.scriptPath,
-    ]);
-  });
-
-  // run-isolated.sh has already confirmed setpriv is on root's PATH by this
-  // point, so a PATH lookup is a safe last resort.
-  it("passes a bare PATH lookup through when the host has no candidate", () => {
-    probes = pinnedProbes({ absent: ["setpriv"] });
-    expect(build(fakeBaseSpec(), baseArgs).process.args[0]).toBe("setpriv");
-  });
-
-  it("leaves process.env empty (the step environment travels over stdin)", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.process.env).toStrictEqual([]);
-  });
-
-  it("adds `path` to the network namespace entry, leaving other namespace types untouched", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    const netNs = config.linux.namespaces.find((ns) => ns.type === "network");
-    expect(netNs!.path).toBe(baseArgs.runtime.netnsPath);
-    expect(config.linux.namespaces.length).toBe(6);
-  });
-
-  it("extends maskedPaths with kallsyms/kmsg/sysrq-trigger and moves sysrq-trigger out of readonlyPaths", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    for (const p of [
-      "/proc/kallsyms",
-      "/proc/kmsg",
-      "/proc/sysrq-trigger",
-      "/proc/kcore",
-      "/proc/keys",
-      "/proc/timer_list",
-    ]) {
-      expect(
-        config.linux.maskedPaths.includes(p),
-        `expected maskedPaths to include ${p}`,
-      ).toBeTruthy();
-    }
-    expect(!config.linux.readonlyPaths.includes("/proc/sysrq-trigger")).toBeTruthy();
-    expect(config.linux.readonlyPaths.includes("/proc/bus")).toBeTruthy();
-  });
-
-  it("masks known container/VM runtime sockets", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    for (const p of [
-      "/var/run/docker.sock",
-      "/run/docker.sock",
-      "/run/containerd/containerd.sock",
-      "/var/run/docker/containerd/containerd.sock",
-      "/run/buildkit/buildkitd.sock",
-      "/run/podman/podman.sock",
-      "/var/run/crio/crio.sock",
-      "/run/dbus/system_bus_socket",
-      "/var/run/dbus/system_bus_socket",
-    ]) {
-      expect(
-        config.linux.maskedPaths.includes(p),
-        `expected maskedPaths to include ${p}`,
-      ).toBeTruthy();
-    }
-  });
-
-  it("masks the named-netns directory, so a step can't list the sandboxes running beside it", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.linux.maskedPaths).toContain("/run/netns");
-    expect(config.linux.maskedPaths).toContain("/var/run/netns");
-  });
-
-  it("doesn't leak the netns directory into readonlyPaths alongside masking it", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      runtime: {
-        ...baseArgs.runtime,
-        hostMounts: [{ mountPoint: "/run/netns", fsType: "tmpfs" }],
-      },
+    it("sets uid/gid and cwd from the given options", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.process.user).toStrictEqual({ uid: 1000, gid: 1000 });
+      expect(config.process.cwd).toBe(baseArgs.writable.workdir);
     });
-    expect(config.linux.readonlyPaths).not.toContain("/run/netns");
-  });
 
-  it("also masks the rootless runtime sockets under $XDG_RUNTIME_DIR when set", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      env: { ...baseArgs.env, XDG_RUNTIME_DIR: "/run/user/1000" },
-    });
-    expect(config.linux.maskedPaths).toContain("/run/user/1000/docker.sock");
-    expect(config.linux.maskedPaths).toContain("/run/user/1000/podman/podman.sock");
-  });
-
-  it("doesn't add rootless runtime socket paths when $XDG_RUNTIME_DIR is unset", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.linux.maskedPaths).not.toContain("/run/user/1000/docker.sock");
-    expect(config.linux.maskedPaths).not.toContain("/run/user/1000/podman/podman.sock");
-  });
-
-  it("masks /run/user/<uid> (the systemd --user bus dir) built from identity.uid, even without $XDG_RUNTIME_DIR", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.linux.maskedPaths).toContain("/run/user/1000");
-  });
-
-  it("masks /run/user/<uid> and a different $XDG_RUNTIME_DIR when the two diverge", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      env: { ...baseArgs.env, XDG_RUNTIME_DIR: "/run/custom-xdg" },
-    });
-    expect(config.linux.maskedPaths).toContain("/run/user/1000");
-    expect(config.linux.maskedPaths).toContain("/run/custom-xdg");
-  });
-
-  it("doesn't leak /run/user/<uid> into readonlyPaths alongside masking it", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      runtime: {
-        ...baseArgs.runtime,
-        hostMounts: [{ mountPoint: "/run/user/1000", fsType: "tmpfs" }],
-      },
-    });
-    expect(config.linux.maskedPaths).toContain("/run/user/1000");
-    expect(config.linux.readonlyPaths).not.toContain("/run/user/1000");
-  });
-
-  it("keeps masking /run/user/<uid> even when writable: / disables the read-only root", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/"] },
-    });
-    expect(config.linux.maskedPaths).toContain("/run/user/1000");
-  });
-
-  it("embeds the seccomp profile as-is", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.linux.seccomp).toStrictEqual(baseArgs.runtime.seccompProfile);
-  });
-
-  it("makes root read-only and binds workdir/home/tmp/writablePaths as writable exceptions", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
-    });
-    expect(config.root.readonly).toBe(true);
-    expect(config.root.path).toBe(baseArgs.runtime.rootfsBindDir);
-    const rw = config.mounts.filter((m) => m.options?.includes("rw")).map((m) => m.destination);
-    expect(rw.sort()).toStrictEqual(
-      ["/opt/cache", "/tmp", baseArgs.writable.home, baseArgs.writable.workdir].sort(),
-    );
-  });
-
-  it("does not mount anything over rootfsBindDir (it lives under the scratch base, so nothing re-exposes it)", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
-    });
-    expect(
-      !config.mounts.some((m) => m.destination === baseArgs.runtime.rootfsBindDir),
-    ).toBeTruthy();
-  });
-
-  it("masks the scratch base with an empty tmpfs and reveals only this run's execDir", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    const mask = config.mounts.find((m) => m.destination === SANDBOX_SCRATCH_BASE);
-    expect(mask).toStrictEqual({
-      destination: SANDBOX_SCRATCH_BASE,
-      type: "tmpfs",
-      source: "tmpfs",
-      options: ["nosuid", "nodev", "mode=0555"],
-    });
-    // Not `rbind`: the scratch dir also holds the live `mount --rbind /`
-    // rootfs, which a recursive bind would re-expose read-write.
-    expect(config.mounts).toContainEqual({
-      destination: baseArgs.runtime.execDir,
-      type: "none",
-      source: baseArgs.runtime.execDir,
-      options: ["bind", "ro"],
-    });
-  });
-
-  it("orders the mask last of all, and the execDir reveal after it", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
-    });
-    const destinations = config.mounts.map((m) => m.destination);
-    expect(destinations.slice(-2)).toStrictEqual([SANDBOX_SCRATCH_BASE, baseArgs.runtime.execDir]);
-  });
-
-  it("masks the scratch base in ephemeral mode too, after the overlays", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      ephemeral: { overlayRoots: [], allowWrite: ["/home/runner/work"] },
-    });
-    const destinations = config.mounts.map((m) => m.destination);
-    expect(destinations.slice(-2)).toStrictEqual([SANDBOX_SCRATCH_BASE, baseArgs.runtime.execDir]);
-  });
-
-  it("masks the scratch base even with the read-only restriction disabled", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/"] },
-    });
-    expect(config.mounts.some((m) => m.destination === SANDBOX_SCRATCH_BASE)).toBe(true);
-  });
-
-  it("fails closed when writable: lists the scratch base itself", () => {
-    expect(() =>
-      build(fakeBaseSpec(), {
+    it("falls back to / when the step has no workdir to run in", () => {
+      const config = build(fakeBaseSpec(), {
         ...baseArgs,
-        writable: { ...baseArgs.writable, writablePaths: [SANDBOX_SCRATCH_BASE] },
-      }),
-    ).toThrow(/overlaps the sandbox's own scratch directory/);
+        writable: { ...baseArgs.writable, workdir: "" },
+      });
+      expect(config.process.cwd).toBe("/");
+    });
+
+    it("wraps the script in `setpriv --pdeathsig=KILL` at the path the host reported", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.process.args).toStrictEqual([
+        "/usr/bin/setpriv",
+        "--pdeathsig=KILL",
+        "--",
+        baseArgs.runtime.envLoaderPath,
+        baseArgs.runtime.scriptPath,
+      ]);
+    });
+
+    // run-isolated.sh has already confirmed setpriv is on root's PATH by this
+    // point, so a PATH lookup is a safe last resort.
+    it("passes a bare PATH lookup through when the host has no candidate", () => {
+      probes = pinnedProbes({ absent: ["setpriv"] });
+      expect(build(fakeBaseSpec(), baseArgs).process.args[0]).toBe("setpriv");
+    });
+
+    it("leaves process.env empty (the step environment travels over stdin)", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.process.env).toStrictEqual([]);
+    });
+
+    it("embeds the seccomp profile as-is", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.linux.seccomp).toStrictEqual(baseArgs.runtime.seccompProfile);
+    });
   });
 
-  it("fails closed when writable: lists an ancestor of the scratch base", () => {
-    expect(() =>
-      build(fakeBaseSpec(), {
-        ...baseArgs,
-        writable: { ...baseArgs.writable, writablePaths: ["/var/tmp"] },
-      }),
-    ).toThrow(/overlaps/);
+  describe("matched to the runner, not runc's container defaults", () => {
+    it("replaces runc's 1024-file default with the host's own RLIMIT_NOFILE", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.process.rlimits).toStrictEqual([
+        { type: "RLIMIT_NOFILE", soft: 65536, hard: 65536 },
+      ]);
+    });
+
+    // runc reads config.json, so the key has to be gone from the serialised form,
+    // not merely undefined on the object.
+    it("drops rlimits entirely when the host exposes no limits to read", () => {
+      probes = pinnedProbes({ absent: ["nofile"] });
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(JSON.parse(JSON.stringify(config)).process).not.toHaveProperty("rlimits");
+    });
+
+    it('names the sandbox after the runner instead of runc\'s default "runc"', () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.hostname).toBe(HOSTNAME);
+    });
+
+    it("resizes /dev/shm to the host's own, away from runc's 64MB container default", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      const shm = config.mounts.find((m) => m.destination === "/dev/shm");
+      expect(shm?.options).not.toContain("size=65536k");
+      expect(shm?.options).toContain(`size=${SHM_BYTES}`);
+    });
+
+    // Where /dev/shm is a plain directory rather than a mount of its own, statfs
+    // answers for the containing filesystem, and sizing a tmpfs to a whole disk
+    // would let a step exhaust the host's memory.
+    it("leaves /dev/shm unsized when the host has no tmpfs mounted there", () => {
+      probes = pinnedProbes({ absent: ["shm"] });
+      const config = build(fakeBaseSpec(), baseArgs);
+      const shm = config.mounts.find((m) => m.destination === "/dev/shm");
+      expect(shm?.options?.some((o) => o.startsWith("size="))).toBe(false);
+    });
   });
 
-  it("fails closed when writable: lists a descendant of the scratch base", () => {
-    expect(() =>
-      build(fakeBaseSpec(), {
+  describe("the network namespace", () => {
+    it("adds `path` to the network namespace entry, leaving other namespace types untouched", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      const netNs = config.linux.namespaces.find((ns) => ns.type === "network");
+      expect(netNs!.path).toBe(baseArgs.runtime.netnsPath);
+      expect(config.linux.namespaces.length).toBe(6);
+    });
+  });
+
+  describe("paths masked from the step", () => {
+    it("extends maskedPaths with kallsyms/kmsg/sysrq-trigger and moves sysrq-trigger out of readonlyPaths", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      for (const p of [
+        "/proc/kallsyms",
+        "/proc/kmsg",
+        "/proc/sysrq-trigger",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/timer_list",
+      ]) {
+        expect(
+          config.linux.maskedPaths.includes(p),
+          `expected maskedPaths to include ${p}`,
+        ).toBeTruthy();
+      }
+      expect(!config.linux.readonlyPaths.includes("/proc/sysrq-trigger")).toBeTruthy();
+      expect(config.linux.readonlyPaths.includes("/proc/bus")).toBeTruthy();
+    });
+
+    it("masks known container/VM runtime sockets", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      for (const p of [
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "/run/containerd/containerd.sock",
+        "/var/run/docker/containerd/containerd.sock",
+        "/run/buildkit/buildkitd.sock",
+        "/run/podman/podman.sock",
+        "/var/run/crio/crio.sock",
+        "/run/dbus/system_bus_socket",
+        "/var/run/dbus/system_bus_socket",
+      ]) {
+        expect(
+          config.linux.maskedPaths.includes(p),
+          `expected maskedPaths to include ${p}`,
+        ).toBeTruthy();
+      }
+    });
+
+    it("masks the named-netns directory, so a step can't list the sandboxes running beside it", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.linux.maskedPaths).toContain("/run/netns");
+      expect(config.linux.maskedPaths).toContain("/var/run/netns");
+    });
+
+    it("doesn't leak the netns directory into readonlyPaths alongside masking it", () => {
+      const config = build(fakeBaseSpec(), {
         ...baseArgs,
-        writable: {
-          ...baseArgs.writable,
-          writablePaths: [`${SANDBOX_SCRATCH_BASE}/some-other-run`],
+        runtime: {
+          ...baseArgs.runtime,
+          hostMounts: [{ mountPoint: "/run/netns", fsType: "tmpfs" }],
         },
-      }),
-    ).toThrow(/overlaps/);
-  });
+      });
+      expect(config.linux.readonlyPaths).not.toContain("/run/netns");
+    });
 
-  it("fails closed when $HOME or RUNNER_TEMP itself overlaps the scratch base", () => {
-    expect(() =>
-      build(fakeBaseSpec(), {
+    it("also masks the rootless runtime sockets under $XDG_RUNTIME_DIR when set", () => {
+      const config = build(fakeBaseSpec(), {
         ...baseArgs,
-        writable: { ...baseArgs.writable, home: SANDBOX_SCRATCH_BASE, writablePaths: [] },
-      }),
-    ).toThrow(/overlaps/);
-  });
+        env: { ...baseArgs.env, XDG_RUNTIME_DIR: "/run/user/1000" },
+      });
+      expect(config.linux.maskedPaths).toContain("/run/user/1000/docker.sock");
+      expect(config.linux.maskedPaths).toContain("/run/user/1000/podman/podman.sock");
+    });
 
-  it("does not fail closed for an unrelated sibling under /var/tmp", () => {
-    expect(() =>
-      build(fakeBaseSpec(), {
+    it("doesn't add rootless runtime socket paths when $XDG_RUNTIME_DIR is unset", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.linux.maskedPaths).not.toContain("/run/user/1000/docker.sock");
+      expect(config.linux.maskedPaths).not.toContain("/run/user/1000/podman/podman.sock");
+    });
+
+    it("masks /run/user/<uid> (the systemd --user bus dir) built from identity.uid, even without $XDG_RUNTIME_DIR", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.linux.maskedPaths).toContain("/run/user/1000");
+    });
+
+    it("masks /run/user/<uid> and a different $XDG_RUNTIME_DIR when the two diverge", () => {
+      const config = build(fakeBaseSpec(), {
         ...baseArgs,
-        writable: { ...baseArgs.writable, writablePaths: ["/var/tmp/some-other-tool"] },
-      }),
-    ).not.toThrow();
-  });
+        env: { ...baseArgs.env, XDG_RUNTIME_DIR: "/run/custom-xdg" },
+      });
+      expect(config.linux.maskedPaths).toContain("/run/user/1000");
+      expect(config.linux.maskedPaths).toContain("/run/custom-xdg");
+    });
 
-  it("`writable: /` is exempt from the scratch-base guard (documented full opt-out)", () => {
-    expect(() =>
-      build(fakeBaseSpec(), {
+    it("doesn't leak /run/user/<uid> into readonlyPaths alongside masking it", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        runtime: {
+          ...baseArgs.runtime,
+          hostMounts: [{ mountPoint: "/run/user/1000", fsType: "tmpfs" }],
+        },
+      });
+      expect(config.linux.maskedPaths).toContain("/run/user/1000");
+      expect(config.linux.readonlyPaths).not.toContain("/run/user/1000");
+    });
+
+    it("keeps masking /run/user/<uid> even when writable: / disables the read-only root", () => {
+      const config = build(fakeBaseSpec(), {
         ...baseArgs,
         writable: { ...baseArgs.writable, writablePaths: ["/"] },
-      }),
-    ).not.toThrow();
-  });
-
-  it("mounts in layer order: base spec, writable binds, this action's own, scratch tmpfs, execDir", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    expect(config.mounts.map((m) => m.destination)).toStrictEqual([
-      "/proc",
-      "/sys",
-      "/dev/shm",
-      baseArgs.writable.workdir,
-      baseArgs.writable.home,
-      "/tmp",
-      RESOLV_CONF_DESTINATION,
-      SANDBOX_SCRATCH_BASE,
-      baseArgs.runtime.execDir,
-    ]);
-  });
-
-  it("keeps its own mounts after a write_through entry that contains them", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/etc"] },
+      });
+      expect(config.linux.maskedPaths).toContain("/run/user/1000");
     });
-    const destinations = config.mounts.map((m) => m.destination);
-    expect(destinations.indexOf(RESOLV_CONF_DESTINATION)).toBeGreaterThan(
-      destinations.indexOf("/etc"),
-    );
   });
 
-  it("fails closed when a writable path names a destination runc mounts itself", () => {
-    for (const path of ["/proc", "/sys", "/proc/self"]) {
-      const attempt = () =>
+  describe("the read-only root and its writable exceptions", () => {
+    it("makes root read-only and binds workdir/home/tmp/writablePaths as writable exceptions", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
+      });
+      expect(config.root.readonly).toBe(true);
+      expect(config.root.path).toBe(baseArgs.runtime.rootfsBindDir);
+      const rw = config.mounts.filter((m) => m.options?.includes("rw")).map((m) => m.destination);
+      expect(rw.sort()).toStrictEqual(
+        ["/opt/cache", "/tmp", baseArgs.writable.home, baseArgs.writable.workdir].sort(),
+      );
+    });
+
+    it("fails closed when a writable path names a destination runc mounts itself", () => {
+      for (const path of ["/proc", "/sys", "/proc/self"]) {
+        const attempt = () =>
+          build(fakeBaseSpec(), {
+            ...baseArgs,
+            writable: { ...baseArgs.writable, writablePaths: [path] },
+          });
+        expect(attempt).toThrow(/the sandbox mounts itself/);
+        // The class is what keeps the misconfiguration reportable under its own
+        // code rather than a generic build failure -- see sandboxed-command.ts.
+        expect(attempt).toThrow(WritablePathConflictError);
+      }
+    });
+
+    it("keeps RUNNER_TEMP writable (rw bind) and out of readonlyPaths", () => {
+      const runnerTemp = "/opt/actions-runner/_work/_temp"; // self-hosted: outside $HOME
+      const hostMounts = [
+        { mountPoint: "/", fsType: "ext4" },
+        { mountPoint: runnerTemp, fsType: "ext4" },
+      ];
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: [], runnerTemp },
+        runtime: { ...baseArgs.runtime, hostMounts },
+      });
+      const rw = config.mounts.filter((m) => m.options?.includes("rw")).map((m) => m.destination);
+      expect(rw.includes(runnerTemp), "RUNNER_TEMP must be bind-mounted writable").toBeTruthy();
+      expect(
+        !config.linux.readonlyPaths.includes(runnerTemp),
+        "RUNNER_TEMP must not be forced read-only",
+      ).toBeTruthy();
+    });
+
+    it("does not double-mount RUNNER_TEMP when it duplicates another writable path", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: [], runnerTemp: "/tmp" },
+      });
+      const tmpMounts = config.mounts.filter(
+        (m) => m.destination === "/tmp" && m.options?.includes("rw"),
+      );
+      expect(tmpMounts.length).toBe(1);
+    });
+
+    it("adds a read-only resolv.conf bind mount", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      const resolv = config.mounts.find((m) => m.destination === "/etc/resolv.conf");
+      expect(resolv).toStrictEqual({
+        destination: "/etc/resolv.conf",
+        type: "none",
+        source: baseArgs.runtime.resolvConfPath,
+        options: ["rbind", "ro"],
+      });
+    });
+
+    it("forces real host mount points not already writable into readonlyPaths (root.readonly alone doesn't cover them)", () => {
+      const hostMounts = [
+        { mountPoint: "/", fsType: "ext4" },
+        { mountPoint: "/proc", fsType: "proc" },
+        { mountPoint: "/mnt", fsType: "ext4" },
+        { mountPoint: baseArgs.writable.workdir, fsType: "ext4" },
+      ];
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: [] },
+        runtime: { ...baseArgs.runtime, hostMounts },
+      });
+      expect(
+        config.linux.readonlyPaths.includes("/mnt"),
+        "a real, separate host mount not covered by root.readonly must be listed explicitly",
+      ).toBeTruthy();
+      expect(
+        !config.linux.readonlyPaths.includes("/"),
+        "'/' itself is already covered by root.readonly",
+      ).toBeTruthy();
+      expect(
+        !config.linux.readonlyPaths.includes("/proc"),
+        "pseudo-filesystems get their own fresh mount, not a readonly remount of the host copy",
+      ).toBeTruthy();
+      expect(
+        !config.linux.readonlyPaths.includes(baseArgs.writable.workdir),
+        "workdir must stay writable, not be added to readonlyPaths",
+      ).toBeTruthy();
+    });
+
+    it("forces a kernel pseudo-fs into readonlyPaths when runc's own base spec doesn't mount it fresh", () => {
+      // Regression guard: a fixed allowlist of "pseudo-fs" filesystem types
+      // previously tolerated anything that merely looked like proc/sysfs/etc,
+      // even when runc's own base spec (fakeBaseSpec here only declares
+      // /proc and /sys) never actually gives it a fresh, isolated mount --
+      // e.g. securityfs at /sys/kernel/security, which is commonly mounted
+      // read-write on AppArmor-enabled hosts.
+      const hostMounts = [{ mountPoint: "/sys/kernel/security", fsType: "securityfs" }];
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: [] },
+        runtime: { ...baseArgs.runtime, hostMounts },
+      });
+      expect(config.linux.readonlyPaths.includes("/sys/kernel/security")).toBeTruthy();
+    });
+
+    it("builds both path lists from scratch when the base spec lists neither", () => {
+      const spec = fakeBaseSpec();
+      const bare = {
+        ...spec,
+        linux: { ...spec.linux, maskedPaths: undefined, readonlyPaths: undefined },
+      };
+      const config = build(bare, baseArgs);
+      expect(config.linux.maskedPaths).toContain("/proc/sysrq-trigger");
+      // Nothing is invented for readonlyPaths: it is the base spec plus the
+      // host-mount sweep, and here there is neither.
+      expect(config.linux.readonlyPaths).toStrictEqual([]);
+    });
+  });
+
+  describe("the scratch base, which nothing may make writable", () => {
+    it("does not mount anything over rootfsBindDir (it lives under the scratch base, so nothing re-exposes it)", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
+      });
+      expect(
+        !config.mounts.some((m) => m.destination === baseArgs.runtime.rootfsBindDir),
+      ).toBeTruthy();
+    });
+
+    it("masks the scratch base with an empty tmpfs and reveals only this run's execDir", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      const mask = config.mounts.find((m) => m.destination === SANDBOX_SCRATCH_BASE);
+      expect(mask).toStrictEqual({
+        destination: SANDBOX_SCRATCH_BASE,
+        type: "tmpfs",
+        source: "tmpfs",
+        options: ["nosuid", "nodev", "mode=0555"],
+      });
+      // Not `rbind`: the scratch dir also holds the live `mount --rbind /`
+      // rootfs, which a recursive bind would re-expose read-write.
+      expect(config.mounts).toContainEqual({
+        destination: baseArgs.runtime.execDir,
+        type: "none",
+        source: baseArgs.runtime.execDir,
+        options: ["bind", "ro"],
+      });
+    });
+
+    it("orders the mask last of all, and the execDir reveal after it", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/opt/cache"] },
+      });
+      const destinations = config.mounts.map((m) => m.destination);
+      expect(destinations.slice(-2)).toStrictEqual([
+        SANDBOX_SCRATCH_BASE,
+        baseArgs.runtime.execDir,
+      ]);
+    });
+
+    it("masks the scratch base in ephemeral mode too, after the overlays", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        ephemeral: { overlayRoots: [], allowWrite: ["/home/runner/work"] },
+      });
+      const destinations = config.mounts.map((m) => m.destination);
+      expect(destinations.slice(-2)).toStrictEqual([
+        SANDBOX_SCRATCH_BASE,
+        baseArgs.runtime.execDir,
+      ]);
+    });
+
+    it("masks the scratch base even with the read-only restriction disabled", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/"] },
+      });
+      expect(config.mounts.some((m) => m.destination === SANDBOX_SCRATCH_BASE)).toBe(true);
+    });
+
+    it("fails closed when writable: lists the scratch base itself", () => {
+      expect(() =>
         build(fakeBaseSpec(), {
           ...baseArgs,
-          writable: { ...baseArgs.writable, writablePaths: [path] },
-        });
-      expect(attempt).toThrow(/the sandbox mounts itself/);
-      // The class is what keeps the misconfiguration reportable under its own
-      // code rather than a generic build failure -- see sandboxed-command.ts.
-      expect(attempt).toThrow(WritablePathConflictError);
-    }
-  });
-
-  it("keeps RUNNER_TEMP writable (rw bind) and out of readonlyPaths", () => {
-    const runnerTemp = "/opt/actions-runner/_work/_temp"; // self-hosted: outside $HOME
-    const hostMounts = [
-      { mountPoint: "/", fsType: "ext4" },
-      { mountPoint: runnerTemp, fsType: "ext4" },
-    ];
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: [], runnerTemp },
-      runtime: { ...baseArgs.runtime, hostMounts },
+          writable: { ...baseArgs.writable, writablePaths: [SANDBOX_SCRATCH_BASE] },
+        }),
+      ).toThrow(/overlaps the sandbox's own scratch directory/);
     });
-    const rw = config.mounts.filter((m) => m.options?.includes("rw")).map((m) => m.destination);
-    expect(rw.includes(runnerTemp), "RUNNER_TEMP must be bind-mounted writable").toBeTruthy();
-    expect(
-      !config.linux.readonlyPaths.includes(runnerTemp),
-      "RUNNER_TEMP must not be forced read-only",
-    ).toBeTruthy();
-  });
 
-  it("does not double-mount RUNNER_TEMP when it duplicates another writable path", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: [], runnerTemp: "/tmp" },
+    it("fails closed when writable: lists an ancestor of the scratch base", () => {
+      expect(() =>
+        build(fakeBaseSpec(), {
+          ...baseArgs,
+          writable: { ...baseArgs.writable, writablePaths: ["/var/tmp"] },
+        }),
+      ).toThrow(/overlaps/);
     });
-    const tmpMounts = config.mounts.filter(
-      (m) => m.destination === "/tmp" && m.options?.includes("rw"),
-    );
-    expect(tmpMounts.length).toBe(1);
-  });
 
-  it("adds a read-only resolv.conf bind mount", () => {
-    const config = build(fakeBaseSpec(), baseArgs);
-    const resolv = config.mounts.find((m) => m.destination === "/etc/resolv.conf");
-    expect(resolv).toStrictEqual({
-      destination: "/etc/resolv.conf",
-      type: "none",
-      source: baseArgs.runtime.resolvConfPath,
-      options: ["rbind", "ro"],
+    it("fails closed when writable: lists a descendant of the scratch base", () => {
+      expect(() =>
+        build(fakeBaseSpec(), {
+          ...baseArgs,
+          writable: {
+            ...baseArgs.writable,
+            writablePaths: [`${SANDBOX_SCRATCH_BASE}/some-other-run`],
+          },
+        }),
+      ).toThrow(/overlaps/);
+    });
+
+    it("fails closed when $HOME or RUNNER_TEMP itself overlaps the scratch base", () => {
+      expect(() =>
+        build(fakeBaseSpec(), {
+          ...baseArgs,
+          writable: { ...baseArgs.writable, home: SANDBOX_SCRATCH_BASE, writablePaths: [] },
+        }),
+      ).toThrow(/overlaps/);
+    });
+
+    it("does not fail closed for an unrelated sibling under /var/tmp", () => {
+      expect(() =>
+        build(fakeBaseSpec(), {
+          ...baseArgs,
+          writable: { ...baseArgs.writable, writablePaths: ["/var/tmp/some-other-tool"] },
+        }),
+      ).not.toThrow();
     });
   });
 
-  it("`writable: /` disables the read-only root and skips the individual writable-path mounts", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/"] },
+  describe("mount order", () => {
+    it("mounts in layer order: base spec, writable binds, this action's own, scratch tmpfs, execDir", () => {
+      const config = build(fakeBaseSpec(), baseArgs);
+      expect(config.mounts.map((m) => m.destination)).toStrictEqual([
+        "/proc",
+        "/sys",
+        "/dev/shm",
+        baseArgs.writable.workdir,
+        baseArgs.writable.home,
+        "/tmp",
+        RESOLV_CONF_DESTINATION,
+        SANDBOX_SCRATCH_BASE,
+        baseArgs.runtime.execDir,
+      ]);
     });
-    expect(config.root.readonly).toBe(false);
-    const rw = config.mounts.filter((m) => m.options?.includes("rw"));
-    expect(rw.length).toBe(0);
+
+    it("keeps its own mounts after a write_through entry that contains them", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/etc"] },
+      });
+      const destinations = config.mounts.map((m) => m.destination);
+      expect(destinations.indexOf(RESOLV_CONF_DESTINATION)).toBeGreaterThan(
+        destinations.indexOf("/etc"),
+      );
+    });
   });
 
-  it("forces real host mount points not already writable into readonlyPaths (root.readonly alone doesn't cover them)", () => {
-    const hostMounts = [
-      { mountPoint: "/", fsType: "ext4" },
-      { mountPoint: "/proc", fsType: "proc" },
-      { mountPoint: "/mnt", fsType: "ext4" },
-      { mountPoint: baseArgs.writable.workdir, fsType: "ext4" },
-    ];
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: [] },
-      runtime: { ...baseArgs.runtime, hostMounts },
+  describe("`writable: /`, the documented full opt-out", () => {
+    it("`writable: /` is exempt from the scratch-base guard (documented full opt-out)", () => {
+      expect(() =>
+        build(fakeBaseSpec(), {
+          ...baseArgs,
+          writable: { ...baseArgs.writable, writablePaths: ["/"] },
+        }),
+      ).not.toThrow();
     });
-    expect(
-      config.linux.readonlyPaths.includes("/mnt"),
-      "a real, separate host mount not covered by root.readonly must be listed explicitly",
-    ).toBeTruthy();
-    expect(
-      !config.linux.readonlyPaths.includes("/"),
-      "'/' itself is already covered by root.readonly",
-    ).toBeTruthy();
-    expect(
-      !config.linux.readonlyPaths.includes("/proc"),
-      "pseudo-filesystems get their own fresh mount, not a readonly remount of the host copy",
-    ).toBeTruthy();
-    expect(
-      !config.linux.readonlyPaths.includes(baseArgs.writable.workdir),
-      "workdir must stay writable, not be added to readonlyPaths",
-    ).toBeTruthy();
-  });
 
-  it("`writable: /` skips the host-mount readonly pass entirely", () => {
-    const hostMounts = [{ mountPoint: "/mnt", fsType: "ext4" }];
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: ["/"] },
-      runtime: { ...baseArgs.runtime, hostMounts },
+    it("`writable: /` disables the read-only root and skips the individual writable-path mounts", () => {
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/"] },
+      });
+      expect(config.root.readonly).toBe(false);
+      const rw = config.mounts.filter((m) => m.options?.includes("rw"));
+      expect(rw.length).toBe(0);
     });
-    expect(!config.linux.readonlyPaths.includes("/mnt")).toBeTruthy();
-  });
 
-  it("forces a kernel pseudo-fs into readonlyPaths when runc's own base spec doesn't mount it fresh", () => {
-    // Regression guard: a fixed allowlist of "pseudo-fs" filesystem types
-    // previously tolerated anything that merely looked like proc/sysfs/etc,
-    // even when runc's own base spec (fakeBaseSpec here only declares
-    // /proc and /sys) never actually gives it a fresh, isolated mount --
-    // e.g. securityfs at /sys/kernel/security, which is commonly mounted
-    // read-write on AppArmor-enabled hosts.
-    const hostMounts = [{ mountPoint: "/sys/kernel/security", fsType: "securityfs" }];
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, writablePaths: [] },
-      runtime: { ...baseArgs.runtime, hostMounts },
+    it("`writable: /` skips the host-mount readonly pass entirely", () => {
+      const hostMounts = [{ mountPoint: "/mnt", fsType: "ext4" }];
+      const config = build(fakeBaseSpec(), {
+        ...baseArgs,
+        writable: { ...baseArgs.writable, writablePaths: ["/"] },
+        runtime: { ...baseArgs.runtime, hostMounts },
+      });
+      expect(!config.linux.readonlyPaths.includes("/mnt")).toBeTruthy();
     });
-    expect(config.linux.readonlyPaths.includes("/sys/kernel/security")).toBeTruthy();
-  });
-
-  it("builds both path lists from scratch when the base spec lists neither", () => {
-    const spec = fakeBaseSpec();
-    const bare = {
-      ...spec,
-      linux: { ...spec.linux, maskedPaths: undefined, readonlyPaths: undefined },
-    };
-    const config = build(bare, baseArgs);
-    expect(config.linux.maskedPaths).toContain("/proc/sysrq-trigger");
-    // Nothing is invented for readonlyPaths: it is the base spec plus the
-    // host-mount sweep, and here there is neither.
-    expect(config.linux.readonlyPaths).toStrictEqual([]);
-  });
-
-  it("falls back to / when the step has no workdir to run in", () => {
-    const config = build(fakeBaseSpec(), {
-      ...baseArgs,
-      writable: { ...baseArgs.writable, workdir: "" },
-    });
-    expect(config.process.cwd).toBe("/");
   });
 });
 
-describe("buildOciConfig ephemeral mode", () => {
+describe("buildOciConfig — ephemeral mode", () => {
   const baseArgs = {
     identity: { uid: 1000, gid: 1000 },
     writable: {
