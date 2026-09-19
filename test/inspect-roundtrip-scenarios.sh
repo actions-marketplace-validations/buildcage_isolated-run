@@ -18,10 +18,15 @@ echo "=== [same as audit: HTTPS] ==="
 OUT=$($S https://allowed.example.com/public/pkg.tgz)
 check_ok "GET /public/pkg.tgz" "$OUT" "PUBLIC GET"
 
+# These two are what made the audit run's paths vary, so the rule it generated
+# is their shared prefix rather than the one URL above. Matched on the whole
+# marker, path included: a rule that collapsed too far would answer from some
+# other resource under /public/ just as readily.
 echo "=== [same as audit: varying paths under the learned prefix] ==="
-$S https://allowed.example.com/public/a/one.tgz >/dev/null
-$S https://allowed.example.com/public/b/two.tgz >/dev/null
-pass "varying paths under the learned prefix"
+OUT=$($S https://allowed.example.com/public/a/one.tgz)
+check_ok "GET /public/a/one.tgz" "$OUT" "PUBLIC GET /public/a/one.tgz"
+OUT=$($S https://allowed.example.com/public/b/two.tgz)
+check_ok "GET /public/b/two.tgz" "$OUT" "PUBLIC GET /public/b/two.tgz"
 
 echo "=== [same as audit: POST] ==="
 OUT=$($S -X POST https://api.example.com/v1/thing)
