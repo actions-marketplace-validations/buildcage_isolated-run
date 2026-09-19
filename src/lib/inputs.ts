@@ -58,7 +58,7 @@ export function resolveWriteThroughInput(
   if (allowWrite.trim()) {
     throw new SandboxError(
       "allow_write: has been replaced by write_through:, which covers both filesystem modes. " +
-        "Rename the input -- the path syntax is unchanged.",
+        "Rename the input; the path syntax is unchanged.",
       "ALLOW_WRITE_REMOVED",
     );
   }

@@ -147,7 +147,8 @@ run_hard_kill_and_post() {
 # STATE_project_name is deliberately never given here: post-state.ts derives
 # projectName from container_name, so this proves it's no longer read.
 run_hard_kill_and_post "plain"
-# Given anyway, "extra", to prove it's ignored rather than merely unused.
+# Given anyway in the second case, to prove it is ignored rather than merely
+# unused.
 run_hard_kill_and_post "with-spoofed-project-name"
 
 echo ""

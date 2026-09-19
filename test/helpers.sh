@@ -6,7 +6,7 @@
 # keeps its own.
 #
 # The two halves report differently, and that is the only thing they disagree
-# about: a driver ends with assert_results and fails the job, a scenario script
+# about: a driver ends with assert_results and fails the job; a scenario script
 # ends with scenario_results and hands its failure count back to the driver as
 # the step's exit code.
 #

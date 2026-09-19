@@ -17,9 +17,8 @@ import type { HostMount } from "./types.ts";
 // cover at all.
 //
 // Imported from a shared JSON file (rather than a JS literal) so
-// dev/build-test-bundle.sh, a bash/jq stand-in for this same function, used
-// by the Mac dev loop, has a single source of truth to read the same
-// list from instead of hand-duplicating it.
+// dev/build-test-bundle.sh (a bash/jq stand-in for this same function, used
+// by the Mac dev loop) reads the same list instead of hand-duplicating it.
 import EXTRA_MASKED_PROC_PATHS from "../../../scripts/extra-masked-proc-paths.json" with { type: "json" };
 // A read-only bind mount doesn't stop connect(2) on a still-live socket;
 // masking replaces the path with /dev/null in this mount namespace, so
@@ -33,8 +32,8 @@ import {
 
 // `ip netns add` leaves its name as a real file under the host's own /run,
 // which the rootfs rbind carries into every sandbox, so a step could list
-// the netns names of the other steps running beside it, and the proxy
-// container name each one is derived from with it. Nothing inside the
+// the netns names of the other steps running beside it, and with them the
+// proxy container name each one is derived from. Nothing inside the
 // sandbox has a reason to read them, and nothing here is built on their
 // staying unknown: this only removes an easy way to enumerate them.
 // Both spellings: /var/run is a symlink to /run on most hosts, a real
@@ -87,7 +86,7 @@ export interface ProtectedPathsInput {
   /** Paths the mount layers keep writable, so not forced read-only here. */
   writablePaths: Set<string>;
   freshMountDestinations: Set<string>;
-  /** `writable: /`, the documented full opt-out, so no host mount is forced. */
+  /** `write_through: /`, the documented full opt-out, so no host mount is forced. */
   disableReadonly: boolean;
 }
 

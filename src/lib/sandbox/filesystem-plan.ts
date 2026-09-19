@@ -66,7 +66,7 @@ export function validateFilesystemInputs(
 }
 
 export interface FilesystemPlan {
-  /** filesystem_mode: ephemeral only, already folded (determineOverlayRoots). [] in persistent mode. */
+  /** filesystem_mode: ephemeral only; already folded (determineOverlayRoots). [] in persistent mode. */
   overlayRoots: string[];
   /** Already resolved (resolveWriteThroughPaths) and pre-created
    *  (ensureWriteThroughTargetsExist), in either filesystem mode. */

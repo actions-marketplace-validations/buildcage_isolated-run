@@ -27,7 +27,7 @@ function req(method: string, url: string): TrafficEvent {
  * Does the generated rule set actually permit this request?
  *
  * Compiles the rules the same way the engine does, so a generated rule that
- * does not cover its own request fails here rather than in a build. A rule's
+ * does not cover its own request fails here rather than in a run. A rule's
  * authorityRegex always names the port, so the request's is filled in from its
  * scheme before matching.
  */
@@ -102,7 +102,7 @@ describe("pathPatternsFor", () => {
   });
 
   it("also spells out a prefix that is itself an observed path", () => {
-    // `/express/**` does not match `/express`, so a build that fetched both a
+    // `/express/**` does not match `/express`, so a step that fetched both a
     // package's metadata and its tarball needs both.
     expect(pathPatternsFor(["/express", "/express/-/express-4.18.2.tgz"]).join()).toBe(
       "/express,/express/**",

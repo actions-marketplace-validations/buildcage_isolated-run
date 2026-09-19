@@ -44,10 +44,11 @@ export interface UniversalReportData extends ReportDataCommon {
 }
 
 /** The inspect engine decrypts, so it has the method and full URL of every
- *  request, refused ones included. Nothing is attributable to a RUN step: the
- *  proxy log carries no vertex identifier. One timeline is therefore the only
+ *  request, refused ones included. Nothing is attributable to one command in
+ *  the step: the proxy log carries no per-command identifier. One timeline is
+ *  therefore the only
  *  structure available, and the more useful one: a refusal reads in the
- *  context of what the build was doing when it happened. */
+ *  context of what the step was doing when it happened. */
 export interface InspectReportData extends ReportDataCommon {
   engine: "inspect";
   /** Every request, passthrough and refused name, oldest first. */
@@ -58,6 +59,6 @@ export interface InspectReportData extends ReportDataCommon {
   startedAt: number | undefined;
 }
 
-/** isolated-run's proxy image never produces buildkitd/vertex logs (there is
- *  no buildkitd here), so this union has no explicit-engine variant. */
+/** isolated-run's proxy image never produces buildkitd/vertex logs, so this
+ *  union has no explicit-engine variant. */
 export type ReportData = UniversalReportData | InspectReportData;

@@ -87,7 +87,7 @@ export interface RunSandboxedCommandOptions {
   env: NodeJS.ProcessEnv;
   proxyEngine: ProxyEngine;
   filesystemMode: FilesystemMode;
-  /** filesystem_mode: ephemeral only, already folded (determineOverlayRoots), not raw candidates. */
+  /** filesystem_mode: ephemeral only; already folded (determineOverlayRoots), not raw candidates. */
   overlayRoots: string[];
   /** Where this module's own warnings go: a scratch dir that would not
    *  unmount, and the environment variables a shell cannot export. Passed in

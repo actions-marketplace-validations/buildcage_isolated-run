@@ -33,8 +33,8 @@ services:
       - HOST_ADDRESSES=${HOST_ADDRESSES:-} 10.200.0.199
       # Test-only: init-inspect-cfg only honours this in an image built with
       # BUILDCAGE_TEST_HOOKS=1 (see docker/inspect/Dockerfile's
-      # /opt/buildcage/.test-hooks marker), a fixed in-container path,
-      # regardless of where the host-side cert actually lives.
+      # /opt/buildcage/.test-hooks marker). The value below is a fixed
+      # in-container path, regardless of where the host-side cert actually lives.
       - BUILDCAGE_EXTRA_CA_FILE=/test-fixtures/test-server-cert.pem
     volumes:
       - ../test/test-net-addr/attach.sh:/test-hooks/attach-test-net-addr.sh:ro

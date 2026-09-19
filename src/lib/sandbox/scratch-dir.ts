@@ -15,7 +15,7 @@ import { parseMountinfo } from "./mountinfo.ts";
 // whole host `/` as a second, writable copy inside the sandbox. /var/tmp
 // itself is 1777 (writable by the non-root runner user) and execable, so
 // this subdirectory inherits that without needing root to create it.
-// buildOciConfig fails closed if a step's `writable:` input tries to list
+// buildOciConfig fails closed if a step's `write_through:` input tries to list
 // this directory (or an ancestor of it) as writable; see
 // assertScratchBaseNotWritable.
 //
@@ -117,8 +117,8 @@ function unmountAllUnder(dir: string, deps: ScratchDirDeps, warn?: Warn): void {
  * mounted (notably a "work/work" subdirectory used for atomic rename
  * during copy-up), content that stays on disk, root-owned and not
  * traversable by the unprivileged runner user, once the mount itself is
- * gone. The plain (unprivileged) rmSync above stays the fast path, since
- * it's all persistent mode, and every unit test, ever needs.
+ * gone. The plain (unprivileged) rmSync above stays the fast path: it is all
+ * that persistent mode, and every unit test, ever needs.
  */
 function removeScratchDir(dir: string, deps: ScratchDirDeps): void {
   const { exec = defaultExec, lstat = lstatSync, remove = defaultRemove } = deps;

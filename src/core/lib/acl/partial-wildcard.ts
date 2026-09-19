@@ -3,11 +3,11 @@
  * inside a label: `abc*.amazonaws.com`.
  *
  * The shared compiler in wildcard-rules.ts rejects that, requiring a label
- * containing `*` to be exactly `*` or `**`. For the other engines that is only
+ * containing `*` to be exactly `*` or `**`. For `universal` that is only
  * a restriction on how a rule can be phrased. For `inspect` it would be a
  * hazard, because the resolver's scope is generated from these same patterns:
  * a rule unable to say "only names beginning with abc" forces the author to
- * write `*.amazonaws.com` instead, widening what the build is allowed to
+ * write `*.amazonaws.com` instead, widening what the step is allowed to
  * resolve and therefore what it can leak through a DNS query alone.
  *
  * The wildcard vocabulary is otherwise unchanged, and keeps the same meaning
@@ -185,8 +185,8 @@ export function endsAnchored(regex: string): boolean {
  * Both engines match a `~` rule as a search rather than a full match
  * (HAProxy's `-m reg`, CEL's `matches`), so an unanchored `~example\.com:443`
  * would also admit `evil-example.com:4430`. A URL rule's author cannot write
- * the anchors themselves, their `^` going to the scheme and their `$` to the
- * path, and a host rule is treated the same way.
+ * the anchors themselves: the host half's `^` goes to the scheme and its `$`
+ * to the path, and a host rule is treated the same way.
  *
  * Concatenation suffices because checkRawRegexHalf has already refused a
  * top-level `|`, the one construct it would bind to only half of.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# HAProxy/the single listener bind *:10024 (universal's dnsmasq also binds
+# HAProxy's single listener binds *:10024 (universal's dnsmasq also binds
 # *:53), but only buildcage0, the veth end run-isolated.sh wires into the
 # sandbox once a step starts, may reach them (see
 # docker/{universal,inspect}/files/s6-scripts/init-iptables). This starts
@@ -16,8 +16,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The probe containers below. Pinned like every fixture Dockerfile, so a tag
-# moving under us can't fail a run for a reason the sandbox had no part in.
+# The probe containers below. Pinned like every fixture Dockerfile, so a
+# moving tag can't fail a run for a reason the sandbox had no part in.
 # renovate: datasource=docker depName=alpine
 ALPINE_IMAGE="alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4"
 

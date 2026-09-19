@@ -96,7 +96,7 @@ jobs:
         run: make test_integration_sandbox_linux
 
   # Separate job from test_sandbox: brings up the fixture origin network in
-  # compose.test-universal.yaml (fake DNS + an origin under our own control)
+  # compose.test-universal.yaml (fake DNS + an origin this suite controls)
   # instead of the real internet, covering cases real hosts can't: an
   # allowlisted name resolving to an internal address, NXDOMAIN, and so on. Same
   # proxy image build as test_sandbox (universal needs no test-hooks build

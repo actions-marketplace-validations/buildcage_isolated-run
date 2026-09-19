@@ -123,7 +123,7 @@ describe("checkOverlayfsSupport", () => {
     }
   });
 
-  // On any failure, since `sudo rm` reports an exit status and no errno, so
+  // Retried on any failure: `sudo rm` reports an exit status and no errno, so
   // nothing here can tell one cause from another. The retry is insurance
   // rather than a race this probe is known to lose; see removeProbeDir.
   it("retries the probe-dir cleanup and succeeds on a later attempt", () => {

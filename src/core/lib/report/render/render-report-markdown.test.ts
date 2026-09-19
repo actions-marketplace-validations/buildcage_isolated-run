@@ -184,8 +184,7 @@ describe("renderReportMarkdown", () => {
 });
 
 // ---------------------------------------------------------------------------
-// inspect: no vertex/buildkitd log here, so it only ever needs the branch
-// below, not a discriminated three-way split.
+// inspect
 // ---------------------------------------------------------------------------
 describe("renderReportMarkdown: inspect", () => {
   const t = 1787471975;

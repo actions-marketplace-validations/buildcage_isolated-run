@@ -90,8 +90,7 @@ fi
 RULES=$(
   # Stops at the next top-level key (allowed_tls_rules/allowed_ip_rules are
   # echoed into the same fenced block, see inspect-example.ts) as well as the
-  # closing fence, so only the allowed_url_rules value is captured; see
-  # buildcage/docker's test/run-inspect-roundtrip.sh for the same fix.
+  # closing fence, so only the allowed_url_rules value is captured.
   awk '
     /allowed_url_rules: \|/ { capture=1; next }
     capture && /^ *(allowed_tls_rules|allowed_ip_rules): \|/ { exit }

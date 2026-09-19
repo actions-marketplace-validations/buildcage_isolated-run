@@ -15,7 +15,7 @@ const ENV = {
 describe("determineOverlayRoots", () => {
   const exists = () => true;
   // Every test path here is fictional, so the real fs.statSync-backed
-  // default deviceOf would throw for all of them, so inject a fake that
+  // default deviceOf would throw for all of them. Inject a fake that
   // reports "same device" unconditionally, matching the common case these
   // tests are about (a plain subdirectory, not a distinct mount).
   const sameDevice = () => 1;
@@ -81,10 +81,10 @@ describe("determineOverlayRoots", () => {
 
   it("keeps a nested candidate that is actually a distinct mount instead of folding it into the outer one", () => {
     // RUNNER_TEMP is nested under HOME by path, but reports a different
-    // device, a real (if unusual) self-hosted layout where RUNNER_TEMP is
+    // device: a real (if unusual) self-hosted layout where RUNNER_TEMP is
     // its own separate filesystem mounted inside $HOME. Folding it away
-    // would leave it uncovered by any overlay (see buildOciConfig's
-    // protectedPaths, matched by exact mount point).
+    // would leave it uncovered by any overlay (see computeReadonlyHostMounts,
+    // which matches by exact mount point).
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     const deviceOf = (p: string) => (p === ENV.RUNNER_TEMP ? 2 : 1);
     expect(determineOverlayRoots(candidates, [], { exists, deviceOf })).toStrictEqual([

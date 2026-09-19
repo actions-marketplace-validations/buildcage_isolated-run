@@ -5,9 +5,8 @@ import { SandboxError } from "./errors.ts";
  * Docker image (see provenance/image-tag.ts's imageTagFromRef).
  *
  * Lives here rather than beside the input reads because lib/ modules need
- * the type: defining it with the reads made compose-env.ts and
- * engine-rule-support.ts import back out of them, and left report.ts writing
- * the union out a second time by hand to avoid doing so.
+ * the type: defining it with the reads would make compose-env.ts and
+ * engine-rule-support.ts import back out of them.
  */
 const ENGINES = ["universal", "inspect"] as const;
 export type ProxyEngine = (typeof ENGINES)[number];

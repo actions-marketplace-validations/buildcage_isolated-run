@@ -27,17 +27,16 @@ export function isValidContainerName(name: string): boolean {
   return CONTAINER_NAME_PATTERN.test(name);
 }
 
-/**
- * A step's other names are derived from its container's by swapping that
- * prefix, so `docker ps`, `ip netns` and the scratch dir all read as one
- * step. They live together here because the swap has to work the same way in
- * both directions: the post step reconstructs the scratch dir from the
- * container name alone, long after the step that made it is gone.
- *
- * The Compose project name comes from the same container name but is hashed
- * rather than prefix-swapped, since Compose constrains the charset; see
- * deriveProjectName in core.
- */
+// A step's other names are derived from its container's by swapping that
+// prefix, so `docker ps`, `ip netns` and the scratch dir all read as one
+// step. netnsNameFor and scratchDirNameFor live together below because the
+// swap has to work the same way in both directions: the post step
+// reconstructs the scratch dir from the container name alone, long after the
+// step that made it is gone.
+//
+// The Compose project name comes from the same container name but is hashed
+// rather than prefix-swapped, since Compose constrains the charset; see
+// deriveProjectName in core.
 const CONTAINER_NAME_PREFIX_RE = new RegExp(`^${CONTAINER_NAME_PREFIX}`);
 
 /** The runc container id and `ip netns` name for the sandbox this container

@@ -3,7 +3,7 @@ import { SandboxError } from "../errors.ts";
 import { EXTRA_MASKED_RUNTIME_PATHS, rootlessRuntimeSocketPaths } from "./runtime-sockets.ts";
 
 /** Group names that conventionally grant root-equivalent access. Not
- *  exhaustive, ownerGids below catches an unlisted name that still owns a
+ *  exhaustive: ownerGids below catches an unlisted name that still owns a
  *  known runtime socket. */
 const PRIVILEGED_GROUP_NAMES = new Set([
   "root",
@@ -100,7 +100,7 @@ export interface ResolveSandboxGidOptions {
  * oci-config.ts); the primary GID passes through unchanged. If it belongs to a
  * group that grants container/VM runtime access, substitutes a safe GID
  * instead. Complements the socket masking in runtime-sockets.ts: that
- * closes specific paths, this closes the GID-membership route itself.
+ * closes specific paths; this closes the GID-membership route itself.
  */
 export function resolveSandboxGid(
   primaryGid: number,

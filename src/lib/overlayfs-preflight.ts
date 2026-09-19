@@ -10,7 +10,7 @@ import { SANDBOX_SCRATCH_BASE, ensureOwnScratchBase } from "./sandbox/scratch-di
 type ExecLike = typeof execFileSync;
 
 const REQUIREMENT =
-  `filesystem_mode: ephemeral requires overlayfs support on ${SANDBOX_SCRATCH_BASE} -- an overlay ` +
+  `filesystem_mode: ephemeral requires overlayfs support on ${SANDBOX_SCRATCH_BASE}: an overlay ` +
   "mount's upperdir/workdir are placed there, and the kernel doesn't allow those to themselves " +
   "sit on an overlayfs filesystem. This commonly fails when the runner process is itself running " +
   "inside a container whose own root filesystem is overlayfs (e.g. many container-based " +
@@ -19,11 +19,11 @@ const REQUIREMENT =
   "overlayfs-backed.";
 
 const CLEANUP_REQUIREMENT =
-  "The probe mount itself succeeded, so this runner does support overlayfs -- what failed is " +
+  "The probe mount itself succeeded, so this runner does support overlayfs; what failed is " +
   "removing the probe directory afterwards. That needs `sudo rm -rf`, because the kernel writes " +
   "root-owned overlayfs bookkeeping into workdir while the mount is live (see removeProbeDir), " +
   "and filesystem_mode: ephemeral's real cleanup discards its overlay work dirs exactly the same " +
-  "way -- so a run would fail on this runner anyway, later and with less to go on. This is " +
+  "way, so a run would fail on this runner anyway, later and with less to go on. This is " +
   "usually a sudoers config scoped to specific commands rather than a blanket NOPASSWD:ALL, " +
   "which checkPasswordlessSudo's own `sudo -n true` probe cannot detect. Grant the runner user " +
   "passwordless sudo for `rm`, or use filesystem_mode: persistent instead.";
@@ -123,8 +123,8 @@ export function checkOverlayfsSupport({
 
   // Deliberately not a `finally`: an exception thrown from one replaces
   // whatever the block was already throwing, so a cleanup that failed too
-  // would erase the probe's own verdict, REQUIREMENT, the reason this
-  // check exists at all, and leave the caller with a bare `rm` error.
+  // would erase the probe's own verdict (REQUIREMENT, the reason this check
+  // exists at all) and leave the caller with a bare `rm` error.
   // The cleanup only gets to speak when the probe had nothing to say.
   try {
     removeProbeDir(probeDir, exec);
