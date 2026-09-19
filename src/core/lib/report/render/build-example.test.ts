@@ -132,7 +132,7 @@ describe("buildRestrictExample", () => {
   });
 });
 
-describe("buildRestrictExample — rows that map to no action input", () => {
+describe("buildRestrictExample: rows that map to no action input", () => {
   const audited = (ruleType: string) => ({
     host: "a.example.com",
     port: "443",
