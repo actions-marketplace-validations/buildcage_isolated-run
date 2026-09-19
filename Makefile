@@ -92,6 +92,21 @@ test_sandbox_dev: ## Run a sample isolated command in the dev loop and verify is
 clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 	@docker compose -f compose.yaml -f docker/compose.sandbox-dev.yaml down -v --rmi local
 
+# ===========================================================================
+# Integration tests — the four groups below, and nothing else, are what CI's
+# test-integration.yml runs.
+# ===========================================================================
+
+# One list, so the Makefile and test-integration.yml cannot come to disagree
+# about what "the integration tests" are. Not a target to run straight
+# through, unlike the unit tests: each group wants a different proxy image
+# under BUILDCAGE_LOCAL_IMAGE_REF -- universal for the first two, an inspect
+# image built with BUILDCAGE_TEST_HOOKS=1 for the third -- and the fourth
+# builds both images itself and wants the variable unset. Build the image a
+# group needs, then run that group, the way each CI job does.
+.PHONY: test_integration
+test_integration: test_integration_sandbox_linux test_integration_sandbox_universal test_integration_sandbox_inspect test_integration_listener_scope ## Every integration test CI runs; the four groups need different proxy images, so build each one's image first
+
 # Drives dist/main.cjs directly (a host command, not a Docker build).
 .PHONY: test_integration_sandbox_linux
 test_integration_sandbox_linux: ## Run the action's integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF and a test-hook build of dist/main.cjs)

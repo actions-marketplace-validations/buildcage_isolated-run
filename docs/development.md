@@ -227,12 +227,17 @@ above, only shows what has accumulated since the most recent one.
 | `make clean_sandbox_dev`                  | Stop and remove the dev-loop containers                            |
 | `make test_unit`                          | Every unit test: core, the action's own, and the QuickJS run       |
 | `make test_unit_coverage`                 | Every Node unit test in one run, with a coverage report            |
+| `make test_integration`                   | Every integration test CI runs, as the four groups below           |
 | `make test_integration_sandbox_linux`     | The action's integration tests on a Linux host                     |
 | `make test_integration_sandbox_universal` | The ones that need the universal engine's fixture origin           |
 | `make test_integration_sandbox_inspect`   | The same for the inspect engine, round trip included               |
+| `make test_integration_listener_scope`    | `:10024`/`:53` stay unreachable outside `buildcage0`, both engines |
 
-The three integration targets need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook build of
-`dist/main.cjs`; see [Local Development](#local-development) above.
+The first three integration groups need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook build of
+`dist/main.cjs`; see [Local Development](#local-development) above. They do not all want the same
+image: the inspect group needs one built from `docker/inspect`, and `test_integration_listener_scope`
+builds both images itself and wants the variable unset. So `make test_integration` records what CI
+runs rather than running it in one go; build the image a group needs, then run that group.
 
 ## Directory Structure
 
