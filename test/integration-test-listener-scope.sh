@@ -16,6 +16,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The probe containers below. Pinned like every fixture Dockerfile, so a tag
+# moving under us can't fail a run for a reason the sandbox had no part in.
+# renovate: datasource=docker depName=alpine
+ALPINE_IMAGE="alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4"
+
 # A UDP nc -z probe can't tell a DROPped packet apart from an unopened port
 # -- both look like silence, since neither sends back an ICMP rejection.
 # Sending a real query and checking dig's raw stdout for non-emptiness isn't
@@ -25,7 +30,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # 172.20.0.1 (docker/universal/files/dnsmasq.conf).
 dns_answered() {
   local network_mode="$1" target="$2"
-  docker run --rm --network "$network_mode" alpine:3 sh -c \
+  docker run --rm --network "$network_mode" "$ALPINE_IMAGE" sh -c \
     "apk add --no-cache -q bind-tools >/dev/null 2>&1 && dig +time=2 +tries=1 @$target example.com A" 2>/dev/null \
     | grep -qE '^example\.com\.[[:space:]]'
 }
@@ -52,7 +57,7 @@ run_engine() {
   net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$proxy_name")
 
   echo "--- from another container on $net ---"
-  if docker run --rm --network "$net" alpine:3 nc -w 3 -z "$proxy_name" 10024 2>/dev/null; then
+  if docker run --rm --network "$net" "$ALPINE_IMAGE" nc -w 3 -z "$proxy_name" 10024 2>/dev/null; then
     fail "[$engine] :10024 reachable from another container on the compose network"
   else
     pass "[$engine] :10024 not reachable from another container on the compose network"

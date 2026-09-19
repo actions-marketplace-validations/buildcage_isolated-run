@@ -9,6 +9,11 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
+# The throwaway container. Pinned like every fixture Dockerfile, so a tag
+# moving under us can't fail a run for a reason run-isolated.sh had no part in.
+# renovate: datasource=docker depName=alpine
+ALPINE_IMAGE="alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4"
+
 SUFFIX="gone-test-$$"
 CONTAINER_NAME="buildcage-proxy-${SUFFIX}"
 NETNS_NAME="buildcage-sandbox-${SUFFIX}"
@@ -25,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "starting a throwaway container to obtain a real SandboxKey..." >&2
-if ! docker run -d --name "$CONTAINER_NAME" alpine:3 sleep 300 >/dev/null; then
+if ! docker run -d --name "$CONTAINER_NAME" "$ALPINE_IMAGE" sleep 300 >/dev/null; then
   echo "  FAIL  could not start the throwaway container"
   exit 1
 fi
