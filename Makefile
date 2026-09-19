@@ -97,7 +97,6 @@ clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 test_integration_sandbox_linux: ## Run the action's integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF and a test-hook build of dist/main.cjs)
 	@./test/integration-test-ephemeral-fs.sh
 	@./test/integration-test-writable-dir.sh
-	@./test/integration-test-writable-disabled.sh
 	@./test/integration-test-reserved-mounts.sh
 	@./test/integration-test-defaults.sh
 	@./test/integration-test-host-parity.sh
@@ -105,9 +104,7 @@ test_integration_sandbox_linux: ## Run the action's integration tests (needs BUI
 	@./test/integration-test-die-with-parent.sh
 	@./test/integration-test-fs-escape.sh
 	@./test/integration-test-scratch-isolation.sh
-	@./test/integration-test-runner-temp.sh
-	@./test/integration-test-nested-mount-readonly.sh
-	@./test/integration-test-non-runc-default-pseudofs-readonly.sh
+	@./test/integration-test-mounts-readonly.sh
 	@./test/integration-test-zero-traffic.sh
 	@./test/integration-test-runtime-sockets.sh
 	@./test/integration-test-post-state-tampering.sh
