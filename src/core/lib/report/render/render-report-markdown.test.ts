@@ -1,19 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { renderReportMarkdown } from "./render-report-markdown.ts";
-import type { GenReportParameters, UniversalReportData, InspectReportData } from "../types.ts";
+import type { UniversalReportData, InspectReportData } from "../types.ts";
 import type { TrafficEvent } from "#core/lib/log/traffic-event.ts";
-
-function params(overrides: Partial<GenReportParameters> = {}): GenReportParameters {
-  return {
-    mode: "restrict",
-    allowedHttpsRules: [],
-    allowedHttpRules: [],
-    allowedIpRules: [],
-    allowedTlsRules: [],
-    knownBlockedRules: [],
-    ...overrides,
-  };
-}
+import { reportParams, expectedRows } from "#core/lib/test/report-data.node.ts";
 
 const allowedRow = { host: "good.com", port: "443", ruleType: "HTTPS", reason: "-", count: 1 };
 const blockedRow = {
@@ -25,31 +14,10 @@ const blockedRow = {
   expected: false,
 };
 
-const expectedRows = [
-  {
-    host: "a.sury.org",
-    port: "443",
-    ruleType: "HTTPS",
-    reason: "https-not-allowed",
-    count: 1,
-    expected: true,
-    expectedBy: "*.sury.org:*",
-  },
-  {
-    host: "b.sury.org",
-    port: "443",
-    ruleType: "HTTPS",
-    reason: "https-not-allowed",
-    count: 1,
-    expected: true,
-    expectedBy: "*.sury.org:*",
-  },
-];
-
 describe("renderReportMarkdown", () => {
   const base: UniversalReportData = {
     engine: "universal",
-    parameters: params(),
+    parameters: reportParams(),
     passed: [],
     blocked: [],
     blockedCount: 0,
@@ -97,7 +65,7 @@ describe("renderReportMarkdown", () => {
 
   it("renders the audit-mode heading and Audited Hosts table, plus a restrict-mode example", () => {
     const md = renderReportMarkdown(
-      { ...base, parameters: params({ mode: "audit" }), passed: [allowedRow] },
+      { ...base, parameters: reportParams({ mode: "audit" }), passed: [allowedRow] },
       "buildcage/isolated-run",
       "v1",
     );
@@ -159,7 +127,7 @@ describe("renderReportMarkdown", () => {
 
   it("shows a restrict-mode example including the run: command", () => {
     const md = renderReportMarkdown(
-      { ...base, parameters: params({ mode: "audit" }), passed: [allowedRow] },
+      { ...base, parameters: reportParams({ mode: "audit" }), passed: [allowedRow] },
       "buildcage/isolated-run",
       "v1",
       { runCommand: "npm install" },
@@ -172,7 +140,7 @@ describe("renderReportMarkdown", () => {
     const md = renderReportMarkdown(
       {
         ...base,
-        parameters: params({ knownBlockedRules: ["bad.com:80"] }),
+        parameters: reportParams({ knownBlockedRules: ["bad.com:80"] }),
         blocked: [blockedRow],
       },
       "buildcage/isolated-run",
@@ -203,7 +171,7 @@ describe("renderReportMarkdown", () => {
     const md = renderReportMarkdown(
       {
         ...base,
-        parameters: params({ knownBlockedRules: ["*.sury.org:*"] }),
+        parameters: reportParams({ knownBlockedRules: ["*.sury.org:*"] }),
         blocked: expectedRows,
       },
       "buildcage/isolated-run",
@@ -236,7 +204,7 @@ describe("renderReportMarkdown — inspect", () => {
   ];
   const base: InspectReportData = {
     engine: "inspect",
-    parameters: params(),
+    parameters: reportParams(),
     passed: [],
     blocked: [],
     blockedCount: 0,
@@ -253,7 +221,7 @@ describe("renderReportMarkdown — inspect", () => {
 
   it("builds the audit-mode example from the timeline, method and path included", () => {
     const md = renderReportMarkdown(
-      { ...base, parameters: params({ mode: "audit" }), timeline },
+      { ...base, parameters: reportParams({ mode: "audit" }), timeline },
       "buildcage/isolated-run",
       "v1",
       { runCommand: "npm install" },
@@ -268,7 +236,7 @@ describe("renderReportMarkdown — inspect", () => {
     const md = renderReportMarkdown(
       {
         ...base,
-        parameters: params({ knownBlockedRules: ["*.sury.org:*"] }),
+        parameters: reportParams({ knownBlockedRules: ["*.sury.org:*"] }),
         blocked: [blockedRow, ...expectedRows],
       },
       "buildcage/isolated-run",

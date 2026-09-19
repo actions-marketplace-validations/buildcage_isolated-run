@@ -12,6 +12,7 @@ import {
 import { createAnnotation } from "#core/lib/actions/annotation.ts";
 import type { Report } from "./report.ts";
 import type { InspectReportData } from "#core/lib/report/types.ts";
+import { reportParams } from "#core/lib/test/report-data.node.ts";
 
 const CONTAINER = "buildcage-proxy-deadbeef";
 
@@ -23,14 +24,7 @@ function setInput(name: string, value: string): void {
 function inspectReport(overrides: Partial<InspectReportData> = {}): Report {
   return {
     engine: "inspect",
-    parameters: {
-      mode: "restrict",
-      allowedHttpsRules: [],
-      allowedHttpRules: [],
-      allowedIpRules: [],
-      allowedTlsRules: [],
-      knownBlockedRules: [],
-    },
+    parameters: reportParams(),
     passed: [],
     blocked: [],
     blockedCount: 0,
