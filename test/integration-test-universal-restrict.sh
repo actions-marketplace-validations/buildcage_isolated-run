@@ -88,6 +88,13 @@ assert_summary_contains "| internal.wildcard.example.com:443 | HTTPS | internal-
 assert_summary_contains "| internal.wildcard.example.com:80 | HTTP | internal-address |" "SSRF via allowlisted name (HTTP) recorded as blocked, reason internal-address"
 assert_summary_contains "| runner.wildcard.example.com:443 | HTTPS | internal-address |" "a name resolving to an address the runner holds recorded as blocked, reason internal-address"
 assert_summary_contains "| runner.wildcard.example.com:80 | HTTP | internal-address |" "a name resolving to an address the runner holds (HTTP) recorded as blocked, reason internal-address"
+# Neither of these names a host, so the row carries whatever address the
+# connection was headed for -- the proxy's own. The reason is the assertion.
+assert_summary_contains "| HTTPS | missing-sni |" "a TLS ClientHello with no SNI recorded as blocked, reason missing-sni"
+assert_summary_contains "| HTTP | missing-host-header |" "an HTTP request with no Host header recorded as blocked, reason missing-host-header"
+# The crafted SNI arrives as one row whose host cell is the sanitized name.
+assert_summary_contains "x__-__T__buildcage__ALLOWED___HTTPS___forged.example.com:443" \
+  "the forged SNI was sanitized into a single blocked row"
 
 # The Allowed Hosts table never shows a reason column, so a plain substring
 # search for "| blocked.example.com:80 | HTTP |" would also match the start
@@ -109,6 +116,36 @@ assert_absent_in_allowed() {
 
 assert_absent_in_allowed "| blocked.example.com:80 | HTTP |" \
   "keep-alive: second (blocked) request on a reused connection did not inherit the first request's ALLOWED verdict"
+
+assert_absent_in_summary() {
+  local pattern="$1" label="$2"
+  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
+    fail "$label"
+  else
+    pass "$label"
+  fi
+}
+
+# A bare, unsanitized row would only exist if the crafted SNI had broken out
+# of its log line and been read back as an ALLOWED entry of its own.
+assert_absent_in_summary "| forged.example.com:443 | HTTPS |" \
+  "the forged SNI produced no unsanitized row of its own"
+
+assert_present_in_allowed() {
+  local pattern="$1" label="$2"
+  if grep -qF -- "$pattern" <<< "$ALLOWED_SECTION"; then
+    pass "$label"
+  else
+    fail "$label -- not found in the Allowed Hosts table"
+  fi
+}
+
+# The other direction: keepalive.wildcard.example.com is requested once, as
+# the second request on a connection whose first was refused. Scoped to the
+# Allowed Hosts table, since a blocked row for it would start with the same
+# text.
+assert_present_in_allowed "| keepalive.wildcard.example.com:80 | HTTP |" \
+  "keep-alive: second (allowed) request on a reused connection did not inherit the first request's BLOCKED verdict"
 
 rm -rf "$TMPDIR"
 

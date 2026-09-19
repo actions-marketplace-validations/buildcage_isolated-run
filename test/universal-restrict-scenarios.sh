@@ -226,5 +226,39 @@ echo "=== [HTTP keep-alive - allowed then blocked] ==="
  | nc -w 5 allowed.example.com 80 > /dev/null 2>&1 || true)
 echo "  requests sent over one keep-alive connection (checked against the report)"
 
+# The other direction, which the pair above cannot show: a refusal must not
+# carry over either. keepalive.wildcard.example.com is requested here and
+# nowhere else, so the report showing it as allowed is this connection's
+# second request and nothing else.
+echo "=== [HTTP keep-alive - blocked then allowed] ==="
+((printf 'GET / HTTP/1.1\r\nHost: blocked.example.com\r\n\r\n'; sleep 1; \
+  printf 'GET / HTTP/1.1\r\nHost: keepalive.wildcard.example.com\r\nConnection: close\r\n\r\n'; sleep 1) \
+ | nc -w 5 allowed.example.com 80 > /dev/null 2>&1 || true)
+echo "  requests sent over one keep-alive connection (checked against the report)"
+
+# [TLS ClientHello with no SNI extension at all. There is no name to judge,
+# so the connection is refused on that alone -- the report records the
+# address it was headed for, which is the proxy's own.]
+echo "=== [HTTPS - missing-sni] ==="
+(printf '\x16\x03\x01\x00\x2d\x01\x00\x00\x29\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xff\x01\x00' \
+ | nc -w 5 allowed.example.com 443 > /dev/null 2>&1 || true)
+echo "  request sent (blocked expected in the report)"
+
+# [HTTP/1.0 request with no Host header, the plaintext counterpart of the
+# case above.]
+echo "=== [HTTP - missing-host-header] ==="
+((printf 'GET / HTTP/1.0\r\n\r\n'; sleep 1) | nc -w 5 allowed.example.com 80 > /dev/null 2>&1 || true)
+echo "  request sent (blocked expected in the report)"
+
+# [A crafted SNI carrying the bytes of a log line: x" -\n[T] buildcage
+# [ALLOWED] (HTTPS) "forged.example.com. Breaking out of the "..." quoting
+# would put a second, fabricated ALLOWED line in the log the report is built
+# from. It must arrive as one sanitized BLOCKED row instead; see H-2 in
+# docs/security.md.]
+echo "=== [HTTPS - forged SNI] ==="
+(printf '\x16\x03\x01\x00\x70\x01\x00\x00\x6c\x03\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xff\x01\x00\x00\x41\x00\x00\x00\x3d\x00\x3b\x00\x00\x38\x78\x22\x20\x2d\x0a\x5b\x54\x5d\x20\x62\x75\x69\x6c\x64\x63\x61\x67\x65\x20\x5b\x41\x4c\x4c\x4f\x57\x45\x44\x5d\x20\x28\x48\x54\x54\x50\x53\x29\x20\x22\x66\x6f\x72\x67\x65\x64\x2e\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d' \
+ | nc -w 5 allowed.example.com 443 > /dev/null 2>&1 || true)
+echo "  request sent (one sanitized blocked row expected in the report)"
+
 echo "=== End of scenarios: $FAILURES failure(s) ==="
 exit "$FAILURES"
