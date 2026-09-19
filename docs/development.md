@@ -66,8 +66,10 @@ run.
 `make test_sandbox_dev` is the dev-loop end-to-end check described above; `make
 test_integration_sandbox_linux` drives `dist/main.cjs` directly for checks that don't depend on
 the real action wrapper (see `test/integration-test-*.sh`) and is what CI's `test_sandbox` job in
-`test-integration.yml` runs. The CI-only `test_sandbox_*` end-to-end jobs (real runner host, no
-nested container) are described in [Action Internals](#action-internals) below.
+`test-integration.yml` runs. The ones that need the fixture origin live in
+`test_integration_sandbox_universal` instead, whether they need it for what only a fixture can
+cover or just to keep off the real internet. The CI-only `test_sandbox_*` end-to-end jobs (real
+runner host, no nested container) are described in [Action Internals](#action-internals) below.
 
 ### Running the integration tests from several git worktrees
 
@@ -218,17 +220,18 @@ above, only shows what has accumulated since the most recent one.
 
 `make help` lists every target with its own description. The ones you type most:
 
-| Command                                 | Description                                                        |
-| --------------------------------------- | ------------------------------------------------------------------ |
-| `make setup_sandbox_dev`                | Start the proxy and the mac-friendly dev-loop runner               |
-| `make test_sandbox_dev`                 | Run a sample isolated command in the dev loop and verify isolation |
-| `make clean_sandbox_dev`                | Stop and remove the dev-loop containers                            |
-| `make test_unit`                        | Every unit test: core, the action's own, and the QuickJS run       |
-| `make test_unit_coverage`               | Every Node unit test in one run, with a coverage report            |
-| `make test_integration_sandbox_linux`   | The action's integration tests on a Linux host                     |
-| `make test_integration_sandbox_inspect` | The same for the inspect engine, round trip included               |
+| Command                                   | Description                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `make setup_sandbox_dev`                  | Start the proxy and the mac-friendly dev-loop runner               |
+| `make test_sandbox_dev`                   | Run a sample isolated command in the dev loop and verify isolation |
+| `make clean_sandbox_dev`                  | Stop and remove the dev-loop containers                            |
+| `make test_unit`                          | Every unit test: core, the action's own, and the QuickJS run       |
+| `make test_unit_coverage`                 | Every Node unit test in one run, with a coverage report            |
+| `make test_integration_sandbox_linux`     | The action's integration tests on a Linux host                     |
+| `make test_integration_sandbox_universal` | The ones that need the universal engine's fixture origin           |
+| `make test_integration_sandbox_inspect`   | The same for the inspect engine, round trip included               |
 
-The two integration targets need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook build of
+The three integration targets need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook build of
 `dist/main.cjs`; see [Local Development](#local-development) above.
 
 ## Directory Structure

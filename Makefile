@@ -108,8 +108,6 @@ test_integration_sandbox_linux: ## Run the action's integration tests (needs BUI
 	@./test/integration-test-runner-temp.sh
 	@./test/integration-test-nested-mount-readonly.sh
 	@./test/integration-test-non-runc-default-pseudofs-readonly.sh
-	@./test/integration-test-concurrent.sh
-	@./test/integration-test-known-blocked-rules.sh
 	@./test/integration-test-zero-traffic.sh
 	@./test/integration-test-runtime-sockets.sh
 	@./test/integration-test-post-state-tampering.sh
@@ -119,11 +117,15 @@ test_integration_sandbox_linux: ## Run the action's integration tests (needs BUI
 # network in compose.test-universal.yaml (fake DNS + an origin under our own
 # control) instead of the real internet, which is what lets them cover cases
 # real hosts can't -- an allowlisted name resolving to an internal address,
-# NXDOMAIN, direct-IP blocking with no allowed_ip_rules, etc.
+# NXDOMAIN, direct-IP blocking with no allowed_ip_rules, etc. The last two are
+# here for the other half of that: whatever they assert, a third-party site
+# being up is not something this suite should depend on.
 .PHONY: test_integration_sandbox_universal
 test_integration_sandbox_universal: ## Run the universal-engine fixture-based integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF built with test hooks)
 	@./test/integration-test-universal-restrict.sh
 	@./test/integration-test-universal-audit.sh
+	@./test/integration-test-concurrent.sh
+	@./test/integration-test-known-blocked-rules.sh
 
 # Separate from the above: these need an inspect-engine image (a different
 # Dockerfile/build) and the fixture origin network in compose.test-inspect.yaml.
