@@ -8,8 +8,14 @@
 #
 # @actions/core's getState reads STATE_<name> env vars directly, which is
 # how the real runner invokes a post step, so this drives dist/post.cjs
-# directly with those env vars for the tampering cases below, rather than
+# directly with those env vars for the tampering case below, rather than
 # going through dist/main.cjs.
+#
+# One tampering case, not one per malformed shape: which values resolvePostState
+# refuses is src/lib/post-state.test.ts's subject, and it covers traversal
+# names, malformed ephemeral_overlay_roots and the rest against the same
+# inputs. What only a real post step can show is that the refusal is wired
+# through dist/post.cjs to the sudo and rm that would otherwise run.
 set -uo pipefail
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
@@ -73,26 +79,9 @@ if [ -s "$SUDO_LOG" ]; then
 else
   echo "  PASS  sudo was never invoked"
 fi
-: >"$SUDO_LOG"
 
 echo ""
-echo "=== 2. a forged ephemeral_overlay_roots must not inject a workflow command ==="
-# A valid container_name is required here too: resolvePostState only parses
-# ephemeral_overlay_roots once container_name itself has passed validation.
-# The container this name derives to doesn't exist, so the docker compose
-# down that follows is expected to no-op or fail quietly -- only the log
-# output above it is under test.
-OUT=$(STATE_container_name="buildcage-proxy-abcd1234" STATE_ephemeral_overlay_roots=$'["/tmp\\n::error::forged"]' node dist/post.cjs 2>&1)
-if echo "$OUT" | grep -q "::error::forged"; then
-  echo "  FAIL  the forged workflow command was emitted:"
-  echo "$OUT"
-  FAILURES=$((FAILURES + 1))
-else
-  echo "  PASS  no forged workflow command reached the log"
-fi
-
-echo ""
-echo "=== 3/4. normal-path cleanup after a hard kill, with and without a spoofed project_name ==="
+echo "=== 2/3. normal-path cleanup after a hard kill, with and without a spoofed project_name ==="
 
 run_hard_kill_and_post() {
   local label="$1"
@@ -168,7 +157,7 @@ run_hard_kill_and_post "plain"
 run_hard_kill_and_post "with-spoofed-project-name"
 
 echo ""
-echo "=== 5. premise check: a persistent-mode step can actually append to \$GITHUB_STATE ==="
+echo "=== 4. premise check: a persistent-mode step can actually append to \$GITHUB_STATE ==="
 WORKDIR=$(mktemp -d)
 touch "$WORKDIR/state.env" "$WORKDIR/summary.md"
 GITHUB_WORKSPACE="$WORKDIR" \
@@ -191,7 +180,7 @@ fi
 rm -rf "$WORKDIR"
 
 echo ""
-echo "=== 6. a concurrent step's own container name must not reach its proxy or its scratch dir ==="
+echo "=== 5. a concurrent step's own container name must not reach its proxy or its scratch dir ==="
 # The two steps differ only in $GITHUB_ACTION, which the runner numbers per
 # use within a job -- the same shape as two `uses:` of this action side by
 # side. The attacker names the victim's container, which is well-formed and
