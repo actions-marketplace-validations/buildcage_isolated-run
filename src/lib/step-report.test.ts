@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { reportStepTraffic, type ReportStepDeps, type ReportStepOptions } from "./step-report.ts";
+import { reportParams } from "#core/lib/test/report-data.node.ts";
 
 // Every collaborator is tested in its own file; what is left to check here is
 // the order they run in, what each one is handed, and that a failure anywhere
@@ -28,14 +29,7 @@ function options(overrides: Partial<ReportStepOptions> = {}): ReportStepOptions 
     containerName: CONTAINER,
     env: {},
     proxyEngine: "inspect",
-    parameters: {
-      mode: "restrict",
-      allowedHttpsRules: ["a.example.com:443"],
-      allowedHttpRules: [],
-      allowedIpRules: [],
-      allowedTlsRules: [],
-      knownBlockedRules: [],
-    },
+    parameters: reportParams({ allowedHttpsRules: ["a.example.com:443"] }),
     annotation: annotation as unknown as ReportStepOptions["annotation"],
     actionRepo: "buildcage/isolated-run",
     actionRef: "v1",

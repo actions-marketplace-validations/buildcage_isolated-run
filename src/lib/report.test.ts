@@ -11,25 +11,14 @@ import {
 } from "./report.ts";
 import { createAnnotation } from "#core/lib/actions/annotation.ts";
 import { annotateKnownBlocked } from "#core/lib/report/build/aggregate.ts";
-import type { GenReportParameters, UniversalReportData } from "#core/lib/report/types.ts";
+import type { UniversalReportData } from "#core/lib/report/types.ts";
 import type { Docker } from "#core/lib/docker/client.ts";
+import { reportParams } from "#core/lib/test/report-data.node.ts";
 
 // readActionVersion's only external call is `docker inspect` via the shared
 // client, so the client is what gets handed in here.
 const readLabels = vi.fn();
 const docker = { readLabels } as unknown as Docker;
-
-function parameters(overrides: Partial<GenReportParameters> = {}): GenReportParameters {
-  return {
-    mode: "restrict",
-    allowedHttpsRules: [],
-    allowedHttpRules: [],
-    allowedIpRules: [],
-    allowedTlsRules: [],
-    knownBlockedRules: [],
-    ...overrides,
-  };
-}
 
 function options(
   overrides: Partial<ComputeReportOutcomeOptions> = {},
@@ -43,7 +32,7 @@ function options(
 // touches ReportDataCommon fields, so a universal-shaped fixture exercises
 // it just as well as an inspect-shaped one would.
 function report(overrides: Partial<UniversalReportData> = {}): UniversalReportData {
-  const params = overrides.parameters ?? parameters();
+  const params = overrides.parameters ?? reportParams();
   return {
     engine: "universal",
     parameters: params,
@@ -91,7 +80,7 @@ describe("computeReportOutcome", () => {
   it("audit-mode notice text stays fixed even when known_blocked_rules matches every blocked connection", () => {
     const knownBlockedRules = ["known-bad.example.com:443"];
     const r = report({
-      parameters: parameters({ mode: "audit", knownBlockedRules }),
+      parameters: reportParams({ mode: "audit", knownBlockedRules }),
       blockedCount: 2,
       blocked: annotateKnownBlocked(
         [{ host: "known-bad.example.com", port: "443", ruleType: "HTTPS", reason: "-", count: 2 }],
@@ -105,7 +94,7 @@ describe("computeReportOutcome", () => {
 
   it("passes stepLabel/runCommand through to the rendered markdown", () => {
     const r = report({
-      parameters: parameters({ mode: "audit" }),
+      parameters: reportParams({ mode: "audit" }),
       passed: [
         { host: "registry.npmjs.org", port: "443", ruleType: "HTTPS", reason: "-", count: 3 },
       ],
