@@ -6,7 +6,7 @@ import { buildInspectRestrictExample } from "./inspect-example.ts";
 import type { ReportData } from "../types.ts";
 
 export interface RenderReportMarkdownOptions {
-  /** Full heading text, e.g. "Outbound Traffic Report — npm install" when a
+  /** Full heading text, e.g. "Outbound Traffic Report: npm install" when a
    *  `label` is set. Defaults to a bare "Outbound Traffic Report". */
   title?: string;
   /** The `run:` input, included in the audit-mode restrict example. */
@@ -75,16 +75,16 @@ export function renderReportMarkdown(
   }
   if (report.passed.length === 0 && report.blocked.length === 0) {
     // Otherwise a no-traffic build leaves nothing between the heading and the
-    // footer — indistinguishable from a report that failed to generate.
+    // footer, indistinguishable from a report that failed to generate.
     markdown += "_(no communication)_\n\n";
   }
 
   if (report.engine === "inspect") {
     markdown += renderInspectDetails(report.timeline, report.startedAt);
   } else {
-    // SNI-based sniffing is how the proxy classifies HTTPS traffic — see
-    // docs/security.md. inspect terminates TLS instead, so this caveat
-    // doesn't apply there.
+    // SNI-based sniffing is how the proxy classifies HTTPS traffic; see
+    // docs/security.md. inspect terminates TLS instead, so this caveat does
+    // not apply there.
     markdown +=
       "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n";
   }
