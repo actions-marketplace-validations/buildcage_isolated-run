@@ -134,6 +134,23 @@ else
 fi
 assert_summary_contains "DNS secret-in-a-name.in-addr.arpa -> dns-not-allowed" \
   "an invented name under the reverse zone still reaches the report"
+# No discovery record is ever served, so no rule could make this lookup
+# succeed and a blocked row for it would name a remedy that does not exist.
+assert_summary_contains "DNS SRV _http._tcp.allowed.example.com -> no data" \
+  "the service-discovery lookup is in the timeline, with its type"
+if grep -qE '_http\._tcp\.allowed\.example\.com.*dns-(service-)?not-allowed' <<< "$SUMMARY"; then
+  fail "a service-discovery lookup under an allowed host was reported as blocked"
+else
+  pass "a service-discovery lookup under an allowed host was not reported as blocked"
+fi
+# Only a service name under a host the rules allow is treated that way. The
+# refusal names its own remedy: the host below the name, which is what a rule
+# can be written against.
+if grep -qiE '_mongodb\._tcp\.secret-in-a-name\.attacker\.example.*dns-service-not-allowed' <<< "$SUMMARY"; then
+  pass "a service name under a host no rule allows was refused with a reason of its own"
+else
+  fail "a service name under a host no rule allows was not reported as refused"
+fi
 if grep -qE 'DNS allowed\.example\.com ->' <<< "$SUMMARY"; then
   fail "a name that merely resolved is in the timeline (should be dropped as redundant)"
 else
