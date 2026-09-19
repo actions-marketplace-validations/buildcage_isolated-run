@@ -17598,30 +17598,30 @@ function resolveWriteThroughInput({ writeThrough, writable, allowWrite }, notice
 	if (writeThrough.trim() && writable.trim()) throw new SandboxError("write_through: and writable: are the same input under two names. Set only write_through:.", "FILESYSTEM_INPUT_CONFLICT");
 	return !writeThrough.trim() && writable.trim() ? (notice("writable: is now called write_through:; writable: still works, but consider updating to write_through:."), writable) : writeThrough;
 }
-function readRunCommand(getInput$3 = getInput) {
-	let runInput = getInput$3("run", { trimWhitespace: !1 });
+function readRunCommand(getInput$5 = getInput) {
+	let runInput = getInput$5("run", { trimWhitespace: !1 });
 	if (!runInput.trim()) throw new SandboxError("Input 'run' is required.", "MISSING_RUN");
 	return runInput;
 }
-function readEngineInputs(notice, getInput$4 = getInput) {
-	return { proxyEngine: resolveProxyEngine(getInput$4("proxy_engine"), notice) };
+function readEngineInputs(notice, getInput$1 = getInput) {
+	return { proxyEngine: resolveProxyEngine(getInput$1("proxy_engine"), notice) };
 }
-function readFilesystemInputs(notice, getInput$2 = getInput) {
+function readFilesystemInputs(notice, getInput$4 = getInput) {
 	return {
-		filesystemMode: resolveFilesystemMode(getInput$2("filesystem_mode")),
+		filesystemMode: resolveFilesystemMode(getInput$4("filesystem_mode")),
 		writeThroughInput: resolveWriteThroughInput({
-			writeThrough: getInput$2("write_through"),
-			writable: getInput$2("writable"),
-			allowWrite: getInput$2("allow_write")
+			writeThrough: getInput$4("write_through"),
+			writable: getInput$4("writable"),
+			allowWrite: getInput$4("allow_write")
 		}, notice)
 	};
 }
-function readRuleInputs(getInput$1 = getInput) {
-	let proxyMode = getInput$1("proxy_mode") || "restrict", rules = buildACLRules({
-		httpsRulesInput: getInput$1("allowed_https_rules"),
-		httpRulesInput: getInput$1("allowed_http_rules"),
-		ipRulesInput: getInput$1("allowed_ip_rules")
-	}), knownBlockedRules = readKnownBlockedRules(getInput$1("known_blocked_rules")), urlRulesInput = getInput$1("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$1("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
+function readRuleInputs(getInput$3 = getInput) {
+	let proxyMode = getInput$3("proxy_mode") || "restrict", rules = buildACLRules({
+		httpsRulesInput: getInput$3("allowed_https_rules"),
+		httpRulesInput: getInput$3("allowed_http_rules"),
+		ipRulesInput: getInput$3("allowed_ip_rules")
+	}), knownBlockedRules = readKnownBlockedRules(getInput$3("known_blocked_rules")), urlRulesInput = getInput$3("allowed_url_rules"), tlsRules = parseRulesOrThrow(getInput$3("allowed_tls_rules")), urlRules = buildUrlRules(urlRulesInput).map((r) => r.raw);
 	return {
 		proxyMode,
 		httpsRules: rules.httpsRules,
@@ -17632,8 +17632,8 @@ function readRuleInputs(getInput$1 = getInput) {
 		knownBlockedRules
 	};
 }
-function readStepLabel(getInput$5 = getInput) {
-	return getInput$5("label") || void 0;
+function readStepLabel(getInput$2 = getInput) {
+	return getInput$2("label") || void 0;
 }
 function readFailOnBlocked(getBooleanInput$1 = getBooleanInput) {
 	try {

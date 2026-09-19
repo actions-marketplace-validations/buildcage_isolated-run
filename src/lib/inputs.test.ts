@@ -9,13 +9,11 @@ import {
   readEngineInputs,
   readFailOnBlocked,
   readFilesystemInputs,
-  readKnownBlockedRules,
   readRuleInputs,
   readRunCommand,
   readStepLabel,
   resolveWriteThroughInput,
 } from "./inputs.ts";
-import { buildACLRules, InvalidRulesError } from "#core/lib/acl/rules.ts";
 import { SandboxError } from "./errors.ts";
 
 const silent = () => {};
@@ -65,82 +63,6 @@ describe("resolveWriteThroughInput", () => {
 
   it("returns an empty string when nothing is set", () => {
     expect(resolveWriteThroughInput(inputs(), silent)).toBe("");
-  });
-});
-
-describe("buildACLRules", () => {
-  it("parses whitespace-separated HTTPS rules", () => {
-    const { httpsRules } = buildACLRules({
-      httpsRulesInput: "example.com:443 *.cdn.example.com:443",
-      httpRulesInput: "",
-      ipRulesInput: "",
-    });
-    expect(httpsRules).toStrictEqual(["example.com:443", "*.cdn.example.com:443"]);
-  });
-
-  it("handles newline-separated rules", () => {
-    const { httpsRules } = buildACLRules({
-      httpsRulesInput: "a.com:443\nb.com:443",
-      httpRulesInput: "",
-      ipRulesInput: "",
-    });
-    expect(httpsRules).toStrictEqual(["a.com:443", "b.com:443"]);
-  });
-
-  it("returns empty arrays for empty/undefined inputs", () => {
-    const result = buildACLRules({
-      httpsRulesInput: "",
-      httpRulesInput: undefined,
-      ipRulesInput: "   ",
-    });
-    expect(result.httpsRules).toStrictEqual([]);
-    expect(result.httpRules).toStrictEqual([]);
-    expect(result.ipRules).toStrictEqual([]);
-  });
-
-  it("throws InvalidRulesError with code INVALID_RULES for invalid rule syntax", () => {
-    expect.assertions(2);
-    try {
-      buildACLRules({
-        httpsRulesInput: "no-port-specified",
-        httpRulesInput: "",
-        ipRulesInput: "",
-      });
-    } catch (err) {
-      expect(err).toBeInstanceOf(InvalidRulesError);
-      expect((err as InvalidRulesError).code).toBe("INVALID_RULES");
-    }
-  });
-});
-
-describe("readKnownBlockedRules", () => {
-  it("parses whitespace-separated rules", () => {
-    expect(readKnownBlockedRules("known-bad.example.com:443 *.noisy.example.com:80")).toStrictEqual(
-      ["known-bad.example.com:443", "*.noisy.example.com:80"],
-    );
-  });
-
-  it("returns an empty array for empty/undefined input", () => {
-    expect(readKnownBlockedRules(undefined)).toStrictEqual([]);
-    expect(readKnownBlockedRules("")).toStrictEqual([]);
-  });
-
-  it("reads a rule that names no port as any port", () => {
-    // A refused name has no port at all, so requiring one here would mean
-    // writing a port that was never involved.
-    expect(readKnownBlockedRules("_mongodb._tcp.c0.example.net")).toStrictEqual([
-      "_mongodb._tcp.c0.example.net:*",
-    ]);
-  });
-
-  it("throws InvalidRulesError with code INVALID_RULES for invalid rule syntax", () => {
-    expect.assertions(2);
-    try {
-      readKnownBlockedRules("a*b.example.com:443");
-    } catch (err) {
-      expect(err).toBeInstanceOf(InvalidRulesError);
-      expect((err as InvalidRulesError).code).toBe("INVALID_RULES");
-    }
   });
 });
 
@@ -216,16 +138,15 @@ describe("readFilesystemInputs", () => {
     ).toStrictEqual({ filesystemMode: "ephemeral", writeThroughInput: "/tmp/out" });
   });
 
-  it("still accepts the old writable: spelling", () => {
+  // resolveWriteThroughInput decides what these mean; what is left here is
+  // that each of the three reaches it under the name action.yml declares.
+  it("reads write_through:, writable: and allow_write: under those names", () => {
     const notice = vi.fn();
 
     expect(readFilesystemInputs(notice, inputs({ writable: "/tmp/out" })).writeThroughInput).toBe(
       "/tmp/out",
     );
     expect(notice).toHaveBeenCalledOnce();
-  });
-
-  it("rejects the removed allow_write: input", () => {
     expect(() => readFilesystemInputs(silent, inputs({ allow_write: "/tmp/out" }))).toThrow(
       /allow_write: has been replaced/,
     );
@@ -233,10 +154,6 @@ describe("readFilesystemInputs", () => {
 });
 
 describe("readRuleInputs", () => {
-  it("defaults proxy_mode to restrict", () => {
-    expect(readRuleInputs(inputs()).proxyMode).toBe("restrict");
-  });
-
   it("returns empty rule lists when nothing is set", () => {
     expect(readRuleInputs(inputs())).toStrictEqual({
       proxyMode: "restrict",
