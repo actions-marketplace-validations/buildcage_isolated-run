@@ -9,7 +9,7 @@ import { planPostCleanup } from "./lib/post-cleanup.ts";
 import type { PostCleanupTargets } from "./lib/post-state.ts";
 
 // Untested by design, down to the end of the file: planPostCleanup decides
-// what may be torn down, and tearing it down is docker's own.
+// what may be torn down, and tearing it down is docker.ts's job.
 /* v8 ignore start */
 // The override is read here too, not just in main.ts: if main.ts started the
 // proxy via BUILDCAGE_TEST_COMPOSE_FILE (this repo's own inspect-engine fixture
@@ -42,9 +42,9 @@ function main(): void {
     // what it has to say is about cleanup that either happened or didn't.
     annotate,
   );
-  // No catch: a failure here should crash this script the same way the
-  // original synchronous execFileSync call did (an uncaught error, non-zero
-  // exit), Node's default unhandled-rejection behavior matches that.
+  // No catch: a failure here should crash this script the same way an
+  // uncaught error and a non-zero exit would, and Node's default
+  // unhandled-rejection behavior matches that.
   if (targets) void stopProxyContainer(targets);
 }
 

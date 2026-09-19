@@ -42,7 +42,7 @@ export interface CaTrustFiles {
    *  bundle outright (REQUESTS_CA_BUNDLE, PIP_CERT, SSL_CERT_FILE), and for
    *  every other tool (curl, ...) that already reads the system store by
    *  default. Undefined if the runner has no system store at any of the
-   *  well-known candidate paths, SYSTEM_CA_CANDIDATES[0] is the only one
+   *  well-known candidate paths. SYSTEM_CA_CANDIDATES[0] is the only one
    *  a GitHub-hosted (passwordless-sudo) Linux runner actually has; the
    *  rest are kept only as a defensive fallback.
    */
@@ -63,12 +63,6 @@ const SYSTEM_CA_CANDIDATES = [
 export const OWN_CA_DESTINATION = "/etc/buildcage-ca.pem";
 export const SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
 
-/**
- * Pull the proxy's own CA (generated once per container by
- * init-inspect-cfg) out of the inspect proxy image, the same way
- * extractRuncBootstrap pulls runc and gen-seccomp-profile: `docker cp`, run
- * once per `run:` step, into this run's own scratch dir.
- */
 export interface CaTrustDeps {
   exec?: (command: string, args: string[]) => void;
   readFile?: (path: string) => string;
@@ -93,6 +87,12 @@ function defaultWriteFile(path: string, contents: string, mode: number): void {
 }
 /* v8 ignore stop */
 
+/**
+ * Pull the proxy's own CA (generated once per container by
+ * init-inspect-cfg) out of the inspect proxy image, the same way
+ * extractRuncBootstrap pulls runc and gen-seccomp-profile: `docker cp`, run
+ * once per `run:` step, into this run's own scratch dir.
+ */
 export function extractCaCert(
   containerName: string,
   destDir: string,
@@ -152,7 +152,7 @@ export function writeCaTrustFiles(
 // Only applied when a variable is unset. A step that already points one of
 // these somewhere keeps doing so unmodified: safely appending to an
 // arbitrary already-set path would need host-escape-safe symlink
-// resolution, which this port does not implement yet.
+// resolution.
 const POINT_AT_OWN_CA = ["NODE_EXTRA_CA_CERTS", "DENO_CERT"];
 const POINT_AT_SYSTEM_STORE = ["REQUESTS_CA_BUNDLE", "PIP_CERT", "SSL_CERT_FILE"];
 

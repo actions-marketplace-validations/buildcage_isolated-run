@@ -45,8 +45,6 @@ function report(overrides: Partial<UniversalReportData> = {}): UniversalReportDa
 }
 
 // The decision matrix itself is tested elsewhere; these only verify
-// shouldFail and the rendered markdown combine correctly.
-// The decision matrix itself is tested elsewhere; these only verify
 // shouldFail and the rendered markdown combine correctly. Markdown content
 // itself is covered by render-report-markdown.test.ts, which
 // computeReportOutcome delegates to.

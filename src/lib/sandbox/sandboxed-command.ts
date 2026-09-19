@@ -89,7 +89,7 @@ export interface RunSandboxedCommandOptions {
   filesystemMode: FilesystemMode;
   /** filesystem_mode: ephemeral only, already folded (determineOverlayRoots), not raw candidates. */
   overlayRoots: string[];
-  /** Where this module's own warnings go, a scratch dir that would not
+  /** Where this module's own warnings go: a scratch dir that would not
    *  unmount, and the environment variables a shell cannot export. Passed in
    *  rather than chosen here: which emitter those land on is the caller's
    *  decision, not the sandbox's. */
@@ -213,7 +213,7 @@ function resolveIdentity(
 /**
  * Everything the sandbox needs on disk, and the config.json describing it.
  * Separate from running it so the two can be read, and tested, apart:
- * this decides what the sandbox will be, runSandboxedCommand only starts it.
+ * this decides what the sandbox will be; runSandboxedCommand only starts it.
  */
 export function assembleBundle(
   dir: string,
@@ -235,7 +235,7 @@ export function assembleBundle(
       writeBundleFiles(dir, options, deps);
     // Real host mount table, read now (before run-isolated.sh's `mount
     // --rbind /` duplicates it into rootfsBindDir) so buildOciConfig can
-    // force every real submount read-only individually, root.readonly
+    // force every real submount read-only individually; root.readonly
     // alone only covers the top-level rootfs mount (see
     // computeReadonlyHostMounts).
     const hostMounts = listHostMounts();

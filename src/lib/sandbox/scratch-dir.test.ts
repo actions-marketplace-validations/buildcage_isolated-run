@@ -208,9 +208,9 @@ describe("cleanupScratchDir", () => {
 
 // ── privileged cleanup paths ──────────────────────────────────────────────
 //
-// Everything below only runs when the plain unprivileged delete fails, which
-// is why none of it had ever been exercised: the fast path covers persistent
-// mode and every other test. These are also the paths that reach `sudo`.
+// Everything below only runs when the plain unprivileged delete fails: the
+// fast path covers persistent mode and every other test. These are also the
+// paths that reach `sudo`.
 
 function fsError(code: string): NodeJS.ErrnoException {
   const e: NodeJS.ErrnoException = new Error(`simulated ${code}`);

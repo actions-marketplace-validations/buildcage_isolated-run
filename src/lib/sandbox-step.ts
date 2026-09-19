@@ -336,7 +336,7 @@ export async function runSandboxStep(
   } finally {
     // Give back the directories pre-creating write_through targets made, if
     // the command left them empty. Covers every way out of the step, not just
-    // the ones that reach the proxy teardown, image verification or a rule
+    // the ones that reach the proxy teardown: image verification or a rule
     // typo can throw after they were created. Deliberately not mirrored in
     // post.ts: the only way to hand this list to the post step is GITHUB_STATE,
     // which the sandboxed command can rewrite (see post-state.ts), and that

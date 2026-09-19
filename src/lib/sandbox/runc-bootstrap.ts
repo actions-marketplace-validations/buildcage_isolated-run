@@ -22,19 +22,6 @@ export function generateBaseOciSpec(
   return JSON.parse(readFile(join(bundleDir, "config.json")));
 }
 
-/**
- * Extract runc and gen-seccomp-profile from the proxy image into this run's
- * own `destDir` (its per-step scratch dir), then resolve the base OCI spec
- * and the seccomp profile from them. Run once per `run:` step; each
- * invocation is independent, and everything written here is torn down with
- * the scratch dir (see withScratchDir / cleanupScratchDir).
- *
- * Both binaries ship inside the proxy image and are pulled onto the host via
- * `docker cp`, then run natively there (not `docker exec`) since the seccomp
- * profile's content depends on the real host kernel/arch; see
- * gen-seccomp-profile/main.go. gen-seccomp-profile is only needed transiently
- * to resolve the profile, so it's removed once read; runc stays for `runc run`.
- */
 export interface ExtractRuncBootstrapOptions {
   containerName: string;
   destDir: string;
@@ -72,6 +59,19 @@ export interface RuncBootstrap {
   baseSpec: OciSpec;
 }
 
+/**
+ * Extract runc and gen-seccomp-profile from the proxy image into this run's
+ * own `destDir` (its per-step scratch dir), then resolve the base OCI spec
+ * and the seccomp profile from them. Run once per `run:` step; each
+ * invocation is independent, and everything written here is torn down with
+ * the scratch dir (see withScratchDir / cleanupScratchDir).
+ *
+ * Both binaries ship inside the proxy image and are pulled onto the host via
+ * `docker cp`, then run natively there (not `docker exec`) since the seccomp
+ * profile's content depends on the real host kernel/arch; see
+ * gen-seccomp-profile/main.go. gen-seccomp-profile is only needed transiently
+ * to resolve the profile, so it's removed once read; runc stays for `runc run`.
+ */
 export function extractRuncBootstrap(
   { containerName, destDir }: ExtractRuncBootstrapOptions,
   deps: RuncBootstrapDeps = {},

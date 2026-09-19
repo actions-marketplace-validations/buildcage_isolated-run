@@ -93,7 +93,7 @@ clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 	@docker compose -f compose.yaml -f docker/compose.sandbox-dev.yaml down -v --rmi local
 
 # ===========================================================================
-# Integration tests, the four groups below, and nothing else, are what CI's
+# Integration tests. The four groups below, and nothing else, are what CI's
 # test-integration.yml runs.
 # ===========================================================================
 

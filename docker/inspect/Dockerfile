@@ -101,7 +101,7 @@ ENV S6_KILL_GRACETIME=500
 COPY --from=deps /usr/local/bin/coredns /usr/local/bin/coredns
 
 # CoreDNS answers queries the step controls, so it must not run as root.
-# setcap keeps :53 bindable once it has dropped.
+# setcap keeps :53 bindable once it has dropped privileges.
 RUN apk add --no-cache --virtual .setcap libcap-utils && \
     addgroup -S coredns && adduser -S -D -H -G coredns coredns && \
     setcap cap_net_bind_service=+ep /usr/local/bin/coredns && \

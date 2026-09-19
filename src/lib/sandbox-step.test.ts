@@ -219,7 +219,7 @@ describe("runSandboxStep", () => {
     });
   });
 
-  it("skips provenance verification, and takes the compose file, from a local override", async () => {
+  it("skips provenance verification and takes the compose file from a local override", async () => {
     mocks.readLocalImageOverride.mockResolvedValue({
       imageRef: "local:dev",
       pullPolicy: "never",

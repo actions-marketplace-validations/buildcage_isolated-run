@@ -60,7 +60,7 @@ jobs:
               - '.github/workflows/test-integration.yml'
 
   # Drives dist/main.cjs directly (see test/integration-test-*.sh), not
-  # through the real action, test-e2e.yml's test_sandbox_* jobs keep one
+  # through the real action; test-e2e.yml's test_sandbox_* jobs keep one
   # representative case each that does exercise the real action.
   test_sandbox:
     needs: changes
@@ -97,8 +97,8 @@ jobs:
 
   # Separate job from test_sandbox: brings up the fixture origin network in
   # compose.test-universal.yaml (fake DNS + an origin under our own control)
-  # instead of the real internet, covering cases real hosts can't, an
-  # allowlisted name resolving to an internal address, NXDOMAIN, etc. Same
+  # instead of the real internet, covering cases real hosts can't: an
+  # allowlisted name resolving to an internal address, NXDOMAIN, and so on. Same
   # proxy image build as test_sandbox (universal needs no test-hooks build
   # arg, unlike inspect below).
   test_sandbox_universal:

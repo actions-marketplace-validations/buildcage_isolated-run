@@ -27,14 +27,14 @@ export interface DetermineOverlayRootsOptions {
  * 1. Drop any candidate that doesn't exist on disk. Checked first, before
  *    the nesting fold below, so one existing candidate's own coverage can
  *    never be affected by whether some other candidate
- *    happens to exist, otherwise an absent outer candidate could still
+ *    happens to exist; otherwise an absent outer candidate could still
  *    "swallow" an existing inner one in step 3, then itself get dropped
  *    here, leaving the inner one with no overlay and no protection at all.
  * 2. Drop any candidate that's covered by (equals, or is a descendant of) a
  *    write_through entry: that entry already persists everything under it,
  *    so no overlay is needed there. A candidate that only contains a
  *    narrower write_through entry (the common case: write_through: ./dist
- *    under an otherwise-ephemeral $GITHUB_WORKSPACE) is kept, its overlay
+ *    under an otherwise-ephemeral $GITHUB_WORKSPACE) is kept: its overlay
  *    still covers everything else under it, and the narrower entry's own rw
  *    bind (a later, and so winning, mount; see buildOciConfig's ephemeral
  *    branch) persists just that subtree on top. Dropping the candidate here

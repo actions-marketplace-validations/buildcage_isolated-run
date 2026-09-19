@@ -226,9 +226,9 @@ describe("runSandboxedCommand", () => {
     expect(error!.message).toContain("boom");
   });
 
-  // A step that already wrote for the user, resolveSandboxGid's
-  // UNSAFE_PRIMARY_GID is the one that bites, keeps its code and its words
-  // instead of being restated as a generic failure of the step that called it.
+  // A step that already wrote for the user (here resolveSandboxGid's
+  // UNSAFE_PRIMARY_GID) keeps its code and its words instead of being
+  // restated as a generic failure of the step that called it.
   it.each([
     ["extractRuncBootstrap", () => mocks.extractRuncBootstrap, {}],
     ["extractCaCert", () => mocks.extractCaCert, { proxyEngine: "inspect" }],

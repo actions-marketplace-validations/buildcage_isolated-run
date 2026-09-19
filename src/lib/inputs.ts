@@ -175,7 +175,7 @@ export function readStepLabel(getInput: GetInput = core.getInput): string | unde
 /**
  * Several integration scripts invoke this action directly without setting
  * fail_on_blocked, unlike a real workflow where action.yml's own default
- * always supplies it, fall back to that same default.
+ * always supplies it. Fall back to that same default.
  */
 export function readFailOnBlocked(
   getBooleanInput: GetBooleanInput = core.getBooleanInput,

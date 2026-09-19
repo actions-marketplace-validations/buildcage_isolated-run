@@ -7,7 +7,7 @@
 # involved, since this is always a 1:1 connection: one sandbox, one proxy),
 # bind-mounts the host's own "/" so it can be handed to runc as a read-only
 # rootfs, and execs `runc run` against an OCI bundle (config.json) that
-# sandbox/oci-config.ts has already fully built, namespaces, capabilities,
+# sandbox/oci-config.ts has already fully built: namespaces, capabilities,
 # mounts, uid/gid, and the seccomp filter are all declared there. This
 # script only sets up what runc itself cannot: the network namespace's veth
 # wiring into the proxy, and the rootfs bind-mount runc needs as its
@@ -104,7 +104,7 @@ CODE=1
 
 # Tracks whether a ::group:: block is currently open (see group_start/
 # group_end below), so cleanup() can force it closed if this script exits
-# mid-group (e.g. a failed `ip netns add`), otherwise every line printed
+# mid-group (e.g. a failed `ip netns add`); otherwise every line printed
 # afterwards (including the WARNING messages below) would stay nested inside
 # an unclosed, collapsed group in the Actions UI.
 IN_GROUP=0
@@ -207,8 +207,8 @@ ip netns exec "$NETNS_NAME" sh -c "
 
 echo "Configuring proxy-side veth as buildcage0..." >&2
 # No bridge: this is always a 1:1 connection (one sandbox, one proxy), so
-# the veth end is simply renamed to a fixed, predictable name and given the
-# proxy's own gateway address directly, init-iptables's "-i buildcage0"
+# the veth end is renamed to a fixed, predictable name and given the
+# proxy's own gateway address directly. init-iptables's "-i buildcage0"
 # rule (added at container startup, before this device exists) matches
 # against that name regardless of when the device actually appears.
 nsenter --net="$PROXY_NETNS" -- sh -c "

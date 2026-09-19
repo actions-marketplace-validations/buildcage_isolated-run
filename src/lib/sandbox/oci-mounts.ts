@@ -108,7 +108,7 @@ export function ephemeralLayers(
   assertNoFreshMountDestinations(allowWrite, freshMountDestinations);
   const protectedPaths = new Set([...overlayPaths, ...allowWrite]);
 
-  // Overlay roots, shallow-first, lower is the untouched host
+  // Overlay roots, shallow-first: lower is the untouched host
   // path (readable/writable during the step, discarded after); upper/work
   // live under this run's own scratch dir (createOverlayScratchDirs).
   for (const root of [...overlayRoots].sort((a, b) => a.path.length - b.path.length)) {
@@ -179,7 +179,8 @@ export function writableDirsOf({
  * The rootfs rbind sweeps in every other concurrent (or leftover) run's
  * scratch dir, and their 0700/0600 modes separate nothing: without a user
  * namespace every sandbox on the host shares one real UID. An empty tmpfs
- * does. Called last so the mounts above still resolve against the real
+ * over the scratch base is what separates them. Called last so the mounts
+ * above still resolve against the real
  * scratch base, and root-owned/unwritable so the sandbox can only traverse
  * it. Not maskedPaths: runc applies those after every mount, which would
  * undo the reveal below.

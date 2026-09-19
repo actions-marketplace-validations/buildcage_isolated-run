@@ -81,7 +81,7 @@ export async function uploadTrafficArtifact(
     });
     console.log(`Uploaded the traffic JSON as ${name}`);
     // Set only on confirmed success, and only here (after the sandboxed
-    // command has already exited), GITHUB_OUTPUT's own last-write-wins
+    // command has already exited). GITHUB_OUTPUT's own last-write-wins
     // parsing means this always overrides anything the isolated command
     // itself may have written to the same key.
     core.setOutput("traffic_artifact_name", name);

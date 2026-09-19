@@ -66,10 +66,10 @@ describe("determineOverlayRoots", () => {
   });
 
   it("does not let a non-existent outer candidate drop an existing inner one's coverage", () => {
-    // HOME doesn't exist; RUNNER_TEMP (nested under it) does. Previously the
-    // nesting fold ran before the exists() filter, so RUNNER_TEMP was
-    // dropped as "covered by" HOME regardless, and HOME was then also
-    // dropped for not existing, leaving RUNNER_TEMP with no overlay at all.
+    // HOME doesn't exist; RUNNER_TEMP (nested under it) does. The exists()
+    // filter has to run before the nesting fold: the other order drops
+    // RUNNER_TEMP as "covered by" HOME regardless, and then drops HOME for
+    // not existing, leaving RUNNER_TEMP with no overlay at all.
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     expect(
       determineOverlayRoots(candidates, [], {

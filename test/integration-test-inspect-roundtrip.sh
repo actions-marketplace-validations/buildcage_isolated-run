@@ -1,6 +1,5 @@
 #!/bin/bash
-# The audit-then-restrict round trip, which is what the inspect engine is
-# for, ported from buildcage/docker's test/run-inspect-roundtrip.sh.
+# The audit-then-restrict round trip, which is what the inspect engine is for.
 #
 # Phase 1 runs a `run:` step under `audit` and extracts the `allowed_url_rules`
 # the report generated from what it saw. Phase 2 runs again under `restrict`

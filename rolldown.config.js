@@ -28,7 +28,7 @@ const configs = [
   // function, so it needs the same build-time substitution to keep that
   // reachable only in a test build.
   // In a BUILDCAGE_BUILD_TEST_HOOKS=1 build, that gate is reachable, so its
-  // dynamic import needs the same codeSplitting: false as main.ts, without
+  // dynamic import needs the same codeSplitting: false as main.ts; without
   // it, rolldown wants a second chunk for the dynamic import, which
   // conflicts with output.file (single-file mode).
   { input: "src/post.ts", file: "dist/post.cjs", plugins: mainPlugins, codeSplitting: false },

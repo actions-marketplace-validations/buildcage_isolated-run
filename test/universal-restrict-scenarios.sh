@@ -209,7 +209,7 @@ echo "=== [HTTP keep-alive - blocked then allowed] ==="
 echo "  requests sent over one keep-alive connection (checked against the report)"
 
 # [TLS ClientHello with no SNI extension at all. There is no name to judge,
-# so the connection is refused on that alone, the report records the
+# so the connection is refused on that alone; the report records the
 # address it was headed for, which is the proxy's own.]
 echo "=== [HTTPS - missing-sni] ==="
 (printf '\x16\x03\x01\x00\x2d\x01\x00\x00\x29\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xff\x01\x00' \
