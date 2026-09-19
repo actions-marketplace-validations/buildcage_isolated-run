@@ -58,10 +58,10 @@ SUMMARY=$(cat "$SUMMARY_FILE")
 
 assert_summary_contains "| allowed.example.com:443 | HTTPS |" "allowed.example.com:443 recorded as allowed"
 assert_summary_contains "| allowed.example.com:80 | HTTP |" "allowed.example.com:80 recorded as allowed"
-# No HTTPS/SNI counterpart: curl lowercases the hostname before it ever
-# reaches the TLS handshake, so the SNI this proxy sees is already
-# "allowed.example.com" -- this scenario passing doesn't exercise the ACL's
-# case-insensitivity at all, only the Host-header (HTTP) path does.
+# Case and a trailing dot survive only on the Host-header path, so that is
+# where the scenarios ask for both forms. The row below is the uppercase one;
+# the trailing-dot request is normalized into the allowed.example.com:80 row
+# above, and the scenario's own 200 is what asserts it.
 assert_summary_contains "| ALLOWED.example.com:80 | HTTP |" "uppercase host (HTTP) recorded as allowed"
 assert_summary_contains "| sub.wildcard.example.com:443 | HTTPS |" "wildcard-matched name recorded as allowed"
 # Each of these is the near miss for a rule the scenarios also request on its
