@@ -14,7 +14,7 @@ export interface LocalImageOverride {
 /**
  * Reads BUILDCAGE_LOCAL_IMAGE_REF (and BUILDCAGE_TEST_COMPOSE_FILE) from the
  * given env. Kept in its own module so a normal build can exclude it
- * entirely — see readLocalImageOverride in lib/compose-file.ts.
+ * entirely; see readLocalImageOverride in lib/compose-file.ts.
  */
 export function readLocalImageOverride(env: NodeJS.ProcessEnv): LocalImageOverride | null {
   const ref = env.BUILDCAGE_LOCAL_IMAGE_REF;

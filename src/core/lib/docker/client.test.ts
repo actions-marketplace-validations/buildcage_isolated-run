@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { describe, it, expect } from "vitest";
 import { createDocker, parseContainerIds, type SpawnCommand } from "./client.ts";
 
-// Arbitrary in-container path — copyFromContainer doesn't care what it
+// Arbitrary in-container path: copyFromContainer doesn't care what it
 // points to, only that it forwards the argument verbatim to `docker cp`.
 const SOME_CONTAINER_PATH = "/opt/buildcage/scripts/some-script.js";
 

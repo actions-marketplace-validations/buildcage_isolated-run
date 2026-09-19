@@ -120,9 +120,9 @@ describe("renderReportMarkdown", () => {
 
   it("uses the title option verbatim, e.g. a run step's em-dash label", () => {
     const md = renderReportMarkdown(base, "buildcage/isolated-run", "v1", {
-      title: "Outbound Traffic Report — npm install",
+      title: "Outbound Traffic Report: npm install",
     });
-    expect(md).toMatch(/^## Outbound Traffic Report — npm install\n/);
+    expect(md).toMatch(/^## Outbound Traffic Report: npm install\n/);
   });
 
   it("shows a restrict-mode example including the run: command", () => {

@@ -10,7 +10,7 @@ const ruleTypeToParam: Record<string, string> = {
 export type AuditedRow = Pick<AggregatedEntry, "host" | "port" | "ruleType">;
 
 export interface BuildRestrictExampleOptions {
-  /** the `run:` input, always included — isolated-run's action.yml requires it */
+  /** the `run:` input, always included: isolated-run's action.yml requires it */
   runCommand?: string;
   /** Version to annotate the `uses:` line with, if known, as `# 3.1.4`. */
   actionVersion?: string;
