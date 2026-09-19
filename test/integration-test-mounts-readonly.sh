@@ -15,7 +15,7 @@
 # mount points, are integration-test-defaults.sh's business instead.
 #
 # The second is a pseudo-filesystem that is not among runc's own default
-# base-spec mounts (see freshMountDestinationsFrom in sandbox/oci-config.ts),
+# base-spec mounts (see freshMountDestinationsFrom in sandbox/oci-mounts.ts),
 # so it must not be tolerated merely for looking like one. securityfs is the
 # realistic example: AppArmor-enabled hosts mount it at /sys/kernel/security,
 # which the Actions Ubuntu images are, and runc's default spec never declares

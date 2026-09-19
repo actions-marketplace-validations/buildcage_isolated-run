@@ -4,7 +4,7 @@ export interface LocalImageOverride {
   /**
    * BUILDCAGE_TEST_COMPOSE_FILE, when set: a compose file to start the proxy
    * from in place of docker/compose.action.yaml. Used only by this repo's own
-   * fixture-network integration tests (see test/compose.test-inspect.yaml),
+   * fixture-network integration tests (see compose.test-inspect.yaml),
    * which need the proxy container to join a test-only Docker network the
    * shipped compose.action.yaml has no reason to know about.
    */

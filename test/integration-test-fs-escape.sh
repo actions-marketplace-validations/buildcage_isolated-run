@@ -66,7 +66,7 @@ echo ""
 
 # Misconfiguration guard: `write_through: /var/tmp/buildcage-<uid>` (or an
 # ancestor of it) would recursively re-expose the sandbox's own rootfs
-# read-write, assertScratchBaseNotWritable in sandbox/oci-config.ts must
+# read-write, so assertScratchBaseNotWritable in sandbox/paths.ts must
 # fail the step closed rather than silently running with that hole open.
 touch "$WORKDIR2/state.env" "$WORKDIR2/summary.md"
 SCRATCH_BASE="/var/tmp/buildcage-$(id -u)"
