@@ -33,7 +33,7 @@ export type GetBooleanInput = (name: string) => boolean;
 /** Where a renamed input's migration message goes; the entry point supplies it. */
 export type Notice = (message: string) => void;
 
-export function readKnownBlockedRules(input: string | undefined): string[] {
+function readKnownBlockedRules(input: string | undefined): string[] {
   return parseKnownBlockedRulesOrThrow(input);
 }
 
