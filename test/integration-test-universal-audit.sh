@@ -1,7 +1,8 @@
 #!/bin/bash
 # Audit-mode counterpart to integration-test-universal-restrict.sh: with no
-# rules configured, everything must be allowed and recorded, except the
-# internal-address guard, which stays active unconditionally.
+# rules configured, everything must be allowed and recorded, except what fails
+# for a reason that has nothing to do with rules: the internal-address guard,
+# an unresolvable name, or no name to judge at all.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
@@ -58,6 +59,8 @@ assert_summary_contains "| internal.wildcard.example.com:80 | HTTP | internal-ad
 assert_summary_contains "| runner.wildcard.example.com:443 | HTTPS | internal-address |" "the runner's own addresses stay guarded in audit mode"
 assert_summary_contains "| runner.wildcard.example.com:80 | HTTP | internal-address |" "the runner's own addresses stay guarded (HTTP) in audit mode"
 assert_summary_contains "| nxdomain.wildcard.example.com:443 | HTTPS | dns-failed |" "unresolvable name still recorded as dns-failed"
+assert_summary_contains "| HTTPS | missing-sni |" "a TLS ClientHello with no SNI is blocked in audit mode too, reason missing-sni"
+assert_summary_contains "| HTTP | missing-host-header |" "an HTTP request with no Host header is blocked in audit mode too, reason missing-host-header"
 
 rm -rf "$TMPDIR"
 
