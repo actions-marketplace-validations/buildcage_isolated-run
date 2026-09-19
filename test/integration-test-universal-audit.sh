@@ -51,15 +51,6 @@ echo ""
 echo "--- report assertions (Job Summary) ---"
 SUMMARY=$(cat "$SUMMARY_FILE")
 
-assert_summary_contains() {
-  local pattern="$1" label="$2"
-  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
-    pass "$label"
-  else
-    fail "$label -- not found in report"
-  fi
-}
-
 assert_summary_contains "| blocked.example.com:443 | HTTPS |" "any domain recorded as audited"
 assert_summary_contains "| 10.200.0.100:80 | IP |" "direct IP recorded as audited (audit passes it through)"
 assert_summary_contains "| internal.wildcard.example.com:443 | HTTPS | internal-address |" "internal-address guard stays active in audit mode"

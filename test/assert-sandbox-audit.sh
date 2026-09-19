@@ -10,16 +10,6 @@ echo ""
 
 SUMMARY=$(cat "$BUILDCAGE_RUN_DEBUG_SUMMARY_FILE")
 
-assert_summary_contains() {
-  local pattern="$1"
-  local label="$2"
-  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
-    pass "$label"
-  else
-    fail "$label -- not found in sandbox report"
-  fi
-}
-
 assert_summary_contains "example.com:80" "Audited HTTP host recorded in report"
 assert_summary_contains "example.com:443" "Audited HTTPS host recorded in report"
 assert_summary_contains "Switch to restrict mode" "Restrict-mode example section present"

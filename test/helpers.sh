@@ -9,6 +9,9 @@
 # about: a driver ends with assert_results and fails the job, a scenario script
 # ends with scenario_results and hands its failure count back to the driver as
 # the step's exit code.
+#
+# The report assertion reads $SUMMARY, which the sourcing script fills once up
+# front from the summary file the action wrote.
 
 FAILURES=0
 
@@ -37,6 +40,16 @@ check_ok() {
     "$want"*) pass "$label" ;;
     *) fail "$label -- got: $out" ;;
   esac
+}
+
+# A row, a heading or any other literal fragment of the rendered report.
+assert_summary_contains() {
+  local pattern="$1" label="$2"
+  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
+    pass "$label"
+  else
+    fail "$label -- not found in report"
+  fi
 }
 
 assert_results() {

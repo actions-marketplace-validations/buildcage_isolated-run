@@ -15,16 +15,6 @@ echo ""
 
 SUMMARY=$(cat "$BUILDCAGE_RUN_DEBUG_SUMMARY_FILE")
 
-assert_summary_contains() {
-  local pattern="$1"
-  local label="$2"
-  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
-    pass "$label"
-  else
-    fail "$label -- not found in sandbox report"
-  fi
-}
-
 # One row per verdict, which is as much as this layer is for: the real
 # action's own report carries what the proxy decided. Which names, ports and
 # protocols are decided which way is the fixture-based integration tests'
