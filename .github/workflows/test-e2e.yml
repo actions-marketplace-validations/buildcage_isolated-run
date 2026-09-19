@@ -47,7 +47,7 @@ jobs:
               - 'test/**'
 
   # Exercises the real action end-to-end (uses: ./) on the actual runner
-  # host — can't be validated inside a nested container (see dev/ and
+  # host, can't be validated inside a nested container (see dev/ and
   # docs/development.md).
   #
   # Split into one job per case (test_sandbox_*) so each gets its own Job
@@ -109,7 +109,7 @@ jobs:
       # finally block.
 
   # One representative case through the real action wrapper, against real
-  # internet hosts (no fixture network) -- proves proxy_engine: universal
+  # internet hosts (no fixture network), proves proxy_engine: universal
   # wiring end-to-end: an allowed host reaches its origin, a blocked one does
   # not, write_through: opens a path, and both verdicts reach the report.
   # Which names, ports and protocols are judged which way, and the log-line
@@ -191,7 +191,7 @@ jobs:
         run: ./test/assert-sandbox.sh
 
       # `transparent` is universal's old name, kept working permanently as an
-      # alias (see resolveProxyEngine's ENGINE_ALIASES) -- this proves it
+      # alias (see resolveProxyEngine's ENGINE_ALIASES): this proves it
       # actually still works end-to-end, not just that it validates. Reuses
       # the same already-built local image: the alias only affects the
       # action's own input resolution, not which image BUILDCAGE_LOCAL_IMAGE_REF
@@ -219,7 +219,7 @@ jobs:
       # finally block.
 
   # One representative case through the real action wrapper, against real
-  # internet hosts (no fixture network) -- proves proxy_engine: inspect wiring
+  # internet hosts (no fixture network), proves proxy_engine: inspect wiring
   # end-to-end: engine selection, method/path enforcement via
   # allowed_url_rules, TLS passthrough via allowed_tls_rules, and CA trust (a
   # plain https GET succeeding with no --insecure, despite the proxy
@@ -353,7 +353,7 @@ jobs:
 
   # fail_on_blocked defaults to true and should fail on a blocked
   # connection; known_blocked_rules should exempt a matching one. Both are
-  # unit-tested at the logic level — this proves the wiring end-to-end,
+  # unit-tested at the logic level: this proves the wiring end-to-end,
   # reusing the same built image for both cases.
   test_sandbox_fail_on_blocked:
     needs: changes

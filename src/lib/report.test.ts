@@ -27,7 +27,7 @@ function options(
 }
 
 // blocked rows are already expected to be annotated by the time a Report
-// reaches computeReportOutcome — this mirrors that, applying
+// reaches computeReportOutcome: this mirrors that, applying
 // parameters.knownBlockedRules the same way. computeReportOutcome only ever
 // touches ReportDataCommon fields, so a universal-shaped fixture exercises
 // it just as well as an inspect-shaped one would.
@@ -222,7 +222,7 @@ describe("writeReportSummary", () => {
   });
 
   // GITHUB_STEP_SUMMARY is unique per step, so a later step has no way to read
-  // this step's copy back -- the mirror is what this repo's own integration
+  // this step's copy back: the mirror is what this repo's own integration
   // assertions read (test/assert-sandbox.sh).
   it("mirrors the summary to BUILDCAGE_RUN_DEBUG_SUMMARY_FILE when it is set", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});

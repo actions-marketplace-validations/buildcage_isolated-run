@@ -19,7 +19,7 @@ import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
  * Pure: the set of destination paths `baseSpec.mounts` already declares a
  * mount for. Derived directly from the actual `runc spec` output already
  * being used to build config.json (see generateBaseOciSpec), rather than a
- * hardcoded list of filesystem types -- this stays correct automatically
+ * hardcoded list of filesystem types: this stays correct automatically
  * if a future runc version changes its own default mounts, and sidesteps
  * fstype ambiguity (e.g. runc's default spec declares a `cgroup`-type
  * mount at /sys/fs/cgroup that transparently resolves to the host's real
@@ -108,7 +108,7 @@ export function ephemeralLayers(
   assertNoFreshMountDestinations(allowWrite, freshMountDestinations);
   const protectedPaths = new Set([...overlayPaths, ...allowWrite]);
 
-  // Overlay roots, shallow-first -- lower is the untouched host
+  // Overlay roots, shallow-first, lower is the untouched host
   // path (readable/writable during the step, discarded after); upper/work
   // live under this run's own scratch dir (createOverlayScratchDirs).
   for (const root of [...overlayRoots].sort((a, b) => a.path.length - b.path.length)) {
@@ -176,7 +176,7 @@ export function writableDirsOf({
 /**
  * Hide every other run's scratch dir, then reveal this run's own exec/ again.
  *
- * The rootfs rbind sweeps in every *other* concurrent (or leftover) run's
+ * The rootfs rbind sweeps in every other concurrent (or leftover) run's
  * scratch dir, and their 0700/0600 modes separate nothing: without a user
  * namespace every sandbox on the host shares one real UID. An empty tmpfs
  * does. Called last so the mounts above still resolve against the real

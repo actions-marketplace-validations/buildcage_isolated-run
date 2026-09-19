@@ -31,7 +31,7 @@ export function generateBaseOciSpec(
  *
  * Both binaries ship inside the proxy image and are pulled onto the host via
  * `docker cp`, then run natively there (not `docker exec`) since the seccomp
- * profile's content depends on the real host kernel/arch -- see
+ * profile's content depends on the real host kernel/arch; see
  * gen-seccomp-profile/main.go. gen-seccomp-profile is only needed transiently
  * to resolve the profile, so it's removed once read; runc stays for `runc run`.
  */

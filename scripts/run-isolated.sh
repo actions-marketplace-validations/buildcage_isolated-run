@@ -1,13 +1,13 @@
 #!/bin/bash
-# run-isolated.sh — run a command in a network-isolated sandbox via runc.
+# run-isolated.sh, run a command in a network-isolated sandbox via runc.
 #
 # Creates a network namespace, wires a veth pair directly between it and the
 # buildcage-proxy container's own netns (the proxy-side end is renamed to
-# "buildcage0" and given the proxy's fixed gateway address -- no bridge
+# "buildcage0" and given the proxy's fixed gateway address, no bridge
 # involved, since this is always a 1:1 connection: one sandbox, one proxy),
 # bind-mounts the host's own "/" so it can be handed to runc as a read-only
 # rootfs, and execs `runc run` against an OCI bundle (config.json) that
-# sandbox/oci-config.ts has already fully built -- namespaces, capabilities,
+# sandbox/oci-config.ts has already fully built, namespaces, capabilities,
 # mounts, uid/gid, and the seccomp filter are all declared there. This
 # script only sets up what runc itself cannot: the network namespace's veth
 # wiring into the proxy, and the rootfs bind-mount runc needs as its
@@ -20,14 +20,14 @@ set -euo pipefail
 # Every concurrently running `run:` step's own scratch dir lives under the
 # same /tmp, so without this, the `mount --rbind /` staging below (and `ip
 # netns add`'s own bind-mount of /run/netns) would run in the one mount
-# namespace shared by every step on the host -- unavoidably nesting a copy
+# namespace shared by every step on the host, unavoidably nesting a copy
 # of each concurrently running step's rootfs tree inside every other's
 # snapshot, which races their unmount/rmdir cleanup against each other.
 # With this, everything this script mounts is invisible to (and
 # unaffected by) every other concurrent invocation from the moment it's
 # created. `--propagation private` is `unshare`'s shortcut for "unshare +
 # recursively make every mount private" in one step. No `--fork`, so this
-# and the subsequent exec replace the current process in place -- this
+# and the subsequent exec replace the current process in place: this
 # script's PID (and /proc/self/cmdline, matched by
 # integration-test-die-with-parent.sh's pgrep) stays the same across the
 # re-exec.
@@ -96,7 +96,7 @@ RAND_ID=$(od -An -tx1 -N4 /dev/urandom 2>/dev/null | tr -d ' \n')
 [ -z "$RAND_ID" ] && RAND_ID=$(printf '%08x' "$$")
 VETH_T="sbxt${RAND_ID}"
 VETH_P="sbxp${RAND_ID}"
-# `ip link set ... netns` needs a name under /var/run/netns/, not a path --
+# `ip link set ... netns` needs a name under /var/run/netns/, not a path;
 # see the bind right before its use below.
 PROXY_NETNS_NAME="${NETNS_NAME}-proxy"
 
@@ -104,7 +104,7 @@ CODE=1
 
 # Tracks whether a ::group:: block is currently open (see group_start/
 # group_end below), so cleanup() can force it closed if this script exits
-# mid-group (e.g. a failed `ip netns add`) -- otherwise every line printed
+# mid-group (e.g. a failed `ip netns add`), otherwise every line printed
 # afterwards (including the WARNING messages below) would stay nested inside
 # an unclosed, collapsed group in the Actions UI.
 IN_GROUP=0
@@ -128,7 +128,7 @@ cleanup() {
   "$RUNC_PATH" delete -f "$CONTAINER_ID" >/dev/null 2>&1
   # inspect engine only: for a file-to-file bind mount whose destination
   # doesn't already exist, runc creates an empty placeholder file to mount
-  # onto -- ordinarily harmless (a disposable layer), but ROOTFS_BIND_DIR is
+  # onto, ordinarily harmless (a disposable layer), but ROOTFS_BIND_DIR is
   # a bind-mount of the real host `/`, so that placeholder is a real write to
   # the host filesystem that unmounting alone does not undo (see
   # sandbox/ca-trust.ts's OWN_CA_DESTINATION). Removed here, after the mount
@@ -142,8 +142,8 @@ cleanup() {
   BUILDCAGE_CA_PLACEHOLDER="${ROOTFS_BIND_DIR}/etc/buildcage-ca.pem"
   [ -s "$BUILDCAGE_CA_PLACEHOLDER" ] || rm -f "$BUILDCAGE_CA_PLACEHOLDER" 2>/dev/null
   # Not silenced: a failed unmount here (e.g. EBUSY from a lingering
-  # process) leaves ROOTFS_BIND_DIR -- a bind-mount of the entire host
-  # filesystem -- still live, so it's worth surfacing even though
+  # process) leaves ROOTFS_BIND_DIR, a bind-mount of the entire host
+  # filesystem, still live, so it's worth surfacing even though
   # sandbox/scratch-dir.ts's withScratchDir has its own safety net before it
   # recursively deletes this directory.
   UMOUNT_ERR_FILE="/tmp/.buildcage-umount-err.$$"
@@ -152,8 +152,8 @@ cleanup() {
   }
   rm -f "$UMOUNT_ERR_FILE"
   # The proxy-side veth end (renamed to "buildcage0" below) lives in the
-  # long-lived proxy container's netns, so it must be explicitly removed --
-  # unlike the target-side end (torn down for free when the sandbox netns
+  # long-lived proxy container's netns, so it must be explicitly removed.
+  # Unlike the target-side end (torn down for free when the sandbox netns
   # below is deleted), a still-alive namespace doesn't lose its interfaces
   # just because its veth peer's namespace went away.
   nsenter --net="$PROXY_NETNS" -- ip link del buildcage0 >/dev/null 2>&1
@@ -185,7 +185,7 @@ ip netns add "$NETNS_NAME"
 echo "Creating veth pair ${VETH_T} <-> ${VETH_P}..." >&2
 ip link add "$VETH_T" type veth peer name "$VETH_P"
 ip link set "$VETH_T" netns "$NETNS_NAME"
-# Bind PROXY_NETNS to a name so `ip link set` can take it -- same as what
+# Bind PROXY_NETNS to a name so `ip link set` can take it, same as what
 # `ip netns attach` does internally, minus the pid.
 mkdir -p /var/run/netns
 : > "/var/run/netns/${PROXY_NETNS_NAME}"
@@ -208,7 +208,7 @@ ip netns exec "$NETNS_NAME" sh -c "
 echo "Configuring proxy-side veth as buildcage0..." >&2
 # No bridge: this is always a 1:1 connection (one sandbox, one proxy), so
 # the veth end is simply renamed to a fixed, predictable name and given the
-# proxy's own gateway address directly -- init-iptables's "-i buildcage0"
+# proxy's own gateway address directly, init-iptables's "-i buildcage0"
 # rule (added at container startup, before this device exists) matches
 # against that name regardless of when the device actually appears.
 nsenter --net="$PROXY_NETNS" -- sh -c "
@@ -228,17 +228,17 @@ set +e
 # setpriv --pdeathsig here (targeting this script's own life) is the first
 # half of a two-hop die-with-parent chain: `runc run`'s own process, not
 # the container process it starts, is this script's direct child, so a
-# guard on just the *sandboxed* process (config.json's process.args, see
-# buildOciConfig) would only protect against `runc run` itself dying --
+# guard on just the sandboxed process (config.json's process.args, see
+# buildOciConfig) would only protect against `runc run` itself dying:
 # without this outer hop, SIGKILL-ing this script would leave `runc run`
 # (and the sandboxed process under it) as a still-alive orphan.
 #
 # Known residual gap: on distros with the common `Defaults use_pty`
 # sudoers setting, `sudo -n` forks a separate monitor process ahead of
-# this script -- killing *that* specific process in isolation wouldn't
+# this script, and killing that monitor in isolation wouldn't
 # trigger this chain, since this script would merely become its orphan,
 # still alive. Low-severity (an orphaned but still-fully-sandboxed
-# process, not a security boundary issue -- see docs/security.md), and
+# process, not a security boundary issue; see docs/security.md), and
 # not addressed here.
 setpriv --pdeathsig=KILL -- "$RUNC_PATH" run --bundle "$BUNDLE_DIR" "$CONTAINER_ID"
 CODE=$?

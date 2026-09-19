@@ -2,7 +2,7 @@
 # Audit-mode counterpart to integration-test-inspect-restrict.sh: with no
 # rules configured, everything must be allowed and recorded, and the report
 # must offer a restrict-mode allowed_url_rules example built from what was
-# actually observed -- ported from buildcage/docker's
+# actually observed, ported from buildcage/docker's
 # test/Dockerfile.inspect-audit + test/assert-inspect-audit.sh.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"

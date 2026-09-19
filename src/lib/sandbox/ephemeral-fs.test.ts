@@ -15,7 +15,7 @@ const ENV = {
 describe("determineOverlayRoots", () => {
   const exists = () => true;
   // Every test path here is fictional, so the real fs.statSync-backed
-  // default deviceOf would throw for all of them -- inject a fake that
+  // default deviceOf would throw for all of them, so inject a fake that
   // reports "same device" unconditionally, matching the common case these
   // tests are about (a plain subdirectory, not a distinct mount).
   const sameDevice = () => 1;
@@ -69,7 +69,7 @@ describe("determineOverlayRoots", () => {
     // HOME doesn't exist; RUNNER_TEMP (nested under it) does. Previously the
     // nesting fold ran before the exists() filter, so RUNNER_TEMP was
     // dropped as "covered by" HOME regardless, and HOME was then also
-    // dropped for not existing -- leaving RUNNER_TEMP with no overlay at all.
+    // dropped for not existing, leaving RUNNER_TEMP with no overlay at all.
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     expect(
       determineOverlayRoots(candidates, [], {
@@ -81,7 +81,7 @@ describe("determineOverlayRoots", () => {
 
   it("keeps a nested candidate that is actually a distinct mount instead of folding it into the outer one", () => {
     // RUNNER_TEMP is nested under HOME by path, but reports a different
-    // device -- a real (if unusual) self-hosted layout where RUNNER_TEMP is
+    // device, a real (if unusual) self-hosted layout where RUNNER_TEMP is
     // its own separate filesystem mounted inside $HOME. Folding it away
     // would leave it uncovered by any overlay (see buildOciConfig's
     // protectedPaths, matched by exact mount point).
@@ -165,7 +165,7 @@ describe("formatFilesystemPlanLog", () => {
   });
 });
 
-describe("createOverlayScratchDirs — a root that slugifies to nothing", () => {
+describe("createOverlayScratchDirs: a root that slugifies to nothing", () => {
   it("falls back to _root so the directory still has a name", () => {
     const dirs = createOverlayScratchDirs("/scratch", [""], { mkdir: () => undefined });
     expect(dirs[0].upper).toBe("/scratch/ephemeral/_root/upper");

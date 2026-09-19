@@ -1,7 +1,7 @@
 #!/bin/bash
 # HAProxy/the single listener bind *:10024 (universal's dnsmasq also binds
-# *:53), but only buildcage0 -- the veth end run-isolated.sh wires into the
-# sandbox once a step starts -- may reach them (see
+# *:53), but only buildcage0, the veth end run-isolated.sh wires into the
+# sandbox once a step starts, may reach them (see
 # docker/{universal,inspect}/files/s6-scripts/init-iptables). This starts
 # each engine's proxy standalone, with no sandbox attached, so buildcage0
 # never exists: :10024/:53 must be unreachable both from another container
@@ -21,8 +21,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # renovate: datasource=docker depName=alpine
 ALPINE_IMAGE="alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4"
 
-# A UDP nc -z probe can't tell a DROPped packet apart from an unopened port
-# -- both look like silence, since neither sends back an ICMP rejection.
+# A UDP nc -z probe can't tell a DROPped packet apart from an unopened port:
+# both look like silence, since neither sends back an ICMP rejection.
 # Sending a real query and checking dig's raw stdout for non-emptiness isn't
 # reliable either: on failure to reach the server, dig still writes a
 # "communications error ... timed out" line to stdout, not just stderr. Match

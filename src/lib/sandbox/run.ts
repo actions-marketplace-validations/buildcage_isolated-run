@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * Run the user's command inside the isolated sandbox via run-isolated.sh
  * (invoked with `sudo -n`, since setting up namespaces/veth/iptables/the
  * rootfs bind-mount requires root). Returns the exit code of the isolated
- * command — never throws for a non-zero exit, since that's the user's
+ * command, never throws for a non-zero exit, since that's the user's
  * command failing, not this function.
  *
  * uid/gid, capabilities and mounts are entirely described by `config.json`
@@ -43,7 +43,7 @@ export interface ExecFileOptions {
 }
 
 export interface RunIsolatedDeps {
-  /** Throws on a non-zero exit, carrying it as `status` -- the shape
+  /** Throws on a non-zero exit, carrying it as `status`, the shape
    *  execFileSync already has, which is what the exit-code read below wants. */
   execFile?: (command: string, args: string[], options: ExecFileOptions) => void;
 }

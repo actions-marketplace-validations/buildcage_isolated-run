@@ -117,7 +117,7 @@ INPUT_RUN="$RUN_INPUT" \
   node dist/main.cjs &
 NODE_PID=$!
 
-# The mask proves the sandbox can't *reach* another run's config.json; this
+# The mask proves the sandbox cannot reach another run's config.json; this
 # proves the environment isn't in one to begin with. Only the host can look,
 # and only while the run is live, since the scratch dir is torn down with it.
 CAPTURED="$WORKDIR/captured-config.json"

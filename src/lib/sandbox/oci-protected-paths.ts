@@ -11,14 +11,14 @@
 import type { HostMount } from "./types.ts";
 // Sensitive /proc paths masked with /dev/null. runc's own `runc spec`
 // default already masks /proc/kcore, /proc/keys, and /proc/timer_list
-// (among others) and leaves /proc/sysrq-trigger merely read-only —
+// (among others) and leaves /proc/sysrq-trigger merely read-only.
 // buildOciConfig upgrades sysrq-trigger to fully masked (moving it out of
 // readonlyPaths) and adds kallsyms/kmsg, which runc's default doesn't
 // cover at all.
 //
 // Imported from a shared JSON file (rather than a JS literal) so
-// dev/build-test-bundle.sh — a bash/jq stand-in for this same function, used
-// by the Mac dev loop — has a single source of truth to read the same
+// dev/build-test-bundle.sh, a bash/jq stand-in for this same function, used
+// by the Mac dev loop, has a single source of truth to read the same
 // list from instead of hand-duplicating it.
 import EXTRA_MASKED_PROC_PATHS from "../../../scripts/extra-masked-proc-paths.json" with { type: "json" };
 // A read-only bind mount doesn't stop connect(2) on a still-live socket;
@@ -32,13 +32,13 @@ import {
 } from "./runtime-sockets.ts";
 
 // `ip netns add` leaves its name as a real file under the host's own /run,
-// which the rootfs rbind carries into every sandbox -- so a step could list
+// which the rootfs rbind carries into every sandbox, so a step could list
 // the netns names of the other steps running beside it, and the proxy
 // container name each one is derived from with it. Nothing inside the
 // sandbox has a reason to read them, and nothing here is built on their
-// staying unknown -- this only removes an easy way to enumerate them.
+// staying unknown: this only removes an easy way to enumerate them.
 // Both spellings: /var/run is a symlink to /run on most hosts, a real
-// directory on a few. A path that doesn't exist is a no-op -- runc's
+// directory on a few. A path that doesn't exist is a no-op: runc's
 // maskPath ignores ENOENT.
 const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
 
@@ -48,13 +48,13 @@ const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
  * fresh mount for (see freshMountDestinationsFrom), return the host mount
  * points that need to be explicitly forced read-only. This exists because
  * `root.readonly` in OCI/runc only remounts the top-level rootfs mount
- * point — it does *not* recursively apply to separate mount points that
+ * point and does not recursively apply to separate mount points that
  * `mount --rbind /` duplicates into the sandbox's rootfs. A host mount
  * point is skipped only when it exactly matches one of
  * `freshMountDestinations`: runc will mount fresh content there when it
  * sets up the sandbox's own further-nested namespaces, shadowing whatever
  * the rbind copy swept in from the host at that path, so forcing that
- * (about-to-be-overridden) copy read-only would be pointless -- and some
+ * (about-to-be-overridden) copy read-only would be pointless, and some
  * pseudo-filesystems reject a read-only remount outright. Any other real
  * host mount point not covered would otherwise remain fully writable
  * despite the sandbox's documented read-only-outside-workdir/home/tmp/
@@ -87,7 +87,7 @@ export interface ProtectedPathsInput {
   /** Paths the mount layers keep writable, so not forced read-only here. */
   writablePaths: Set<string>;
   freshMountDestinations: Set<string>;
-  /** `writable: /` -- the documented full opt-out, so no host mount is forced. */
+  /** `writable: /`, the documented full opt-out, so no host mount is forced. */
   disableReadonly: boolean;
 }
 

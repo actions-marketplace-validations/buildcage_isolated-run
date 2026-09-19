@@ -72,7 +72,7 @@ describe("the names derived from a container's own", () => {
   });
 
   // scratchDirFor validates before deriving, and assertUnderScratchBase
-  // re-checks the shape on the way back in -- see scratch-dir.ts.
+  // re-checks the shape on the way back in; see scratch-dir.ts.
   it("produces a scratch dir name of the shape cleanup will accept", () => {
     expect(scratchDirNameFor(generateContainerName())).toMatch(/^sandbox-[0-9a-f]{8}$/);
   });

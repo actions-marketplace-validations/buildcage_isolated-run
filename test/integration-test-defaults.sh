@@ -1,6 +1,6 @@
 #!/bin/bash
 # Verifies default privilege drop, filesystem policy and sandbox environment by
-# driving dist/main.cjs directly, without the real action wrapper -- see
+# driving dist/main.cjs directly, without the real action wrapper; see
 # test-e2e.yml's test_sandbox_enforcement for the one case that does.
 #
 # $RUNNER_TEMP belongs here rather than in a run of its own: it is one more

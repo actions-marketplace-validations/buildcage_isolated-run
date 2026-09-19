@@ -25,7 +25,7 @@ const COREDNS_LOG_DIR = "/var/log/coredns";
  * This action has no version-skew concern of its own (one pinned version
  * end to end, unlike a separately-versioned report action), so it fetches
  * the raw log(s) and calls the shared builder in-process. Which log(s) to
- * read and which builder to call depends on which proxy image ran --
+ * read and which builder to call depends on which proxy image ran:
  * inspect's has a second (CoreDNS) log the universal image does not.
  */
 // Untested by design: the log reader and both builders are tested directly.
@@ -53,7 +53,7 @@ export function fetchReport(
 /**
  * Best-effort `org.opencontainers.image.version` label read, converted back
  * into the `vX.Y.Z` git tag it was published from (the label itself is the
- * bare Docker tag, e.g. `3.1.4-inspect` for a non-universal engine — see
+ * bare Docker tag, e.g. `3.1.4-inspect` for a non-universal engine; see
  * image-tag.ts). A `docker inspect` failure here must not fail the report
  * over one comment.
  */
@@ -95,7 +95,7 @@ export interface ReportOutcome {
 
 /**
  * Pure decision + rendering step, kept free of process.env/file I/O so it's
- * testable without touching the filesystem — writeReportSummary below is the
+ * testable without touching the filesystem, writeReportSummary below is the
  * side-effecting half (actual summary/annotation output).
  */
 export function computeReportOutcome(
@@ -136,7 +136,7 @@ export interface WriteReportSummaryDeps {
  * Side-effecting half of the report step: computeReportOutcome() decides
  * what to say, this writes it to the Job Summary/annotations/exit code.
  * `artifactAvailable` only affects the wording of a truncation notice if the
- * report turns out to be too large for GitHub's own per-step limit -- it
+ * report turns out to be too large for GitHub's own per-step limit: it
  * does not gate whether truncation happens.
  *
  * Both destinations come from `env` rather than being read here, so a test
@@ -159,7 +159,7 @@ export async function writeReportSummary(
 
   // Debug-only mirror: GITHUB_STEP_SUMMARY is unique per step and can't be
   // reassigned, so a later step has no way to read this step's copy back.
-  // This repo's own integration assertions read it instead -- see
+  // This repo's own integration assertions read it instead; see
   // test/assert-sandbox.sh.
   const debugSummaryFile = env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
   if (debugSummaryFile) {

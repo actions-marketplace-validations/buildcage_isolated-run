@@ -3,7 +3,7 @@ import { SandboxError } from "../errors.ts";
 import { EXTRA_MASKED_RUNTIME_PATHS, rootlessRuntimeSocketPaths } from "./runtime-sockets.ts";
 
 /** Group names that conventionally grant root-equivalent access. Not
- *  exhaustive -- ownerGids below catches an unlisted name that still owns a
+ *  exhaustive, ownerGids below catches an unlisted name that still owns a
  *  known runtime socket. */
 const PRIVILEGED_GROUP_NAMES = new Set([
   "root",
@@ -23,7 +23,7 @@ const FALLBACK_GID = 65534;
 
 /**
  * What this module needs to know about the host: its group database and who
- * owns a path. Injected as one collaborator rather than as loose callbacks --
+ * owns a path. Injected as one collaborator rather than as loose callbacks:
  * both answers come from the same place, and a test that supplies one without
  * the other would be describing a host that cannot exist.
  */
@@ -44,7 +44,7 @@ const realHost: HostGroups = {
 /* v8 ignore stop */
 
 /** Parses a /etc/group-formatted file into gid -> group name(s). null if the
- *  file can't be read at all (missing, permission denied) -- callers fall
+ *  file can't be read at all (missing, permission denied), callers fall
  *  back to the runtime-socket-ownership check alone in that case. */
 function readGroupNamesByGid(groupFile: string, host: HostGroups): Map<number, string[]> | null {
   let content: string;
@@ -74,7 +74,7 @@ function ownerGids(paths: string[], host: HostGroups): Set<number> {
     try {
       gids.add(host.gidOf(p));
     } catch {
-      // Doesn't exist on this host -- nothing to protect against here.
+      // Doesn't exist on this host: nothing to protect against here.
     }
   }
   return gids;
@@ -87,9 +87,9 @@ export interface ResolvedSandboxGid {
 }
 
 export interface ResolveSandboxGidOptions {
-  /** @default "/etc/group" -- overridable for tests. */
+  /** @default "/etc/group", overridable for tests. */
   groupFile?: string;
-  /** @default EXTRA_MASKED_RUNTIME_PATHS + rootlessRuntimeSocketPaths(env) -- overridable for tests. */
+  /** @default EXTRA_MASKED_RUNTIME_PATHS + rootlessRuntimeSocketPaths(env), overridable for tests. */
   runtimeSocketPaths?: string[];
   /** @default the real host's /etc/group and stat. */
   host?: HostGroups;

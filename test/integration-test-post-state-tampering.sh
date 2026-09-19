@@ -175,7 +175,7 @@ rm -rf "$WORKDIR"
 echo ""
 echo "=== 5. a concurrent step's own container name must not reach its proxy or its scratch dir ==="
 # The two steps differ only in $GITHUB_ACTION, which the runner numbers per
-# use within a job -- the same shape as two `uses:` of this action side by
+# use within a job, the same shape as two `uses:` of this action side by
 # side. The attacker names the victim's container, which is well-formed and
 # therefore passes every check that looks at the name alone.
 : >"$SUDO_LOG"

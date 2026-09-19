@@ -2,7 +2,7 @@
 # Drives two sandbox proxy lifecycles directly against dist/main.cjs
 # (rather than through two real `uses: ./run` steps) so this test doesn't
 # depend on GitHub Actions' `parallel:` step keyword to prove true
-# concurrency — see test-e2e.yml's own `parallel:`-based test for the
+# concurrency; see test-e2e.yml's own `parallel:`-based test for the
 # Actions-level version of the same check.
 #
 # Both instances reach the fixture origin in compose.test-universal.yaml, so
@@ -22,7 +22,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The origin serves a self-signed certificate and the universal engine never
-# terminates TLS, so the client validates the origin's own cert -- `-k` is what
+# terminates TLS, so the client validates the origin's own cert, `-k` is what
 # makes that a non-issue rather than the subject of this test.
 CURL="curl -fsS -k -o /dev/null --max-time 10"
 

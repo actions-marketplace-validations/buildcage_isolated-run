@@ -29,7 +29,7 @@ async function stopProxyContainer({ containerName, projectName }: PostCleanupTar
 // own finally block on every normal exit path. This only matters if the
 // process was killed outright before reaching that finally (e.g. the
 // runner cancels the step). State saved by main.ts's core.saveState surfaces
-// here via core.getState — see
+// here via core.getState; see
 // https://docs.github.com/en/actions/creating-actions/dockerfile-support-for-github-actions#saving-state.
 function main(): void {
   const targets = planPostCleanup(
@@ -44,7 +44,7 @@ function main(): void {
   );
   // No catch: a failure here should crash this script the same way the
   // original synchronous execFileSync call did (an uncaught error, non-zero
-  // exit) -- Node's default unhandled-rejection behavior matches that.
+  // exit), Node's default unhandled-rejection behavior matches that.
   if (targets) void stopProxyContainer(targets);
 }
 

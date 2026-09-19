@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs *inside* the sandbox, as the `run:` input of a real proxy_engine:
+# Runs inside the sandbox, as the `run:` input of a real proxy_engine:
 # inspect step (see test/integration-test-inspect-restrict.sh). Ported from
 # buildcage/docker's test/Dockerfile.inspect-restrict, one shell script
 # instead of one Dockerfile RUN step per case (isolated-run's rootfs is the
@@ -29,7 +29,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 S="curl -sS --max-time 10"
 # Deliberately unquoted here: $C is expanded unquoted below (word-split into
 # argv), so a literal quote around %{http_code} would become part of the
-# argument itself instead of being stripped -- see the direct curl calls
+# argument itself instead of being stripped; see the direct curl calls
 # further down, where it's a single literal invocation and quoting is correct.
 C="curl -sS -o /dev/null -w %{http_code} --max-time 10"
 
@@ -248,7 +248,7 @@ echo "=== [Regex IP rule] ==="
 OUT=$($S http://10.200.0.100:9080/anything)
 check_ok "GET http://10.200.0.100:9080/anything" "$OUT" "ROOT GET"
 
-# Same address, a port only the URL rule's :80 default would cover -- proves
+# Same address, a port only the URL rule's :80 default would cover, proves
 # the ~regex ip rule's own literal port (9080) is enforced, not "any port".
 echo "=== [Regex IP rule - other port not covered] ==="
 CODE=$($C http://10.200.0.100:8080/anything)

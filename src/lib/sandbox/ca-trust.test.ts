@@ -18,7 +18,7 @@ const FAKE_SYSTEM_BUNDLE = "-----BEGIN CERTIFICATE-----\nsystem\n-----END CERTIF
 /**
  * A host whose files are exactly `files`. Nothing here touches a real
  * filesystem: left real, this suite would read whatever CA bundle the machine
- * running it happens to have -- a different answer on a macOS dev machine than
+ * running it happens to have, a different answer on a macOS dev machine than
  * in CI.
  */
 function fakeHost(files: Record<string, string>) {
@@ -91,8 +91,8 @@ describe("writeCaTrustFiles", () => {
   });
 });
 
-// caTrustAdditions never touches the filesystem itself -- it only reasons
-// about the CaTrustFiles paths it's given -- so these don't need
+// caTrustAdditions never touches the filesystem itself: it only reasons
+// about the CaTrustFiles paths it's given, so these don't need
 // withScratchDir; only writeCaTrustFiles above does real file I/O.
 describe("caTrustAdditions", () => {
   it("mounts the CA-only file and points the additive variables at it, when unset", () => {

@@ -6,7 +6,7 @@
  * Lives here rather than beside either half it calls: it coordinates
  * write-through.ts and ephemeral-fs.ts, so putting it in one of them would
  * make the two depend on each other. Translating their errors into
- * SandboxError is its own job too -- both throw error classes of their own,
+ * SandboxError is its own job too: both throw error classes of their own,
  * and nothing else in sandbox/ turns those into a caller-facing code.
  *
  * validateFilesystemInputs lives here rather than beside the input reads for
@@ -29,8 +29,8 @@ import { assertScratchBaseNotWritable, isAtOrUnder } from "./paths.ts";
 import { RESERVED_INTERNAL_DESTINATIONS } from "./oci-mounts.ts";
 
 /**
- * Validates write_through: paths against the filesystem mode. Pure, no I/O --
- * deliberately called on its own, ahead of
+ * Validates write_through: paths against the filesystem mode. Pure, no I/O.
+ * Deliberately called on its own, ahead of
  * checkPasswordlessSudo()/checkOverlayfsSupport() in the step, so a plain input
  * mistake is rejected immediately rather than only after those privileged
  * preflight checks have already run. That early call passes the raw lines;
@@ -66,7 +66,7 @@ export function validateFilesystemInputs(
 }
 
 export interface FilesystemPlan {
-  /** filesystem_mode: ephemeral only -- already folded (determineOverlayRoots). [] in persistent mode. */
+  /** filesystem_mode: ephemeral only, already folded (determineOverlayRoots). [] in persistent mode. */
   overlayRoots: string[];
   /** Already resolved (resolveWriteThroughPaths) and pre-created
    *  (ensureWriteThroughTargetsExist), in either filesystem mode. */
@@ -77,7 +77,7 @@ export interface FilesystemPlan {
 }
 
 /** Test-only seam onto ensureWriteThroughTargetsExist/determineOverlayRoots's
- *  own filesystem/sudo dependencies -- see write-through.ts / ephemeral-fs.ts. */
+ *  own filesystem/sudo dependencies; see write-through.ts / ephemeral-fs.ts. */
 export interface ResolveFilesystemPlanDeps {
   exists?: (path: string) => boolean;
   stat?: (path: string) => { uid: number; gid: number; mode: number };
@@ -112,7 +112,7 @@ export function resolveFilesystemPlan(
   validateFilesystemInputs(filesystemMode, writeThroughPaths);
 
   // `/` drops the read-only restriction wholesale (persistent only, see
-  // validateFilesystemInputs), so no path is bind-mounted individually --
+  // validateFilesystemInputs), so no path is bind-mounted individually:
   // nothing to create, and buildOciConfig skips the scratch-base guard for
   // the same reason.
   if (writeThroughPaths.includes(WRITE_THROUGH_ALL)) {
@@ -122,7 +122,7 @@ export function resolveFilesystemPlan(
   // Before anything is created: buildOciConfig rejects a path overlapping the
   // sandbox's own scratch base outright, so checking it here keeps a doomed
   // input from leaving freshly-created directories behind. Its own check
-  // stays as the authoritative one -- this is the early copy.
+  // stays as the authoritative one: this is the early copy.
   try {
     assertScratchBaseNotWritable(writeThroughPaths);
   } catch (e) {

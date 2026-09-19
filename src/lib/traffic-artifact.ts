@@ -20,7 +20,7 @@ export function wantsTrafficArtifact(): boolean {
 
 /** Guaranteed collision-free across concurrent invocations of this action in
  *  the same job, since containerName's own random suffix already is (see
- *  generateContainerName) -- unlike buildcage/docker, there is no stable
+ *  generateContainerName). Unlike buildcage/docker, there is no stable
  *  builder_name-equivalent identity to name it from instead. */
 export function trafficArtifactName(containerName: string): string {
   return `buildcage-traffic-${containerName.split("-").at(-1)}`;
@@ -81,7 +81,7 @@ export async function uploadTrafficArtifact(
     });
     console.log(`Uploaded the traffic JSON as ${name}`);
     // Set only on confirmed success, and only here (after the sandboxed
-    // command has already exited) -- GITHUB_OUTPUT's own last-write-wins
+    // command has already exited), GITHUB_OUTPUT's own last-write-wins
     // parsing means this always overrides anything the isolated command
     // itself may have written to the same key.
     core.setOutput("traffic_artifact_name", name);

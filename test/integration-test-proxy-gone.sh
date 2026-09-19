@@ -1,6 +1,6 @@
 #!/bin/bash
-# run-isolated.sh must fail closed -- no host-side buildcage0, no leftover
-# /var/run/netns entries -- when the container behind --proxy-netns is
+# run-isolated.sh must fail closed, no host-side buildcage0, no leftover
+# /var/run/netns entries, when the container behind --proxy-netns is
 # already gone by the time the script checks it.
 #
 # Drives scripts/run-isolated.sh directly, not through dist/main.cjs: the

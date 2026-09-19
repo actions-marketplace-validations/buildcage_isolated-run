@@ -42,7 +42,7 @@ export interface SandboxRuntimeWiring {
 }
 
 /** `filesystem_mode: ephemeral` only. Already fully resolved/folded by
- *  ephemeral-fs.ts and the step itself before this is called -- buildOciConfig does
+ *  ephemeral-fs.ts and the step itself before this is called, buildOciConfig does
  *  no path resolution of its own here, only mount assembly and ordering. */
 export interface EphemeralPolicy {
   overlayRoots: OverlayDirs[];
@@ -53,18 +53,18 @@ export interface BuildOciConfigOptions {
   identity: SandboxIdentity;
   /** Always used for `process.cwd` (workdir) regardless of mode. In ephemeral
    *  mode the write_through paths are consumed as `ephemeral.allowWrite`
-   *  instead, so `writablePaths` is read only when `ephemeral` is absent --
+   *  instead, so `writablePaths` is read only when `ephemeral` is absent:
    *  the `!ephemeral` half of `disableReadonly` below is what enforces that,
    *  and dropping it would let `write_through: /` disable the read-only root
    *  in ephemeral mode too. */
   writable: WritablePolicy;
   /** Present iff `filesystem_mode: ephemeral`. Carries the same write_through
-   *  paths as `writable.writablePaths` -- one input, two mount strategies. */
+   *  paths as `writable.writablePaths`, one input, two mount strategies. */
   ephemeral?: EphemeralPolicy;
   runtime: SandboxRuntimeWiring;
   env: NodeJS.ProcessEnv;
   /** inspect engine only: the proxy's CA, mounted in rather than written to
-   *  the real host filesystem -- see ca-trust.ts. Omitted entirely for the
+   *  the real host filesystem; see ca-trust.ts. Omitted entirely for the
    *  universal engine, which never terminates TLS and so has no CA to
    *  distribute. */
   caTrust?: CaTrustFiles;
@@ -76,10 +76,10 @@ export interface BuildOciConfigOptions {
  * overriding only what this sandbox needs to control:
  *
  * - root: a bind-mounted copy of the host's own `/` (rootfsBindDir, set up
- *   by run-isolated.sh before invoking runc — pivot_root can't target `/`
+ *   by run-isolated.sh before invoking runc, pivot_root can't target `/`
  *   itself), made read-only via `root.readonly` plus an explicit
  *   `linux.readonlyPaths` entry per real host mount point `--rbind`
- *   duplicated in (see oci-protected-paths.ts — root.readonly alone only
+ *   duplicated in (see oci-protected-paths.ts, root.readonly alone only
  *   covers the top-level mount), except workdir/home/tmp/runnerTemp/
  *   writablePaths. rootfsBindDir itself lives under SANDBOX_SCRATCH_BASE,
  *   which is never one of those writable exceptions, so the recursive
@@ -87,12 +87,12 @@ export interface BuildOciConfigOptions {
  *   copy inside the sandbox (see assertScratchBaseNotWritable, which fails
  *   closed if a `writable:` input would break that invariant).
  * - linux.namespaces: same six namespace types runc's own default spec
- *   already requests (no user namespace — see docs/security.md's
+ *   already requests (no user namespace; see docs/security.md's
  *   rationale for preserving the real UID/GID), just adding `path` to the
  *   network entry so it joins the netns run-isolated.sh already wired a
  *   veth into, instead of creating a fresh, unconnected one.
  * - process.capabilities: fully cleared (all five sets empty) plus
- *   noNewPrivileges — runc applies this natively, no setpriv needed.
+ *   noNewPrivileges: runc applies this natively, no setpriv needed.
  * - process.env: emptied. The step's real environment (and, inspect engine
  *   only, the CA-trust variables ca-trust.ts adds) is handed to the sandbox
  *   over stdin instead. See env-loader.ts.
@@ -182,15 +182,15 @@ export function buildOciConfig(
       terminal: false,
       user: { uid, gid },
       // setpriv --pdeathsig ties this process's life to its direct
-      // parent's -- the `runc run` process, not run-isolated.sh itself
+      // parent's, the `runc run` process, not run-isolated.sh itself
       // (runc's own process sits in between). This is the second hop of a
       // two-hop chain: run-isolated.sh also wraps its own `runc run`
       // invocation in `setpriv --pdeathsig=KILL` (targeting itself), so if
       // run-isolated.sh is SIGKILL'd, `runc run` dies too, which then
-      // kills this process in turn -- without the outer hop, `runc run`
+      // kills this process in turn, without the outer hop, `runc run`
       // would merely become an orphan (still alive) and this process,
       // whose parent never actually died, would never receive anything.
-      // No other setpriv flags are needed here -- uid/gid, capabilities,
+      // No other setpriv flags are needed here, uid/gid, capabilities,
       // and no_new_privs are already applied by runc itself (above/below)
       // before this execs.
       args: [probes.setprivPath(), "--pdeathsig=KILL", "--", envLoaderPath, scriptPath],

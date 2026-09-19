@@ -1,6 +1,6 @@
 #!/bin/bash
 # Verifies write_through: by driving dist/main.cjs directly, without the real
-# action wrapper -- see test-e2e.yml's test_sandbox_enforcement for the one
+# action wrapper; see test-e2e.yml's test_sandbox_enforcement for the one
 # case that does exercise the real action. Covers an existing path, a missing
 # one (created with the parent's ownership, then given back only if the
 # command left it empty), `/` on its own (which disables the read-only
@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 WORKDIR=$(mktemp -d)
 # Outside every always-writable path ($GITHUB_WORKSPACE/$HOME/tmp/$RUNNER_TEMP),
-# so writing under it proves write_through did something -- but runner-owned,
+# so writing under it proves write_through did something, but runner-owned,
 # so a directory created under it inherits an ownership the sandbox can use.
 PARENT=/opt/buildcage-write-through-test
 sudo -n mkdir -p "$PARENT"

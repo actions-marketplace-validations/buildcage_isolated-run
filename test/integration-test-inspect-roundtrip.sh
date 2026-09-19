@@ -1,10 +1,10 @@
 #!/bin/bash
 # The audit-then-restrict round trip, which is what the inspect engine is
-# for -- ported from buildcage/docker's test/run-inspect-roundtrip.sh.
+# for, ported from buildcage/docker's test/run-inspect-roundtrip.sh.
 #
 # Phase 1 runs a `run:` step under `audit` and extracts the `allowed_url_rules`
 # the report generated from what it saw. Phase 2 runs again under `restrict`
-# with exactly those rules -- and nothing else -- via
+# with exactly those rules, and nothing else, via
 # test/inspect-roundtrip-scenarios.sh, repeating every request phase 1 made
 # plus a few it never made.
 #
@@ -16,8 +16,8 @@
 # same fenced report block as allowed_url_rules (see
 # src/core/lib/report/render/inspect-example.ts) rather than derived from
 # traffic, and phase 2 clears ALLOWED_TLS_RULES on purpose so the URL rules have
-# to stand alone -- a prior bug here let the allowed_tls_rules line leak into
-# the extracted allowed_url_rules text instead and break phase 2 outright.
+# to stand alone. Without that, the allowed_tls_rules line leaks into the
+# extracted allowed_url_rules text instead and breaks phase 2 outright.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
@@ -91,7 +91,7 @@ fi
 RULES=$(
   # Stops at the next top-level key (allowed_tls_rules/allowed_ip_rules are
   # echoed into the same fenced block, see inspect-example.ts) as well as the
-  # closing fence, so only the allowed_url_rules value is captured -- see
+  # closing fence, so only the allowed_url_rules value is captured; see
   # buildcage/docker's test/run-inspect-roundtrip.sh for the same fix.
   awk '
     /allowed_url_rules: \|/ { capture=1; next }

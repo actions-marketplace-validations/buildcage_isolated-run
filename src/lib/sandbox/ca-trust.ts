@@ -10,15 +10,15 @@ import type { MountEntry } from "./types.ts";
  *
  * Writing the CA into the rootfs and deleting it again once the step's
  * process exits is the obvious approach, and the right one when that rootfs
- * is a disposable image layer -- torn down, or diffed and discarded, after
+ * is a disposable image layer, torn down, or diffed and discarded, after
  * the step. It does not work here: this sandbox's rootfs is a bind-mount of
- * the live host `/`, so both the write and the delete land on the *real*
- * host filesystem.
+ * the live host `/`, so both the write and the delete land on the host
+ * filesystem itself.
  *
  * Instead, the two files below are written into this run's own scratch
- * directory and mounted *over* the sandbox's own view of the relevant
- * paths (see caTrustAdditions / buildOciConfig) -- a mount-namespace-scoped
- * overlay, not a host write. The *mount* itself needs nothing undone
+ * directory and mounted over the sandbox's own view of the relevant
+ * paths (see caTrustAdditions / buildOciConfig), a mount-namespace-scoped
+ * overlay, not a host write. The mount needs nothing undone
  * afterward: run-isolated.sh's `umount -R` (and the scratch dir's own
  * cleanup) removes it, along with the rest of the rootfs bind-mount, when
  * the step ends, and the real host file SYSTEM_CA_DESTINATION resolves to is
@@ -26,7 +26,7 @@ import type { MountEntry } from "./types.ts";
  *
  * OWN_CA_DESTINATION is the one exception: nothing exists at that path
  * ahead of time, so runc itself creates an empty placeholder file there to
- * have something to mount onto -- ordinarily harmless on a disposable
+ * have something to mount onto, ordinarily harmless on a disposable
  * layer, but ROOTFS_BIND_DIR is a bind-mount of the real host `/`, so that
  * placeholder is a real (if empty) write to the host filesystem that
  * unmounting alone does not undo. run-isolated.sh's cleanup() removes it
@@ -34,15 +34,15 @@ import type { MountEntry } from "./types.ts";
  * bind-mount itself is torn down.
  */
 export interface CaTrustFiles {
-  /** A CA-only file, mounted at OWN_CA_DESTINATION -- for variables that add
+  /** A CA-only file, mounted at OWN_CA_DESTINATION, for variables that add
    *  to a tool's built-in trust set (NODE_EXTRA_CA_CERTS, DENO_CERT). */
   ownCaPath: string;
   /** The runner's own system CA store with this CA appended, mounted at
-   *  SYSTEM_CA_DESTINATION -- for variables that replace a tool's trust
+   *  SYSTEM_CA_DESTINATION, for variables that replace a tool's trust
    *  bundle outright (REQUESTS_CA_BUNDLE, PIP_CERT, SSL_CERT_FILE), and for
    *  every other tool (curl, ...) that already reads the system store by
    *  default. Undefined if the runner has no system store at any of the
-   *  well-known candidate paths -- SYSTEM_CA_CANDIDATES[0] is the only one
+   *  well-known candidate paths, SYSTEM_CA_CANDIDATES[0] is the only one
    *  a GitHub-hosted (passwordless-sudo) Linux runner actually has; the
    *  rest are kept only as a defensive fallback.
    */
@@ -59,7 +59,7 @@ const SYSTEM_CA_CANDIDATES = [
 
 /** Where the two files above are mounted inside the sandbox. Changing this
  *  value must stay in sync with run-isolated.sh's own BUILDCAGE_CA_PLACEHOLDER
- *  (its cleanup() targets this exact path -- see the module doc comment). */
+ *  (its cleanup() targets this exact path; see the module doc comment). */
 export const OWN_CA_DESTINATION = "/etc/buildcage-ca.pem";
 export const SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
 
@@ -114,7 +114,7 @@ export function extractCaCert(
 /**
  * Write the CA trust files a step's env vars will point at, into `dir`
  * (this run's own scratch directory). `caCertPath` is the proxy's own CA,
- * already `docker cp`'d onto the host -- see extractCaCert.
+ * already `docker cp`'d onto the host; see extractCaCert.
  */
 export function writeCaTrustFiles(
   caCertPath: string,
@@ -145,7 +145,7 @@ export function writeCaTrustFiles(
 // docs/security.md): NODE_EXTRA_CA_CERTS/DENO_CERT add to a built-in trust
 // set, so they're pointed at a CA-only file; REQUESTS_CA_BUNDLE/PIP_CERT/
 // SSL_CERT_FILE replace a tool's bundle outright, so they're pointed at the
-// (augmented) system store instead, never a CA-only file -- doing so would
+// (augmented) system store instead, never a CA-only file: doing so would
 // leave the tool trusting nothing else. CURL_CA_BUNDLE is left unset: curl
 // already reads the system store by default.
 //
@@ -163,7 +163,7 @@ export interface CaTrustAdditions {
 
 /**
  * The extra mounts and env vars buildOciConfig should add on top of the
- * step's own, so the sandboxed process trusts the proxy's CA -- see the
+ * step's own, so the sandboxed process trusts the proxy's CA; see the
  * module doc comment for why these are mounts, not host writes.
  */
 export function caTrustAdditions(files: CaTrustFiles, env: NodeJS.ProcessEnv): CaTrustAdditions {

@@ -349,7 +349,7 @@ describe("runSandboxStep", () => {
     });
 
     // The directories exist from resolveFilesystemPlan onwards, so every way
-    // out after that point has to give them back -- not just the paths that
+    // out after that point has to give them back, not just the paths that
     // reach the proxy teardown.
     it("gives them back even when the step fails before the proxy starts", async () => {
       mocks.verifyImageDigestOrThrow.mockRejectedValue(new Error("no signature found"));

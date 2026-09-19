@@ -55,7 +55,7 @@ describe("resolveWriteThroughEntry", () => {
   });
 
   it("rejects an allowed variable that isn't set, rather than resolving somewhere else", () => {
-    // "" would leave "$RUNNER_TEMP/cache" resolving to "<workspace>/cache" --
+    // "" would leave "$RUNNER_TEMP/cache" resolving to "<workspace>/cache",
     // a different path than the one named, made write-through silently.
     const { RUNNER_TEMP: _omitted, ...noRunnerTemp } = ENV;
     expect(() => resolveWriteThroughEntry("$RUNNER_TEMP/cache", noRunnerTemp)).toThrow(
@@ -94,7 +94,7 @@ describe("resolveWriteThroughEntry", () => {
   });
 
   it("does not swallow a stray closing brace from a malformed reference", () => {
-    // "$GITHUB_WORKSPACE}suffix" is missing its opening brace -- the "}"
+    // "$GITHUB_WORKSPACE}suffix" is missing its opening brace, the "}"
     // must be treated as literal text, not consumed into the match.
     expect(resolveWriteThroughEntry("$GITHUB_WORKSPACE}suffix", ENV)).toBe(
       `${ENV.GITHUB_WORKSPACE}}suffix`,
@@ -243,7 +243,7 @@ describe("ensureWriteThroughTargetsExist", () => {
     ).toThrow(WriteThroughTargetUncreatableError);
 
     // The first entry succeeded (created /a/ok and /a/ok/x) before the
-    // second entry failed -- both must be rolled back, deepest first, and as
+    // second entry failed: both must be rolled back, deepest first, and as
     // the same identity that created them.
     expect(calls).toStrictEqual([
       ["sudo", ...asOwner, "mkdir", "-p", "-m", "755", "/a/ok/x"],
@@ -316,7 +316,7 @@ describe("removeCreatedDirsIfEmpty", () => {
   });
 });
 
-describe("ensureWriteThroughTargetsExist — nothing to create it under", () => {
+describe("ensureWriteThroughTargetsExist: nothing to create it under", () => {
   const OWNED_DIR = { uid: 1000, gid: 1000, mode: 0o40755 };
 
   it("rolls back and refuses when no ancestor exists at all", () => {
@@ -342,7 +342,7 @@ describe("ensureWriteThroughTargetsExist — nothing to create it under", () => 
   });
 });
 
-describe("resolveWriteThroughEntry — a tilde with no HOME to expand to", () => {
+describe("resolveWriteThroughEntry: a tilde with no HOME to expand to", () => {
   // The empty fallback leaves a relative path, which then resolves against the
   // workspace like any other. What matters is that "undefined" never lands in it.
   it("resolves the remainder rather than putting undefined in the path", () => {
