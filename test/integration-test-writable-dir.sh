@@ -3,7 +3,8 @@
 # action wrapper -- see test-e2e.yml's test_sandbox_enforcement for the one
 # case that does exercise the real action. Covers an existing path, a missing
 # one (created with the parent's ownership, then given back only if the
-# command left it empty), and the deprecated writable: spelling.
+# command left it empty), `/` on its own (which disables the read-only
+# restriction entirely), and the deprecated writable: spelling.
 set -uo pipefail
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
@@ -69,6 +70,26 @@ if [ -e "${PARENT}/created-empty" ]; then
   FAILURES=$((FAILURES + 1))
 else
   echo "  PASS  a created directory left empty is removed again"
+fi
+
+# `/` names the root of every mount there is, which leaves nothing for the
+# read-only policy to apply to.
+GITHUB_WORKSPACE="$WORKDIR" \
+GITHUB_STATE="$WORKDIR/state.env" \
+GITHUB_STEP_SUMMARY="$WORKDIR/summary.md" \
+BUILDCAGE_BUILD_TEST_HOOKS=1 \
+BUILDCAGE_LOCAL_IMAGE_REF="$BUILDCAGE_LOCAL_IMAGE_REF" \
+INPUT_WRITE_THROUGH="/" \
+INPUT_RUN="touch /opt/.buildcage-writable-test
+rm -f /opt/.buildcage-writable-test" \
+  node dist/main.cjs
+ROOT_CODE=$?
+
+if [ "$ROOT_CODE" = "0" ]; then
+  echo "  PASS  / is fully writable when write_through: / is set"
+else
+  echo "  FAIL  / was not fully writable when write_through: / is set (exit $ROOT_CODE)"
+  FAILURES=$((FAILURES + 1))
 fi
 
 # The pre-rename spelling has to keep working (see resolveWriteThroughInput).
