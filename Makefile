@@ -3,7 +3,7 @@
 # worktree's own name keeps them apart, so nothing needs configuring, and the
 # main checkout keeps the names CI uses. Exported because the integration test
 # scripts reach docker/compose.action.test-*.yaml through the action's own
-# environment (see startSandboxProxy in src/main.ts).
+# environment (see buildComposeEnv in src/lib/compose-env.ts).
 GIT_DIR := $(shell git rev-parse --git-dir 2>/dev/null)
 WORKTREE_NAME := $(if $(findstring /worktrees/,$(GIT_DIR)),$(notdir $(GIT_DIR)))
 # A worktree directory carries the `+` that replaced the branch name's `/`, and

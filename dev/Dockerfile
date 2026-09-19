@@ -3,7 +3,7 @@
 # Buildcage's own runc/kernel-namespace operations can't run natively on
 # macOS (Darwin), so local development drives run-isolated.sh from inside a
 # container instead: this one runs with `pid: host` (see
-# ../compose.sandbox-dev.yaml) so it can see the proxy
+# ../docker/compose.sandbox-dev.yaml) so it can see the proxy
 # container's PID/netns via /proc, exactly like the real GitHub Actions
 # runner host does for the real proxy container in production. It is NOT
 # used in production or in CI's test_sandbox job (see
@@ -11,7 +11,7 @@
 # host, matching what actually happens when a user's workflow executes.
 #
 # runc and gen-seccomp-profile are built directly into this image (mirroring
-# ../docker/Dockerfile's own stages) rather than `docker cp`-extracted from
+# ../docker/universal/Dockerfile's own stages) rather than `docker cp`-extracted from
 # the proxy image at runtime, so this dev loop doesn't need the Docker
 # socket mounted in just to reach a sibling container: it stays scoped to
 # testing run-isolated.sh itself.

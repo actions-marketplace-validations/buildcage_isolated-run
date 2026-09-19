@@ -2,7 +2,7 @@ services:
   proxy:
     container_name: ${PROXY_CONTAINER_NAME:-buildcage-proxy}
     image: ${BUILDCAGE_PROXY_IMAGE_REF:-placeholder}
-    # No buildkitd/runc in this image, so only NET_ADMIN is needed
+    # Nothing in this image runs buildkitd or runc, so only NET_ADMIN is needed
     # (interface renaming/addressing + iptables), no SYS_ADMIN/SYS_PTRACE,
     # no cgroup:host, no default-seccomp/apparmor bypass.
     cap_add:

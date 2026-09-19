@@ -2,8 +2,8 @@
 # build-test-bundle.sh, dev-only stand-in for sandbox/oci-config.ts's
 # buildOciConfig, used by `make test_sandbox_dev` to build just enough of
 # an OCI bundle to exercise run-isolated.sh directly (see
-# ../compose.sandbox-dev.yaml and ../dev/Dockerfile for why this dev loop
-# doesn't run the real run/dist/main.cjs, and so needs a minimal
+# ../docker/compose.sandbox-dev.yaml and ./Dockerfile for why this dev loop
+# doesn't run the real dist/main.cjs, and so needs a minimal
 # hand-built substitute for the config.json JS would normally produce).
 #
 # Not a full reimplementation: no writable-path/writable-/ handling, no
