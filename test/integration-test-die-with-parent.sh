@@ -6,12 +6,12 @@
 # through the real action wrapper, so this script can reach in and kill
 # run-isolated.sh mid-run.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
 
 WORKDIR=$(mktemp -d)
 touch "$WORKDIR/state.env" "$WORKDIR/summary.md"
-FAILURES=0
 
 cleanup() {
   [ -n "${NODE_PID:-}" ] && kill -9 "$NODE_PID" >/dev/null 2>&1
@@ -79,16 +79,9 @@ echo ""
 echo "=== Sandbox die-with-parent Assertions ==="
 echo ""
 if pgrep -f "sleep 300" >/dev/null 2>&1; then
-  echo "  FAIL  sandboxed process survived as an orphan after run-isolated.sh was killed"
-  FAILURES=$((FAILURES + 1))
+  fail "sandboxed process survived as an orphan after run-isolated.sh was killed"
 else
-  echo "  PASS  entire sandbox process tree died with run-isolated.sh"
+  pass "entire sandbox process tree died with run-isolated.sh"
 fi
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

@@ -9,6 +9,7 @@
 # compose.test-universal.yaml rather than a real site: what is under test is the
 # mount, so nothing here should turn on a third party being up.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -29,7 +30,6 @@ trap cleanup EXIT
 touch "$WORKDIR/state.env" "$WORKDIR/summary.md"
 cp /etc/resolv.conf "$WORKDIR/host-resolv-before.conf"
 
-FAILURES=0
 
 run_instance() {
   local write_through="$1" run_script="$2"
@@ -67,32 +67,28 @@ fi"
 CODE=$(cat "$WORKDIR/exit_code")
 
 if [ "$CODE" = "0" ]; then
-  echo "  PASS  write_through: /etc left DNS working and /etc/resolv.conf read-only"
+  pass "write_through: /etc left DNS working and /etc/resolv.conf read-only"
 else
-  echo "  FAIL  write_through: /etc broke the step (exit $CODE)"
-  FAILURES=$((FAILURES + 1))
+  fail "write_through: /etc broke the step (exit $CODE)"
 fi
 
 if [ -f "${TESTDIR}/marker" ]; then
-  echo "  PASS  writes under /etc reached the host"
+  pass "writes under /etc reached the host"
 else
-  echo "  FAIL  ${TESTDIR}/marker is missing"
-  FAILURES=$((FAILURES + 1))
+  fail "${TESTDIR}/marker is missing"
 fi
 
 if cmp -s "$WORKDIR/host-resolv-before.conf" /etc/resolv.conf; then
-  echo "  PASS  the host's /etc/resolv.conf is unchanged"
+  pass "the host's /etc/resolv.conf is unchanged"
 else
-  echo "  FAIL  the host's /etc/resolv.conf was modified"
-  FAILURES=$((FAILURES + 1))
+  fail "the host's /etc/resolv.conf was modified"
 fi
 
 if [ -f "$WORKDIR/sandbox-resolv.conf" ] &&
   ! cmp -s "$WORKDIR/sandbox-resolv.conf" "$WORKDIR/host-resolv-before.conf"; then
-  echo "  PASS  the sandbox saw the proxy's resolv.conf, not the host's"
+  pass "the sandbox saw the proxy's resolv.conf, not the host's"
 else
-  echo "  FAIL  the sandbox saw the host's /etc/resolv.conf"
-  FAILURES=$((FAILURES + 1))
+  fail "the sandbox saw the host's /etc/resolv.conf"
 fi
 
 # Case 2: naming a reserved path itself is refused rather than silently
@@ -101,10 +97,9 @@ run_instance "/etc/resolv.conf" "true"
 CODE=$(cat "$WORKDIR/exit_code")
 
 if [ "$CODE" != "0" ] && grep -q "reserved" "$WORKDIR/out.log"; then
-  echo "  PASS  write_through: /etc/resolv.conf is refused"
+  pass "write_through: /etc/resolv.conf is refused"
 else
-  echo "  FAIL  write_through: /etc/resolv.conf was accepted (exit $CODE)"
-  FAILURES=$((FAILURES + 1))
+  fail "write_through: /etc/resolv.conf was accepted (exit $CODE)"
 fi
 
 # Case 3: same for a destination runc mounts fresh content at, which would
@@ -113,16 +108,9 @@ run_instance "/proc" "true"
 CODE=$(cat "$WORKDIR/exit_code")
 
 if [ "$CODE" != "0" ]; then
-  echo "  PASS  write_through: /proc is refused"
+  pass "write_through: /proc is refused"
 else
-  echo "  FAIL  write_through: /proc was accepted"
-  FAILURES=$((FAILURES + 1))
+  fail "write_through: /proc was accepted"
 fi
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

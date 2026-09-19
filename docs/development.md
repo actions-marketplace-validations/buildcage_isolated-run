@@ -269,7 +269,10 @@ The three integration targets need `BUILDCAGE_LOCAL_IMAGE_REF` and a test-hook b
 ├── scripts/run-isolated.sh    # netns/veth/rootfs-bind setup around `runc run`, invoked via
 │                              # `sudo -n` (see Action Internals)
 ├── test/                      # assert-sandbox*.sh + integration-test-*.sh (capability/filesystem/
-│                              # seccomp/die-with-parent checks driving dist/main.cjs directly)
+│                              # seccomp/die-with-parent checks driving dist/main.cjs directly) and
+│                              # *-scenarios.sh (run inside the sandbox as a step's own `run:`).
+│                              # helpers.sh carries what both halves share: pass/fail, check_status/
+│                              # check_ok, and the result line each half ends with
 ├── dev/                       # Mac dev-loop-only Dockerfile + smoke-test.sh + build-test-bundle.sh
 │                              # (see docker/compose.sandbox-dev.yaml), not used in production or CI
 ├── docs/                      # development.md, security.md, plus the reference.md/rules.md/
