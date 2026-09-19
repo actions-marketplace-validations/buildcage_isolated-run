@@ -41,7 +41,7 @@ export interface DetermineOverlayRootsOptions {
  *    too would make the rest of it read-only instead of ephemeral-writable,
  *    defeating the point of layering write_through over an overlay at all.
  * 3. Drop any remaining candidate nested under another remaining candidate
- *    (no nested overlays, the outer one wins), but only when they're on
+ *    (no nested overlays; the outer one wins), but only when they're on
  *    the same filesystem. A candidate that is its own separate mount
  *    nested inside another (an unusual but real self-hosted-runner layout)
  *    keeps its own overlay instead: overlayfs does not show a filesystem
@@ -67,7 +67,7 @@ export function determineOverlayRoots(
     try {
       return deviceOf(c) !== deviceOf(nestingParent);
     } catch {
-      // Can't tell, keep it separate. An extra overlay root is harmless;
+      // Can't tell: keep it separate. An extra overlay root is harmless;
       // silently dropping coverage for a path that turns out to matter isn't.
       return true;
     }

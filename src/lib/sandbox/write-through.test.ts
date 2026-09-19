@@ -55,7 +55,7 @@ describe("resolveWriteThroughEntry", () => {
   });
 
   it("rejects an allowed variable that isn't set, rather than resolving somewhere else", () => {
-    // "" would leave "$RUNNER_TEMP/cache" resolving to "<workspace>/cache",
+    // "" would leave "$RUNNER_TEMP/cache" resolving to "<workspace>/cache":
     // a different path than the one named, made write-through silently.
     const { RUNNER_TEMP: _omitted, ...noRunnerTemp } = ENV;
     expect(() => resolveWriteThroughEntry("$RUNNER_TEMP/cache", noRunnerTemp)).toThrow(

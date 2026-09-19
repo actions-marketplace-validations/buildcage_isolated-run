@@ -263,9 +263,6 @@ export async function runSandboxStep(
       logRules("Known-blocked (informational only, not sent to proxy ACL)", knownBlockedRules);
     });
 
-    // Each `run` step gets its own throwaway proxy container: start, run the
-    // isolated command, report, and stop, all within this one step, rather
-    // than sharing one across steps in the same job.
     const containerName = generateContainerName();
     const projectName = deriveProjectName(containerName);
     saveCleanupState(env, { containerName, filesystemMode, overlayRoots }, saveState);

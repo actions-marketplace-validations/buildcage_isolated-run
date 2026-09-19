@@ -47,8 +47,8 @@ jobs:
               - 'test/**'
 
   # Exercises the real action end-to-end (uses: ./) on the actual runner
-  # host, can't be validated inside a nested container (see dev/ and
-  # docs/development.md).
+  # host; none of this can be validated inside a nested container (see dev/
+  # and docs/development.md).
   #
   # Split into one job per case (test_sandbox_*) so each gets its own Job
   # Summary section and status check. run-isolated.sh's own mechanics

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs inside the sandbox, as the `run:` input of the restrict-mode half of
-# test/integration-test-inspect-roundtrip.sh, same role as
+# test/integration-test-inspect-roundtrip.sh. Same role as
 # test/inspect-restrict-scenarios.sh, but driven by whatever allowed_url_rules
 # the audit half's own report generated, not a fixed list.
 #

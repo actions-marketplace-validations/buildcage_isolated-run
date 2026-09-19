@@ -59,7 +59,7 @@ export interface BuildOciConfigOptions {
    *  in ephemeral mode too. */
   writable: WritablePolicy;
   /** Present iff `filesystem_mode: ephemeral`. Carries the same write_through
-   *  paths as `writable.writablePaths`, one input, two mount strategies. */
+   *  paths as `writable.writablePaths`: one input, two mount strategies. */
   ephemeral?: EphemeralPolicy;
   runtime: SandboxRuntimeWiring;
   env: NodeJS.ProcessEnv;
@@ -82,17 +82,16 @@ export interface BuildOciConfigOptions {
  *   duplicated in (see oci-protected-paths.ts; root.readonly alone only
  *   covers the top-level mount), except workdir/home/tmp/runnerTemp/
  *   writablePaths. rootfsBindDir itself lives under SANDBOX_SCRATCH_BASE,
- *   which is never one of those writable exceptions, so the recursive
- *   writable rbinds don't re-expose the host-`/` rootfs as a second, writable
- *   copy inside the sandbox (see assertScratchBaseNotWritable, which fails
- *   closed if a `writable:` input would break that invariant).
+ *   which is never one of those writable exceptions (see
+ *   assertScratchBaseNotWritable, which fails closed if a `write_through:`
+ *   entry would break that invariant).
  * - linux.namespaces: same six namespace types runc's own default spec
  *   already requests (no user namespace; see docs/security.md's
  *   rationale for preserving the real UID/GID), just adding `path` to the
  *   network entry so it joins the netns run-isolated.sh already wired a
  *   veth into, instead of creating a fresh, unconnected one.
  * - process.capabilities: fully cleared (all five sets empty) plus
- *   noNewPrivileges: runc applies this natively, no setpriv needed.
+ *   noNewPrivileges. runc applies both natively, so no setpriv is needed.
  * - process.env: emptied. The step's real environment (and, inspect engine
  *   only, the CA-trust variables ca-trust.ts adds) is handed to the sandbox
  *   over stdin instead. See env-loader.ts.

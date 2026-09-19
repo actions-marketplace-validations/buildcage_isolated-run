@@ -63,7 +63,7 @@ function commonPrefixSegments(paths: string[]): string[] {
  * The path patterns covering one group of observed paths.
  *
  * Usually one. A second is needed when the shared prefix is itself one of the
- * observed paths: `/express/**` does not match `/express`, so a build that
+ * observed paths: `/express/**` does not match `/express`, so a step that
  * fetched both a package's metadata and its tarball needs both spelled out.
  */
 export function pathPatternsFor(paths: Iterable<string>): string[] {
@@ -101,7 +101,7 @@ function sortMethods(methods: Iterable<string>): string[] {
  * `GET|HEAD` on one line instead of two.
  */
 export function buildUrlRuleLines(requests: TrafficEvent[]): string[] {
-  // Only what the build actually reached: a refused request is not a rule to
+  // Only what the step actually reached: a refused request is not a rule to
   // reproduce, and a passthrough or a name lookup has no URL to write one from.
   const byOriginMethod = new Map<string, { origin: string; method: string; paths: string[] }>();
   for (const request of requests) {

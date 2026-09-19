@@ -1,10 +1,9 @@
 #!/bin/bash
 # Runs inside the sandbox, as the `run:` input of a real proxy_engine:
-# inspect step (see test/integration-test-inspect-restrict.sh). Ported from
-# buildcage/docker's test/Dockerfile.inspect-restrict, one shell script
-# instead of one Dockerfile RUN step per case (isolated-run's rootfs is the
-# real host, not a disposable BuildKit layer, so there is no equivalent of a
-# per-RUN-step image layer to assert on here).
+# inspect step (see test/integration-test-inspect-restrict.sh). One shell
+# script covers every case: isolated-run's rootfs is the real host, not a
+# disposable BuildKit layer, so there is no per-RUN-step image layer to
+# assert on here.
 #
 # ---------------------------------------------------------------------------
 # Rules under test (set by test/integration-test-inspect-restrict.sh):
@@ -248,8 +247,9 @@ echo "=== [Regex IP rule] ==="
 OUT=$($S http://10.200.0.100:9080/anything)
 check_ok "GET http://10.200.0.100:9080/anything" "$OUT" "ROOT GET"
 
-# Same address, a port only the URL rule's :80 default would cover, proves
-# the ~regex ip rule's own literal port (9080) is enforced, not "any port".
+# Same address, on a port only the URL rule's :80 default would cover:
+# refusing it proves the ~regex ip rule's own literal port (9080) is
+# enforced, not "any port".
 echo "=== [Regex IP rule - other port not covered] ==="
 CODE=$($C http://10.200.0.100:8080/anything)
 check_status "GET http://10.200.0.100:8080/anything" "$CODE" "403"

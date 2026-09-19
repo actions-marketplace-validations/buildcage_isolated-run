@@ -42,9 +42,8 @@ function main(): void {
     // what it has to say is about cleanup that either happened or didn't.
     annotate,
   );
-  // No catch: a failure here should crash this script the same way an
-  // uncaught error and a non-zero exit would, and Node's default
-  // unhandled-rejection behavior matches that.
+  // No catch: a failure here should crash this script with an uncaught error
+  // and a non-zero exit, which is Node's default unhandled-rejection behavior.
   if (targets) void stopProxyContainer(targets);
 }
 

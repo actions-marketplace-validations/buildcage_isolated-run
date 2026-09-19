@@ -35,7 +35,7 @@ export class WritablePathConflictError extends Error {}
  * re-expose that rootfs inside the sandbox as a second, writable copy of
  * the whole host `/`, the exact escape SANDBOX_SCRATCH_BASE's placement
  * (outside the default writable set) exists to avoid. Only reachable via an
- * explicit `writable:` input naming SANDBOX_SCRATCH_BASE or an ancestor of it
+ * explicit `write_through:` input naming SANDBOX_SCRATCH_BASE or an ancestor of it
  * (workdir/home/tmp/RUNNER_TEMP are operator/runner-controlled, not
  * attacker-controlled), so this is a misconfiguration guard, not a
  * hardening measure against a hostile isolated command.

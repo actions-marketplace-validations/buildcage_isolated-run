@@ -10,7 +10,7 @@ import type { MountEntry } from "./types.ts";
  *
  * Writing the CA into the rootfs and deleting it again once the step's
  * process exits is the obvious approach, and the right one when that rootfs
- * is a disposable image layer, torn down, or diffed and discarded, after
+ * is a disposable image layer, one torn down (or diffed and discarded) after
  * the step. It does not work here: this sandbox's rootfs is a bind-mount of
  * the live host `/`, so both the write and the delete land on the host
  * filesystem itself.
@@ -26,7 +26,7 @@ import type { MountEntry } from "./types.ts";
  *
  * OWN_CA_DESTINATION is the one exception: nothing exists at that path
  * ahead of time, so runc itself creates an empty placeholder file there to
- * have something to mount onto, ordinarily harmless on a disposable
+ * have something to mount onto. That is ordinarily harmless on a disposable
  * layer, but ROOTFS_BIND_DIR is a bind-mount of the real host `/`, so that
  * placeholder is a real (if empty) write to the host filesystem that
  * unmounting alone does not undo. run-isolated.sh's cleanup() removes it

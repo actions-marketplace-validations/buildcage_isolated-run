@@ -4,8 +4,9 @@
 # under /run were left reachable, either would let it escape the isolation
 # (docker.sock -> a sibling privileged container; a systemd --user bus ->
 # a unit that runs entirely outside every namespace the sandbox creates).
-# See identity.ts (GID substitution) and oci-config.ts's maskedPaths (the
-# per-path and per-user-runtime-dir masking) for the two independent
+# See identity.ts (GID substitution) and runtime-sockets.ts with
+# oci-protected-paths.ts (the per-path and per-user-runtime-dir masking) for
+# the two independent
 # layers that close this. Drives dist/main.cjs directly, without the real
 # action wrapper; see test-e2e.yml's test_sandbox_enforcement for the
 # one case that does exercise the real action.
@@ -67,7 +68,7 @@ echo ""
 
 # --- always run: sandbox must start regardless of what exists on the host
 # (in particular, /run/user/<uid> not existing at all, masking a path
-# runc can't find is a no-op, not a failure; see oci-config.ts)
+# runc can't find is a no-op, not a failure; see oci-protected-paths.ts)
 if grep -q '^SANDBOX_GID=' "$WORKDIR/out.log"; then
   pass "sandbox started successfully"
 else

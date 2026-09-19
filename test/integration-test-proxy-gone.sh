@@ -1,7 +1,7 @@
 #!/bin/bash
-# run-isolated.sh must fail closed, no host-side buildcage0, no leftover
-# /var/run/netns entries, when the container behind --proxy-netns is
-# already gone by the time the script checks it.
+# When the container behind --proxy-netns is already gone by the time the
+# script checks it, run-isolated.sh must fail closed: no host-side
+# buildcage0, no leftover /var/run/netns entries.
 #
 # Drives scripts/run-isolated.sh directly, not through dist/main.cjs: the
 # property under test is entirely about its own --proxy-netns check, so a
@@ -9,8 +9,8 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
-# The throwaway container. Pinned like every fixture Dockerfile, so a tag
-# moving under us can't fail a run for a reason run-isolated.sh had no part in.
+# The throwaway container. Pinned like every fixture Dockerfile, so a moving
+# tag can't fail a run for a reason run-isolated.sh had no part in.
 # renovate: datasource=docker depName=alpine
 ALPINE_IMAGE="alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4"
 

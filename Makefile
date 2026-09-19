@@ -40,8 +40,8 @@ test_unit_sandbox: ## Run the action's own unit tests
 	@vp test run src/lib src/main
 
 # Unfiltered, so this always covers whatever test.include matches. One run,
-# because each overwrites the coverage report: split the way the targets above
-# are, only the last one's numbers would survive.
+# because each overwrites the coverage report: if it were split the way the
+# targets above are, only the last one's numbers would survive.
 .PHONY: test_unit_coverage
 test_unit_coverage: ## Run every Node unit test once, with coverage
 	@vp test run --coverage
@@ -61,7 +61,7 @@ test_unit_qjs: ## Run unit tests in Docker
 		--std -m /opt/buildcage/core/scripts/test/run-tests.qjs.js $(QJS_TEST_DIRS)
 
 # ===========================================================================
-# Sandbox dev loop, mac-friendly local iteration on run-isolated.sh (see
+# Sandbox dev loop: mac-friendly local iteration on run-isolated.sh (see
 # dev/Dockerfile). CI's test_sandbox job runs run-isolated.sh directly on
 # the host instead; see docs/development.md.
 # ===========================================================================
@@ -100,9 +100,9 @@ clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 # One list, so the Makefile and test-integration.yml cannot come to disagree
 # about what "the integration tests" are. Not a target to run straight
 # through, unlike the unit tests: each group wants a different proxy image
-# under BUILDCAGE_LOCAL_IMAGE_REF, universal for the first two, an inspect
-# image built with BUILDCAGE_TEST_HOOKS=1 for the third, and the fourth
-# builds both images itself and wants the variable unset. Build the image a
+# under BUILDCAGE_LOCAL_IMAGE_REF: universal for the first two, an inspect
+# image built with BUILDCAGE_TEST_HOOKS=1 for the third, and none at all for
+# the fourth, which builds both images itself and wants the variable unset. Build the image a
 # group needs, then run that group, the way each CI job does.
 .PHONY: test_integration
 test_integration: test_integration_sandbox_linux test_integration_sandbox_universal test_integration_sandbox_inspect test_integration_listener_scope ## Every integration test CI runs; the four groups need different proxy images, so build each one's image first
@@ -125,9 +125,9 @@ test_integration_sandbox_linux: ## Run the action's integration tests (needs BUI
 	@./test/integration-test-proxy-gone.sh
 
 # Separate from test_integration_sandbox_linux: these use the fixture origin
-# network in compose.test-universal.yaml (fake DNS + an origin under our own
-# control) instead of the real internet, which is what lets them cover cases
-# real hosts can't, an allowlisted name resolving to an internal address,
+# network in compose.test-universal.yaml (fake DNS + an origin this repo
+# controls) instead of the real internet, which is what lets them cover cases
+# real hosts can't: an allowlisted name resolving to an internal address,
 # NXDOMAIN, direct-IP blocking with no allowed_ip_rules, etc. The rest are here
 # for the other half of that: whatever they assert, a third-party site being up
 # is not something this suite should depend on.

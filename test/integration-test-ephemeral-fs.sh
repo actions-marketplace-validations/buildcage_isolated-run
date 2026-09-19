@@ -7,8 +7,8 @@
 # actually honors them.
 #
 # One case is left out on purpose: the clear error an overlay probe failure
-# raises isn't exercised here: it needs an environment where overlayfs
-# itself doesn't work, which contradicts everything else in this file
+# raises isn't exercised here, because it needs an environment where
+# overlayfs itself doesn't work, which contradicts everything else in this file
 # running successfully. Covered instead by the mac-only dev loop
 # (`make test_sandbox_dev`), where overlayfs-on-overlayfs is known to fail
 # (see overlayfs-preflight.ts's own doc comment).
@@ -87,7 +87,7 @@ rm -rf "$CASE1"
 CASE2=$(mktemp -d)
 GITHUB_ENV_FILE2=$(mktemp)
 touch "$CASE2/state.env" "$CASE2/summary.md"
-# Not via run_ephemeral, GITHUB_ENV/RUNNER_TEMP need to be set together
+# Not via run_ephemeral: GITHUB_ENV/RUNNER_TEMP need to be set together
 # below, unlike its fixed default env.
 GITHUB_ENV="$GITHUB_ENV_FILE2" \
 GITHUB_WORKSPACE="$CASE2" \

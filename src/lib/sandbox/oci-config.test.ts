@@ -19,9 +19,10 @@ const PROC_LIMITS = [
 ].join("\n");
 
 /**
- * A GitHub-hosted Linux runner's answers. `absent` drops one, which is what a
- * non-Linux host looks like, supplied rather than read, since otherwise the
- * suite silently covers something different on a macOS dev machine than in CI.
+ * A GitHub-hosted Linux runner's answers, supplied rather than read, since
+ * otherwise the suite silently covers something different on a macOS dev
+ * machine than in CI. `absent` drops one, which is what a non-Linux host
+ * looks like.
  */
 function pinnedProbes({ absent = [] }: { absent?: ("setpriv" | "nofile")[] } = {}): HostProbes {
   return {
@@ -418,9 +419,9 @@ describe("buildOciConfig", () => {
     it("forces a kernel pseudo-fs into readonlyPaths when runc's own base spec doesn't mount it fresh", () => {
       // A fresh-mount exemption has to match runc's own base spec rather than
       // merely look like proc/sysfs/etc: fakeBaseSpec here declares only /proc
-      // and /sys, so anything else never gets a fresh, isolated mount, e.g.
-      // securityfs at /sys/kernel/security, which is commonly mounted
-      // read-write on AppArmor-enabled hosts.
+      // and /sys, so anything else (e.g. securityfs at /sys/kernel/security,
+      // commonly mounted read-write on AppArmor-enabled hosts) never gets a
+      // fresh, isolated mount.
       const hostMounts = [{ mountPoint: "/sys/kernel/security", fsType: "securityfs" }];
       const config = build(fakeBaseSpec(), {
         ...baseArgs,
@@ -672,7 +673,7 @@ describe("buildOciConfig: ephemeral mode", () => {
     expect(config.mounts.some((m) => m.destination === "/opt/should-be-ignored")).toBe(false);
   });
 
-  it("orders mounts as base spec, then overlay roots shallow-first, then write_through entries shallow-first", () => {
+  it("orders mounts as the base spec, then overlay roots shallow-first, then write_through entries shallow-first", () => {
     const deepEphemeral = {
       overlayRoots: [
         { path: "/home/runner/deep", upper: "/scratch/deep/upper", work: "/scratch/deep/work" },

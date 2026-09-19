@@ -5,7 +5,7 @@
 # passthrough and CA trust end-to-end (see
 # test/inspect-restrict-scenarios.sh for the scenario list itself).
 #
-# Also checks the CA-injection design this port introduces (see
+# Also checks the CA-injection design (see
 # src/lib/sandbox/ca-trust.ts): this sandbox's rootfs is the real host `/`,
 # so CA trust is injected as mounts, torn down with the rest of the
 # sandbox's mount namespace, never written to the host. That is a

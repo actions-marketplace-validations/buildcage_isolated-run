@@ -2,9 +2,9 @@
  * The step's report phase: everything between the isolated command finishing
  * and the proxy being stopped.
  *
- * Its own module rather than part of report.ts because it spans three of
- * them: the report itself, the traffic artifact, and the inputs that decide
- * whether either is wanted. None of the three owns the order.
+ * Its own module rather than part of report.ts because it spans three
+ * concerns: the report itself, the traffic artifact, and the inputs that
+ * decide whether either is wanted. None of the three owns the order.
  */
 
 import type { Annotation } from "#core/lib/actions/annotation.ts";
@@ -60,8 +60,7 @@ export interface ReportStepOptions {
  *
  * Never throws. The step's exit code is the isolated command's own, so a
  * failure anywhere here is a warning naming the step that failed, and nothing
- * more, and the proxy teardown that runs after this call depends on
- * reaching it.
+ * more. The proxy teardown that runs after this call depends on reaching it.
  */
 export async function reportStepTraffic(
   {

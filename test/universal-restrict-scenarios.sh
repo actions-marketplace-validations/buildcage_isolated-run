@@ -151,8 +151,8 @@ fi
 
 # [SSRF - allowlisted name resolving to an internal address (169.254.169.254)]
 # internal.wildcard.example.com matches the *.wildcard.example.com allowlist
-# rule but resolves to a link-local address; the name passes the rules, the
-# resolved address must not.
+# rule but resolves to a link-local address; the name passes the rules, but
+# the resolved address must not.
 echo "=== [HTTPS - SSRF via allowlisted name] ==="
 CODE=$($C --max-time 5 https://internal.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
