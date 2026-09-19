@@ -42,7 +42,7 @@ RUN apk add --no-cache curl && \
 # build time; see gen-seccomp-profile/main.go for why. Pure Go
 # (CGO_ENABLED=0), so this cross-compiles natively via BUILDPLATFORM
 # without needing QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS gen-seccomp-profile-build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:4cb7ac979db5fcc41cae44b2227ba5ab8a51e8807f40d9ba4dee20a0ad960b5b AS gen-seccomp-profile-build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
