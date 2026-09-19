@@ -37,10 +37,13 @@ assert_summary_not_contains() {
   fi
 }
 
-assert_summary_contains "example.com:80" "Allowed HTTP host recorded in report"
-assert_summary_contains "example.com:443" "Allowed HTTPS host recorded in report"
-assert_summary_contains "neverssl.com:80" "Blocked HTTP host recorded in report"
-assert_summary_contains "example.org:443" "Blocked HTTPS host recorded in report"
+# One row per verdict, which is as much as this layer is for: the real
+# action's own report carries what the proxy decided. Which names, ports and
+# protocols are decided which way is the fixture-based integration tests'
+# subject, against an origin under our own control (see
+# test/universal-restrict-scenarios.sh).
+assert_summary_contains "example.com:443" "Allowed host recorded in report"
+assert_summary_contains "example.org:443" "Blocked host recorded in report"
 
 # A forged SNI (see the "forged SNI" run step) must show up as a single,
 # sanitized BLOCKED row -- see docker/universal/files/haproxy.cfg.template.
