@@ -24,7 +24,9 @@ services:
       - ALLOWED_IP_RULES=${ALLOWED_IP_RULES:-}
       # The test-dns fixture's address on test-net (../compose.test-universal.yaml).
       - EXTERNAL_RESOLVER=10.200.0.53
-      - TEST_NET_ADDR=10.200.0.2/24
+      # Overridable because test/integration-test-concurrent.sh puts two
+      # proxies on this network at once, and they cannot share an address.
+      - TEST_NET_ADDR=${TEST_NET_ADDR:-10.200.0.2/24}
       - TEST_NET_SUBNET=${TEST_NET_SUBNET:-10.210.0.0/24}
       # What the action computed, plus a fixture address nothing answers on so
       # the blocked-name scenario has a deterministic target.
