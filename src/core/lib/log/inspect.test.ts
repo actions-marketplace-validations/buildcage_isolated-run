@@ -371,6 +371,16 @@ describe("lines and stamps the inspect logs can carry", () => {
   });
 });
 
+describe("a request line whose URL names no authority", () => {
+  // HAProxy logs the target as sent, which for an origin-form request is a
+  // path; there is no host to take out of it.
+  it("keeps the field as-is rather than inventing a host", async () => {
+    const line = "buildcage 1787471975123 https GET 200 708 ts=-- reason=- dst=1.2.3.4:443 /pkg";
+    const { events } = await scanInspectLog([line]);
+    expect(events[0].host).toBe("/pkg");
+  });
+});
+
 describe("a resolver line whose stamp is not a date", () => {
   // s6-log writes the stamp, and the line shape only requires two fields
   // before the marker. An unreadable one is timed at 0 rather than NaN, which
@@ -380,15 +390,5 @@ describe("a resolver line whose stamp is not a date", () => {
       "xx yy  buildcage dns allowed name=a.example.com.",
     ]);
     for (const event of events) expect(event.time).toBe(0);
-  });
-});
-
-describe("a request line whose URL names no authority", () => {
-  // HAProxy logs the target as sent, which for an origin-form request is a
-  // path; there is no host to take out of it.
-  it("keeps the field as-is rather than inventing a host", async () => {
-    const line = "buildcage 1787471975123 https GET 200 708 ts=-- reason=- dst=1.2.3.4:443 /pkg";
-    const { events } = await scanInspectLog([line]);
-    expect(events[0].host).toBe("/pkg");
   });
 });
