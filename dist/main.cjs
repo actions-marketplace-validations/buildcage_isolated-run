@@ -10715,7 +10715,7 @@ async function fetchRegistryToken(registry, repo, basicAuth, _fetch = fetch) {
 		let resp = basicAuth ? await _fetch(url, { headers: { Authorization: `Basic ${basicAuth}` } }) : await _fetch(url);
 		if (resp.status >= 500) throw new VerifyImageError(`Transient error from ${registry} token endpoint: HTTP ${resp.status}`, "TRANSIENT");
 		if (resp.ok) return (await resp.json()).token;
-		throw new VerifyImageError(basicAuth ? `Registry authentication failed: HTTP ${resp.status}. The credentials in Docker config may be expired — run \`docker login ${registry}\` again.` : `Failed to get registry token: HTTP ${resp.status}. The package may be private. Run \`docker login ${registry}\` (or use docker/login-action with 'packages: read') before this action.`, "TOKEN_ERROR");
+		throw new VerifyImageError(basicAuth ? `Registry authentication failed: HTTP ${resp.status}. The credentials in Docker config may be expired. Run \`docker login ${registry}\` again.` : `Failed to get registry token: HTTP ${resp.status}. The package may be private. Run \`docker login ${registry}\` (or use docker/login-action with 'packages: read') before this action.`, "TOKEN_ERROR");
 	});
 }
 //#endregion
@@ -17648,12 +17648,12 @@ function checkUrlAndTlsRuleSupport({ proxyEngine, proxyMode, urlRules, tlsRules 
 	if (proxyEngine === "inspect") return;
 	let unsupported = [];
 	if (urlRules.length > 0 && unsupported.push("allowed_url_rules"), tlsRules.length > 0 && unsupported.push("allowed_tls_rules"), unsupported.length === 0) return;
-	let list = unsupported.join(" and "), reason = `${list} ${unsupported.length > 1 ? "have" : "has"} no effect with proxy_engine: ${proxyEngine} — this engine only sees the host and port, never a method or a path.`;
+	let list = unsupported.join(" and "), reason = `${list} ${unsupported.length > 1 ? "have" : "has"} no effect with proxy_engine: ${proxyEngine}, which only sees the host and port, never a method or a path.`;
 	if (proxyMode === "audit") {
 		warn(`${reason} They are ignored for this run. Switch to proxy_engine: inspect if you need to enforce a method or a path.`);
 		return;
 	}
-	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced — the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
+	throw new SandboxError(`${reason} In restrict mode that means ${list} would not actually be enforced, so the run would look protected but isn't. Switch to proxy_engine: inspect, or remove ${list} from your workflow.`, "INVALID_PROXY_ENGINE");
 }
 //#endregion
 //#region src/lib/compose-file.ts
@@ -17666,7 +17666,7 @@ function resolveComposeFile(override) {
 }
 //#endregion
 //#region src/core/lib/actions/docker-error.ts
-const SLIM_RUNNER_DETECTED_PREFIX = " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\")", SLIM_RUNNER_NOTE$1 = `${SLIM_RUNNER_DETECTED_PREFIX} — these ship a Docker client with no daemon and are not supported for this action.`;
+const SLIM_RUNNER_DETECTED_PREFIX = " Detected a container-based GitHub-hosted runner image (e.g. \"ubuntu-slim\")", SLIM_RUNNER_NOTE$1 = `${SLIM_RUNNER_DETECTED_PREFIX}: these ship a Docker client with no daemon and are not supported for this action.`;
 function capturedStderr(e) {
 	let err = e && typeof e == "object" ? e : {};
 	return typeof err.stderr == "string" ? err.stderr.trim() : "";
@@ -17678,7 +17678,7 @@ function describeDockerFailure(e, { operation = "docker", env = process.env, exi
 		let captured = capturedStderr(e);
 		whatHappened = `${operation} failed${captured ? `: ${captured}` : " (see the Docker output above for the underlying error)"}.`;
 	}
-	return `${whatHappened}${slimNote} Buildcage requires a working Docker installation (client and daemon) on the runner, on Docker Engine 25.0 or later with Compose v2.20.2 or later. Lightweight runner images such as GitHub-hosted "ubuntu-slim" ship a Docker client but no daemon and are not supported for this action — use "ubuntu-latest" (or another runner with a full Docker install) instead. See README.md and docs/security.md for details.`;
+	return `${whatHappened}${slimNote} Buildcage requires a working Docker installation (client and daemon) on the runner, on Docker Engine 25.0 or later with Compose v2.20.2 or later. Lightweight runner images such as GitHub-hosted "ubuntu-slim" ship a Docker client but no daemon and are not supported for this action. Use "ubuntu-latest", or another runner with a full Docker install, instead. See README.md and docs/security.md for details.`;
 }
 function isLikelySlimRunner(_env = process.env, _exists = node_fs.existsSync) {
 	return _env.ImageOS === "Linux" && _exists("/run/.containerenv");
@@ -17770,10 +17770,10 @@ function buildComposeEnv({ containerName, proxyMode, proxyEngine, imageRef, http
 }
 //#endregion
 //#region src/lib/sudo-preflight.ts
-const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
+const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX}: these typically don't have passwordless sudo configured for this kind of privileged setup.`;
 function describeSudoFailure(e, { env = process.env, exists = node_fs.existsSync } = {}) {
 	let captured = capturedStderr(e);
-	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
+	return `'sudo' is not available without a password on this runner.${isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : ""} The run action requires a Linux runner with passwordless sudo for the isolation setup itself (network namespace, veth, iptables). That is the default on GitHub-hosted "ubuntu-*" runners, but not on lightweight images such as "ubuntu-slim" or many self-hosted or minimal runners. See README.md and docs/security.md for details.${captured ? ` (${captured})` : ""}`;
 }
 function defaultExecFile$2(command, args) {
 	(0, node_child_process.execFileSync)(command, args, {

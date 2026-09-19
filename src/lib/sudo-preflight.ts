@@ -10,11 +10,11 @@ import {
 
 const REQUIREMENT =
   "The run action requires a Linux runner with passwordless sudo for the isolation setup itself " +
-  '(network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, ' +
-  'but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See ' +
-  "README.md and docs/security.md for details.";
+  '(network namespace, veth, iptables). That is the default on GitHub-hosted "ubuntu-*" ' +
+  'runners, but not on lightweight images such as "ubuntu-slim" or many self-hosted or minimal ' +
+  "runners. See README.md and docs/security.md for details.";
 
-const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
+const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX}: these typically don't have passwordless sudo configured for this kind of privileged setup.`;
 
 /**
  * Kept pure (takes the error, not execFileSync's raw output) so it's
