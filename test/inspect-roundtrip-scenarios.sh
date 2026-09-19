@@ -9,31 +9,10 @@
 # run have to stand alone, so the TLS passthrough the audit run made must now
 # be refused.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
-FAILURES=0
 S="curl -sS --max-time 10"
 C="curl -sS -o /dev/null -w %{http_code} --max-time 10"
-
-check_ok() {
-  local label="$1" out="$2" want="$3"
-  case "$out" in
-    "$want"*) echo "  PASS  $label" ;;
-    *)
-      echo "  FAIL  $label -- got: $out"
-      FAILURES=$((FAILURES + 1))
-      ;;
-  esac
-}
-
-check_status() {
-  local label="$1" code="$2" want="$3"
-  if [ "$code" = "$want" ]; then
-    echo "  PASS  $label"
-  else
-    echo "  FAIL  $label -- expected $want, got $code"
-    FAILURES=$((FAILURES + 1))
-  fi
-}
 
 echo "=== [same as audit: HTTPS] ==="
 OUT=$($S https://allowed.example.com/public/pkg.tgz)
@@ -42,7 +21,7 @@ check_ok "GET /public/pkg.tgz" "$OUT" "PUBLIC GET"
 echo "=== [same as audit: varying paths under the learned prefix] ==="
 $S https://allowed.example.com/public/a/one.tgz >/dev/null
 $S https://allowed.example.com/public/b/two.tgz >/dev/null
-echo "  PASS  varying paths under the learned prefix"
+pass "varying paths under the learned prefix"
 
 echo "=== [same as audit: POST] ==="
 OUT=$($S -X POST https://api.example.com/v1/thing)
@@ -80,5 +59,4 @@ echo "=== [new: port never observed] ==="
 CODE=$($C https://allowed.example.com:8443/public/pkg.tgz)
 check_status "GET :8443/public/pkg.tgz" "$CODE" "403"
 
-echo "=== End of round-trip scenarios: $FAILURES failure(s) ==="
-exit "$FAILURES"
+scenario_results "round-trip scenarios"

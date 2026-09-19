@@ -8,19 +8,9 @@
 # the internal-address guard, which stays active unconditionally.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
-FAILURES=0
 C="curl -sS -k -o /dev/null -w %{http_code} --max-time 10"
-
-check_status() {
-  local label="$1" code="$2" want="$3"
-  if [ "$code" = "$want" ]; then
-    echo "  PASS  $label"
-  else
-    echo "  FAIL  $label -- expected $want, got $code"
-    FAILURES=$((FAILURES + 1))
-  fi
-}
 
 echo "=== [HTTPS - any domain] ==="
 check_status "blocked.example.com" "$($C https://blocked.example.com/)" "200"
@@ -41,57 +31,50 @@ check_status "10.200.0.100 direct" "$($C http://10.200.0.100/)" "200"
 echo "=== [HTTPS - SSRF via internal address] ==="
 CODE=$($C --max-time 5 https://internal.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  internal.wildcard.example.com blocked (got $CODE)"
+  pass "internal.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  internal.wildcard.example.com reached an internal address"
-  FAILURES=$((FAILURES + 1))
+  fail "internal.wildcard.example.com reached an internal address"
 fi
 
 echo "=== [HTTP - SSRF via internal address] ==="
 CODE=$($C --max-time 5 http://internal.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  internal.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "internal.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  internal.wildcard.example.com HTTP reached an internal address"
-  FAILURES=$((FAILURES + 1))
+  fail "internal.wildcard.example.com HTTP reached an internal address"
 fi
 
 # [SSRF - the runner itself, blocked in audit too]
 echo "=== [HTTPS - SSRF back to the runner] ==="
 CODE=$($C --max-time 5 https://runner.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  runner.wildcard.example.com blocked (got $CODE)"
+  pass "runner.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  runner.wildcard.example.com reached the runner"
-  FAILURES=$((FAILURES + 1))
+  fail "runner.wildcard.example.com reached the runner"
 fi
 
 echo "=== [HTTP - SSRF back to the runner] ==="
 CODE=$($C --max-time 5 http://runner.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  runner.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "runner.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  runner.wildcard.example.com HTTP reached the runner"
-  FAILURES=$((FAILURES + 1))
+  fail "runner.wildcard.example.com HTTP reached the runner"
 fi
 
 echo "=== [HTTPS - dns-failed (NXDOMAIN)] ==="
 CODE=$($C --max-time 5 https://nxdomain.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  nxdomain.wildcard.example.com blocked (got $CODE)"
+  pass "nxdomain.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  nxdomain.wildcard.example.com reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "nxdomain.wildcard.example.com reached the origin"
 fi
 
 echo "=== [HTTP - dns-failed (NXDOMAIN)] ==="
 CODE=$($C --max-time 5 http://nxdomain.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  nxdomain.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "nxdomain.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  nxdomain.wildcard.example.com HTTP reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "nxdomain.wildcard.example.com HTTP reached the origin"
 fi
 
-echo "=== End of scenarios: $FAILURES failure(s) ==="
-exit "$FAILURES"
+scenario_results

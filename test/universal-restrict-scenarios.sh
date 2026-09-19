@@ -12,19 +12,9 @@
 #                        *.wildcard.example.com:80 *.wildcard.example.com:8080
 # ---------------------------------------------------------------------------
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
-FAILURES=0
 C="curl -sS -k -o /dev/null -w %{http_code} --max-time 10"
-
-check_status() {
-  local label="$1" code="$2" want="$3"
-  if [ "$code" = "$want" ]; then
-    echo "  PASS  $label"
-  else
-    echo "  FAIL  $label -- expected $want, got $code"
-    FAILURES=$((FAILURES + 1))
-  fi
-}
 
 echo "=== [HTTPS - allowed - exact match] ==="
 check_status "allowed.example.com" "$($C https://allowed.example.com/)" "200"
@@ -50,10 +40,9 @@ check_status "ok.regex.example.com" "$($C https://ok.regex.example.com/)" "200"
 echo "=== [HTTPS - regex rule must not match a name merely containing it] ==="
 CODE=$($C --max-time 5 https://not-ok.regex.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  not-ok.regex.example.com blocked (got $CODE)"
+  pass "not-ok.regex.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  not-ok.regex.example.com reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "not-ok.regex.example.com reached the origin"
 fi
 
 echo "=== [HTTPS - regex rule with a grouped port alternation] ==="
@@ -63,28 +52,25 @@ check_status "ports.regex.example.com:8443" "$($C https://ports.regex.example.co
 echo "=== [HTTP - regex rule names https ports only] ==="
 CODE=$($C --max-time 5 http://ports.regex.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  ports.regex.example.com:80 blocked (got $CODE)"
+  pass "ports.regex.example.com:80 blocked (got $CODE)"
 else
-  echo "  FAIL  ports.regex.example.com:80 reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "ports.regex.example.com:80 reached the origin"
 fi
 
 echo "=== [HTTPS - blocked - nested subdomain] ==="
 CODE=$($C --max-time 5 https://deep.sub.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  deep.sub.wildcard.example.com blocked (got $CODE)"
+  pass "deep.sub.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  deep.sub.wildcard.example.com reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "deep.sub.wildcard.example.com reached the origin"
 fi
 
 echo "=== [HTTPS - blocked] ==="
 CODE=$($C --max-time 5 https://blocked.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  blocked.example.com blocked (got $CODE)"
+  pass "blocked.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  blocked.example.com reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "blocked.example.com reached the origin"
 fi
 
 echo "=== [HTTP - allowed] ==="
@@ -93,10 +79,9 @@ check_status "allowed.example.com HTTP" "$($C http://allowed.example.com/)" "200
 echo "=== [HTTP - blocked] ==="
 CODE=$($C --max-time 5 http://blocked.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  blocked.example.com HTTP blocked (got $CODE)"
+  pass "blocked.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  blocked.example.com HTTP reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "blocked.example.com HTTP reached the origin"
 fi
 
 echo "=== [HTTP - allowed - wildcard] ==="
@@ -111,46 +96,41 @@ check_status "allowed.example.com:8080" "$($C http://allowed.example.com:8080/)"
 echo "=== [Port 8443 - blocked] ==="
 CODE=$($C --max-time 5 https://blocked.example.com:8443/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  blocked.example.com:8443 blocked (got $CODE)"
+  pass "blocked.example.com:8443 blocked (got $CODE)"
 else
-  echo "  FAIL  blocked.example.com:8443 reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "blocked.example.com:8443 reached the origin"
 fi
 
 echo "=== [Port 8080 - blocked] ==="
 CODE=$($C --max-time 5 http://blocked.example.com:8080/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  blocked.example.com:8080 blocked (got $CODE)"
+  pass "blocked.example.com:8080 blocked (got $CODE)"
 else
-  echo "  FAIL  blocked.example.com:8080 reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "blocked.example.com:8080 reached the origin"
 fi
 
 echo "=== [Direct IP - blocked (no allowed_ip_rules configured)] ==="
 CODE=$($C --max-time 5 http://10.200.0.100/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  10.200.0.100 blocked (got $CODE)"
+  pass "10.200.0.100 blocked (got $CODE)"
 else
-  echo "  FAIL  10.200.0.100 reached the origin directly"
-  FAILURES=$((FAILURES + 1))
+  fail "10.200.0.100 reached the origin directly"
 fi
 
 echo "=== [HTTPS - dns-failed (NXDOMAIN)] ==="
 CODE=$($C --max-time 5 https://nxdomain.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  nxdomain.wildcard.example.com blocked (got $CODE)"
+  pass "nxdomain.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  nxdomain.wildcard.example.com reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "nxdomain.wildcard.example.com reached the origin"
 fi
 
 echo "=== [HTTPS - dns-failed (AAAA only, no A record)] ==="
 CODE=$($C --max-time 5 https://v6only.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  v6only.wildcard.example.com blocked (got $CODE)"
+  pass "v6only.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  v6only.wildcard.example.com reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "v6only.wildcard.example.com reached the origin"
 fi
 
 echo "=== [HTTP - dns-failed (AAAA only, no A record)] ==="
@@ -158,19 +138,17 @@ echo "=== [HTTP - dns-failed (AAAA only, no A record)] ==="
 # case above says nothing about it.
 CODE=$($C --max-time 5 http://v6only.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  v6only.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "v6only.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  v6only.wildcard.example.com HTTP reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "v6only.wildcard.example.com HTTP reached the origin"
 fi
 
 echo "=== [HTTP - dns-failed (NXDOMAIN)] ==="
 CODE=$($C --max-time 5 http://nxdomain.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  nxdomain.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "nxdomain.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  nxdomain.wildcard.example.com HTTP reached the origin"
-  FAILURES=$((FAILURES + 1))
+  fail "nxdomain.wildcard.example.com HTTP reached the origin"
 fi
 
 # [SSRF - allowlisted name resolving to an internal address (169.254.169.254)]
@@ -180,19 +158,17 @@ fi
 echo "=== [HTTPS - SSRF via allowlisted name] ==="
 CODE=$($C --max-time 5 https://internal.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  internal.wildcard.example.com blocked (got $CODE)"
+  pass "internal.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  internal.wildcard.example.com reached an internal address"
-  FAILURES=$((FAILURES + 1))
+  fail "internal.wildcard.example.com reached an internal address"
 fi
 
 echo "=== [HTTP - SSRF via allowlisted name] ==="
 CODE=$($C --max-time 5 http://internal.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  internal.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "internal.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  internal.wildcard.example.com HTTP reached an internal address"
-  FAILURES=$((FAILURES + 1))
+  fail "internal.wildcard.example.com HTTP reached an internal address"
 fi
 
 # [SSRF - allowlisted name resolving to a runner address]
@@ -200,19 +176,17 @@ fi
 echo "=== [HTTPS - SSRF back to the runner] ==="
 CODE=$($C --max-time 5 https://runner.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  runner.wildcard.example.com blocked (got $CODE)"
+  pass "runner.wildcard.example.com blocked (got $CODE)"
 else
-  echo "  FAIL  runner.wildcard.example.com reached the runner"
-  FAILURES=$((FAILURES + 1))
+  fail "runner.wildcard.example.com reached the runner"
 fi
 
 echo "=== [HTTP - SSRF back to the runner] ==="
 CODE=$($C --max-time 5 http://runner.wildcard.example.com/ 2>/dev/null || echo "000")
 if [ "$CODE" != "200" ]; then
-  echo "  PASS  runner.wildcard.example.com HTTP blocked (got $CODE)"
+  pass "runner.wildcard.example.com HTTP blocked (got $CODE)"
 else
-  echo "  FAIL  runner.wildcard.example.com HTTP reached the runner"
-  FAILURES=$((FAILURES + 1))
+  fail "runner.wildcard.example.com HTTP reached the runner"
 fi
 
 # [HTTP keep-alive - allowed then blocked: a second request on a reused
@@ -260,5 +234,4 @@ echo "=== [HTTPS - forged SNI] ==="
  | nc -w 5 allowed.example.com 443 > /dev/null 2>&1 || true)
 echo "  request sent (one sanitized blocked row expected in the report)"
 
-echo "=== End of scenarios: $FAILURES failure(s) ==="
-exit "$FAILURES"
+scenario_results

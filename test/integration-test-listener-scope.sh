@@ -12,15 +12,9 @@
 # loopback and exit on SIGTERM, which is what tells an over-broad rule from a
 # correct one that merely looks unreachable from outside.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FAILURES=0
-
-pass() { echo "  PASS  $1"; }
-fail() {
-  echo "  FAIL  $1"
-  FAILURES=$((FAILURES + 1))
-}
 
 # A UDP nc -z probe can't tell a DROPped packet apart from an unopened port
 # -- both look like silence, since neither sends back an ICMP rejection.
@@ -141,10 +135,4 @@ run_engine() {
 run_engine universal
 run_engine inspect
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

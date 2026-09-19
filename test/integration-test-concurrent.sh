@@ -9,9 +9,9 @@
 # the only thing that decides whether a request succeeds is the instance's own
 # allowlist. The two names below resolve to the same origin.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FAILURES=0
 
 TMP_A=$(mktemp -d)
 TMP_B=$(mktemp -d)
@@ -76,11 +76,10 @@ for label_dir in "A:$TMP_A" "B:$TMP_B"; do
   dir="${label_dir#*:}"
   code=$(cat "$dir/exit_code")
   if [ "$code" = "0" ]; then
-    echo "  PASS  instance $label reached only its own allowlisted host"
+    pass "instance $label reached only its own allowlisted host"
   else
-    echo "  FAIL  instance $label -- exit code $code, see log below"
+    fail "instance $label -- exit code $code, see log below"
     cat "$dir/out.log"
-    FAILURES=$((FAILURES + 1))
   fi
 done
 
@@ -91,33 +90,24 @@ for label_dir in "A:$TMP_A" "B:$TMP_B"; do
   dir="${label_dir#*:}"
   name=$(awk '/^container_name<</{getline; print; exit}' "$dir/state.env")
   if [ -z "$name" ]; then
-    echo "  FAIL  instance $label wrote no container_name to GITHUB_STATE"
-    FAILURES=$((FAILURES + 1))
+    fail "instance $label wrote no container_name to GITHUB_STATE"
     continue
   fi
 
   if [ -z "$(docker ps -aq --filter "name=$name")" ]; then
-    echo "  PASS  instance $label left no proxy container behind"
+    pass "instance $label left no proxy container behind"
   else
-    echo "  FAIL  instance $label left $name behind"
-    FAILURES=$((FAILURES + 1))
+    fail "instance $label left $name behind"
   fi
 
   # Mirrors deriveProjectName (src/core/lib/docker/compose-project-name.ts):
   # the container is already gone here, so its Compose labels can't be read.
   project="buildcage-$(printf '%s' "$name" | sha256sum | cut -c1-12)"
   if [ -z "$(docker network ls --filter "label=com.docker.compose.project=$project" -q)" ]; then
-    echo "  PASS  instance $label left no proxy network behind"
+    pass "instance $label left no proxy network behind"
   else
-    echo "  FAIL  instance $label left $project's network behind"
-    FAILURES=$((FAILURES + 1))
+    fail "instance $label left $project's network behind"
   fi
 done
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

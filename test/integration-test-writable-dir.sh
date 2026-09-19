@@ -6,6 +6,7 @@
 # command left it empty), `/` on its own (which disables the read-only
 # restriction entirely), and the deprecated writable: spelling.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
 
@@ -23,7 +24,6 @@ cleanup() {
 trap cleanup EXIT
 touch "$WORKDIR/state.env" "$WORKDIR/summary.md"
 
-FAILURES=0
 
 GITHUB_WORKSPACE="$WORKDIR" \
 GITHUB_STATE="$WORKDIR/state.env" \
@@ -44,32 +44,28 @@ echo "=== Sandbox write_through: Assertions ==="
 echo ""
 
 if [ "$CODE" = "0" ]; then
-  echo "  PASS  listed paths were writable (existing /opt and a created directory)"
+  pass "listed paths were writable (existing /opt and a created directory)"
 else
-  echo "  FAIL  a listed path was not writable (exit $CODE)"
-  FAILURES=$((FAILURES + 1))
+  fail "a listed path was not writable (exit $CODE)"
 fi
 
 if [ -f "${PARENT}/created-kept/marker" ]; then
-  echo "  PASS  a created directory the command wrote to is kept"
+  pass "a created directory the command wrote to is kept"
 else
-  echo "  FAIL  ${PARENT}/created-kept/marker is missing"
-  FAILURES=$((FAILURES + 1))
+  fail "${PARENT}/created-kept/marker is missing"
 fi
 
 OWNER=$(stat -c '%u:%g' "${PARENT}/created-kept" 2>/dev/null)
 if [ "$OWNER" = "$(id -u):$(id -g)" ]; then
-  echo "  PASS  the created directory inherited its parent's ownership"
+  pass "the created directory inherited its parent's ownership"
 else
-  echo "  FAIL  expected owner $(id -u):$(id -g) on ${PARENT}/created-kept, got ${OWNER:-<none>}"
-  FAILURES=$((FAILURES + 1))
+  fail "expected owner $(id -u):$(id -g) on ${PARENT}/created-kept, got ${OWNER:-<none>}"
 fi
 
 if [ -e "${PARENT}/created-empty" ]; then
-  echo "  FAIL  ${PARENT}/created-empty was left behind despite being empty"
-  FAILURES=$((FAILURES + 1))
+  fail "${PARENT}/created-empty was left behind despite being empty"
 else
-  echo "  PASS  a created directory left empty is removed again"
+  pass "a created directory left empty is removed again"
 fi
 
 # `/` names the root of every mount there is, which leaves nothing for the
@@ -86,10 +82,9 @@ rm -f /opt/.buildcage-writable-test" \
 ROOT_CODE=$?
 
 if [ "$ROOT_CODE" = "0" ]; then
-  echo "  PASS  / is fully writable when write_through: / is set"
+  pass "/ is fully writable when write_through: / is set"
 else
-  echo "  FAIL  / was not fully writable when write_through: / is set (exit $ROOT_CODE)"
-  FAILURES=$((FAILURES + 1))
+  fail "/ was not fully writable when write_through: / is set (exit $ROOT_CODE)"
 fi
 
 # The pre-rename spelling has to keep working (see resolveWriteThroughInput).
@@ -105,16 +100,9 @@ rm -f /opt/.buildcage-writable-test" \
 ALIAS_CODE=$?
 
 if [ "$ALIAS_CODE" = "0" ]; then
-  echo "  PASS  the deprecated writable: spelling still works"
+  pass "the deprecated writable: spelling still works"
 else
-  echo "  FAIL  writable: no longer works as an alias (exit $ALIAS_CODE)"
-  FAILURES=$((FAILURES + 1))
+  fail "writable: no longer works as an alias (exit $ALIAS_CODE)"
 fi
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

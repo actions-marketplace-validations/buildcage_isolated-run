@@ -14,17 +14,11 @@
 # (`make test_sandbox_dev`), where overlayfs-on-overlayfs is known to fail
 # (see overlayfs-preflight.ts's own doc comment).
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FAILURES=0
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
-
-pass() { echo "  PASS  $1"; }
-fail() {
-  echo "  FAIL  $1"
-  FAILURES=$((FAILURES + 1))
-}
 
 # Runs dist/main.cjs with filesystem_mode: ephemeral against a fresh
 # $GITHUB_WORKSPACE/$RUNNER_TEMP (both under mktemp's default, i.e. /tmp --
@@ -272,9 +266,4 @@ else
 fi
 rm -rf "$CASE9"
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "$FAILURES assertion(s) failed."
-  exit 1
-fi
-echo "All assertions passed."
+assert_results

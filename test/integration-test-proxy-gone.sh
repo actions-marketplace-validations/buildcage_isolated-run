@@ -7,8 +7,8 @@
 # property under test is entirely about its own --proxy-netns check, so a
 # throwaway container stands in for the real buildcage-proxy image.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
-FAILURES=0
 SUFFIX="gone-test-$$"
 CONTAINER_NAME="buildcage-proxy-${SUFFIX}"
 NETNS_NAME="buildcage-sandbox-${SUFFIX}"
@@ -58,31 +58,22 @@ echo "=== Sandbox proxy-gone Assertions ==="
 echo ""
 
 if [ "$CODE" != "0" ] && grep -q "proxy netns not found" "$WORKDIR/out.log"; then
-  echo "  PASS  run-isolated.sh failed closed with a clear error (exit $CODE)"
+  pass "run-isolated.sh failed closed with a clear error (exit $CODE)"
 else
-  echo "  FAIL  expected a clear 'proxy netns not found' failure, got exit $CODE; see log below"
+  fail "expected a clear 'proxy netns not found' failure, got exit $CODE; see log below"
   cat "$WORKDIR/out.log"
-  FAILURES=$((FAILURES + 1))
 fi
 
 if ip netns list 2>/dev/null | grep -q "^${NETNS_NAME}\b"; then
-  echo "  FAIL  sandbox netns ${NETNS_NAME} was left behind"
-  FAILURES=$((FAILURES + 1))
+  fail "sandbox netns ${NETNS_NAME} was left behind"
 else
-  echo "  PASS  no leftover sandbox netns"
+  pass "no leftover sandbox netns"
 fi
 
 if [ -e "/var/run/netns/${NETNS_NAME}-proxy" ]; then
-  echo "  FAIL  leftover proxy netns bind at /var/run/netns/${NETNS_NAME}-proxy"
-  FAILURES=$((FAILURES + 1))
+  fail "leftover proxy netns bind at /var/run/netns/${NETNS_NAME}-proxy"
 else
-  echo "  PASS  no leftover proxy netns bind"
+  pass "no leftover proxy netns bind"
 fi
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

@@ -4,6 +4,7 @@
 # wrapper -- see test-e2e.yml's test_sandbox_enforcement for the one case
 # that does exercise the real action.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -31,37 +32,29 @@ echo ""
 echo "=== Zero-Traffic Restrict-Mode Assertions ==="
 echo ""
 
-FAILURES=0
-
 if [ "$CODE" = "0" ]; then
-  echo "  PASS  a step with no outbound connections at all succeeds in restrict mode"
+  pass "a step with no outbound connections at all succeeds in restrict mode"
 else
-  echo "  FAIL  a step with no outbound connections failed (exit $CODE) -- see out.log"
-  FAILURES=$((FAILURES + 1))
+  fail "a step with no outbound connections failed (exit $CODE) -- see out.log"
 fi
 
 # Both annotations the head check can produce: the blocked-connection one and
 # the incomplete-log one it is replaced by when the marker is missing.
 if ! grep -Eq "blocked connection\(s\) detected|logs are incomplete" "$WORKDIR/out.log"; then
-  echo "  PASS  no false-positive blocked or incomplete-log annotation from the head check"
+  pass "no false-positive blocked or incomplete-log annotation from the head check"
 else
-  echo "  FAIL  the head check misfired despite the guaranteed startup marker -- see out.log"
-  FAILURES=$((FAILURES + 1))
+  fail "the head check misfired despite the guaranteed startup marker -- see out.log"
 fi
 
 if [ -s "$WORKDIR/summary.md" ]; then
-  echo "  PASS  a Job Summary report was still generated"
+  pass "a Job Summary report was still generated"
 else
-  echo "  FAIL  no Job Summary report was generated"
-  FAILURES=$((FAILURES + 1))
+  fail "no Job Summary report was generated"
 fi
 
-echo ""
 if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
   echo "--- out.log ---"
   cat "$WORKDIR/out.log"
-  exit 1
 fi
-echo "✅ All assertions passed."
-echo ""
+
+assert_results

@@ -10,9 +10,9 @@
 # inside our own zone: no rule permits it, and the proxy refuses it without
 # ever asking an upstream resolver about it.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FAILURES=0
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"
 
@@ -52,11 +52,10 @@ touch "$TMP_MATCH/state.env" "$TMP_MATCH/summary.md"
 run_instance "$TMP_MATCH" "blocked.example.com:80"
 CODE_MATCH=$(cat "$TMP_MATCH/exit_code")
 if [ "$CODE_MATCH" = "0" ]; then
-  echo "  PASS  matching known_blocked_rules kept the step from failing"
+  pass "matching known_blocked_rules kept the step from failing"
 else
-  echo "  FAIL  matching known_blocked_rules did not prevent failure -- exit code $CODE_MATCH, see log below"
+  fail "matching known_blocked_rules did not prevent failure -- exit code $CODE_MATCH, see log below"
   cat "$TMP_MATCH/out.log"
-  FAILURES=$((FAILURES + 1))
 fi
 rm -rf "$TMP_MATCH"
 
@@ -68,18 +67,11 @@ touch "$TMP_MISMATCH/state.env" "$TMP_MISMATCH/summary.md"
 run_instance "$TMP_MISMATCH" "some-other-domain.example.com:443"
 CODE_MISMATCH=$(cat "$TMP_MISMATCH/exit_code")
 if [ "$CODE_MISMATCH" != "0" ]; then
-  echo "  PASS  a non-matching known_blocked_rules entry still failed the step"
+  pass "a non-matching known_blocked_rules entry still failed the step"
 else
-  echo "  FAIL  the step unexpectedly succeeded despite no known_blocked_rules match -- see log below"
+  fail "the step unexpectedly succeeded despite no known_blocked_rules match -- see log below"
   cat "$TMP_MISMATCH/out.log"
-  FAILURES=$((FAILURES + 1))
 fi
 rm -rf "$TMP_MISMATCH"
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results
