@@ -207,9 +207,6 @@ function pathSegmentsBetween(ancestor: string, descendant: string): string[] {
  *   to the runner's own uid unconditionally: a target under an
  *   already-restricted, non-runner-writable tree (e.g. /etc/test) ends up
  *   exactly as restricted as naming the existing /etc directly would have.
- * Already-existing entries are left completely untouched.
- * Returns every path segment it created, shallowest first, so the caller can
- * hand them to removeCreatedDirsIfEmpty once the step is done.
  * Must run before the scratch dir's `mount --rbind /` snapshot (i.e. before
  * runIsolated()), same timing constraint as the overlay upper/work dirs.
  *

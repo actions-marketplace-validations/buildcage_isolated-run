@@ -80,17 +80,15 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 # the default 3000 costs every teardown 3s. The services stop in under 50ms.
 ENV S6_KILL_GRACETIME=500
 
-# DNS
 COPY docker/universal/files/dnsmasq.conf /etc/dnsmasq.conf
 
-# HAProxy
 RUN mkdir -p /etc/haproxy/rules /var/log/haproxy
 COPY docker/universal/files/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 
-# Tools (QuickJS scripts, rolldown-bundled by qjs-build above). convert-rule.js is used
-# by init-haproxy-cfg. Self-contained bundle: no separate /opt/buildcage/shared/ copy
-# is needed. No report-action.js here: src/lib/report.ts builds its own report
-# in-process instead of fetching one from the container.
+# Tools (QuickJS scripts, rolldown-bundled by qjs-build above).
+# convert-rule.js is used by init-haproxy-cfg. No report-action.js here:
+# src/lib/report.ts builds its own report in-process instead of fetching one
+# from the container.
 COPY --from=qjs-build /build/dist/qjs/src/core/scripts/convert-rule.js /opt/buildcage/scripts/convert-rule.js
 
 # runc, extracted onto the runner host at action startup and used by
@@ -102,10 +100,8 @@ COPY --from=deps /opt/buildcage/bin/runc /opt/buildcage/bin/runc
 # in runc's config.json; see the build stage comment above for why.
 COPY --from=gen-seccomp-profile-build /out/gen-seccomp-profile /opt/buildcage/bin/gen-seccomp-profile
 
-# License
 COPY docker/universal/files/THIRD_PARTY_LICENSES /opt/buildcage/THIRD_PARTY_LICENSES
 
-# s6 service definitions and init scripts
 COPY docker/universal/files/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY docker/universal/files/s6-scripts/ /etc/s6-overlay/scripts/
 

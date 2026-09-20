@@ -20,8 +20,6 @@ describe("resolveProxyEngine", () => {
     expect(() => resolveProxyEngine("Inspect", silent)).toThrow();
   });
 
-  // `transparent` is universal's old name, kept working permanently as an
-  // alias; see ENGINE_ALIASES.
   describe("the transparent alias", () => {
     it("resolves transparent to universal", () => {
       expect(resolveProxyEngine("transparent", silent)).toBe("universal");

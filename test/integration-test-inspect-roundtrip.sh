@@ -14,9 +14,8 @@
 # passthrough to record. allowed_tls_rules/allowed_ip_rules are echoed into the
 # same fenced report block as allowed_url_rules (see
 # src/core/lib/report/render/inspect-example.ts) rather than derived from
-# traffic, and phase 2 clears ALLOWED_TLS_RULES on purpose so the URL rules have
-# to stand alone. Without that, the allowed_tls_rules line leaks into the
-# extracted allowed_url_rules text instead and breaks phase 2 outright.
+# traffic, so leaving ALLOWED_TLS_RULES set in phase 2 would leak that line
+# into the extracted allowed_url_rules text and break the phase outright.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 

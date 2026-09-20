@@ -1,8 +1,3 @@
-/**
- * Unit tests for the action's input reading and the resolvers behind it.
- *
- * Run with: vp test run src/lib/inputs.test.ts
- */
 import { describe, it, expect, vi } from "vitest";
 
 import {
@@ -193,8 +188,6 @@ describe("readRuleInputs", () => {
     expect(() => readRuleInputs(inputs({ allowed_https_rules: "no-port" }))).toThrow();
   });
 
-  // Compiled at startup on both engines, even the one that ignores them, so a
-  // typo fails here rather than silently doing nothing inside the sandbox.
   it("rejects a malformed URL rule even though only inspect enforces one", () => {
     expect(() => readRuleInputs(inputs({ allowed_url_rules: "GET not-a-url" }))).toThrow();
   });

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Drives two sandbox proxy lifecycles directly against dist/main.cjs
-# (rather than through two real `uses: ./run` steps) so this test doesn't
+# (rather than through two real `uses: ./` steps) so this test doesn't
 # depend on GitHub Actions' `parallel:` step keyword to prove true
 # concurrency; see test-e2e.yml's own `parallel:`-based test for the
 # Actions-level version of the same check.

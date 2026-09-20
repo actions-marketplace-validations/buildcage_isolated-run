@@ -40,8 +40,7 @@ export function isValidContainerName(name: string): boolean {
 const CONTAINER_NAME_PREFIX_RE = new RegExp(`^${CONTAINER_NAME_PREFIX}`);
 
 /** The runc container id and `ip netns` name for the sandbox this container
- *  fronts. A different ID namespace from Docker's, named after the container
- *  so `ip netns` and `docker ps` stay correlated per step. */
+ *  fronts, in an ID namespace of its own rather than Docker's. */
 export function netnsNameFor(containerName: string): string {
   return containerName.replace(CONTAINER_NAME_PREFIX_RE, "buildcage-sandbox-");
 }

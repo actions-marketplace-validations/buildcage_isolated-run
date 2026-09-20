@@ -8,7 +8,7 @@ import { scratchDirFor } from "./sandbox/scratch-dir.ts";
 const CONTAINER = "buildcage-proxy-deadbeef";
 const STATE = { containerName: CONTAINER, ephemeralRoots: "" };
 
-/** A real Actions step's environment, which ownerToken hashes into a token. */
+/** A real Actions step's environment, which ownerToken joins into a token. */
 const ENV = {
   GITHUB_RUN_ID: "1",
   GITHUB_RUN_ATTEMPT: "1",
@@ -18,7 +18,7 @@ const ENV = {
 const OWNER = "1/1/build/buildcage";
 
 /** The emitter the entry point supplies; asserted on directly rather than
- *  through a console.log spy, since this module no longer picks one. */
+ *  through a console.log spy. */
 function annotation(): Annotation & { error: Mock; warning: Mock } {
   return { notice: vi.fn(), warning: vi.fn(), error: vi.fn() };
 }
@@ -134,7 +134,7 @@ describe("planPostCleanup", () => {
   });
 
   // cleanupScratchDir has its own warning to report (a mount it could not
-  // detach), and it is no more entitled to pick an emitter than this module.
+  // detach), and must not pick its own emitter either.
   it("hands the scratch dir cleanup the same emitter", () => {
     const calls: { warn?: (message: string) => void }[] = [];
     const note = annotation();

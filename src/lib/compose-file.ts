@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { LocalImageOverride } from "../core/lib/provenance/local-image-override.ts";
 
 // Resolved from the bundle's own location: dist/main.cjs and dist/post.cjs
-// both sit one directory above docker/.
+// both sit in dist/, a sibling of docker/.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_COMPOSE_FILE = join(__dirname, "../docker/compose.action.yaml");
 

@@ -50,8 +50,7 @@ describe("pathsOverlap", () => {
   });
 
   it("needs its input normalized -- an unresolved '.' segment reads as unrelated", () => {
-    // Not a bug to fix here: resolveWriteThroughEntry normalizes before
-    // anything reaches this function. Pinned so that guarantee can't be
+    // Pinned so resolveWriteThroughEntry's normalization guarantee can't be
     // dropped upstream without a test noticing.
     expect(pathsOverlap("/var/tmp/./buildcage-1000", "/var/tmp/buildcage-1000")).toBe(false);
   });

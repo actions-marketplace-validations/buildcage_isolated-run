@@ -2,14 +2,11 @@ import { SandboxError } from "./errors.ts";
 
 /**
  * Lives here rather than in inputs.ts for the same reason engine.ts does:
- * sandbox/ needs the type, and keeping it beside the input reads would make
- * every module that wants only the type reach into the module that performs
- * them.
+ * sandbox/ needs only the type.
  */
 const FILESYSTEM_MODES = ["persistent", "ephemeral"] as const;
 export type FilesystemMode = (typeof FILESYSTEM_MODES)[number];
 
-/** Resolve and validate the filesystem_mode input. */
 export function resolveFilesystemMode(input: string | undefined): FilesystemMode {
   const trimmed = input?.trim() || "persistent";
   if (!(FILESYSTEM_MODES as readonly string[]).includes(trimmed)) {

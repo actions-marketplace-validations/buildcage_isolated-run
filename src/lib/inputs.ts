@@ -77,10 +77,6 @@ export function resolveWriteThroughInput(
   return writeThrough;
 }
 
-// ---------------------------------------------------------------------------
-// The input reads themselves
-// ---------------------------------------------------------------------------
-
 /** The `run:` script. Read untrimmed: leading indentation is part of it. */
 export function readRunCommand(getInput: GetInput = core.getInput): string {
   const runInput = getInput("run", { trimWhitespace: false });

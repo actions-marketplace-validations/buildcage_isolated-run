@@ -34,8 +34,6 @@ describe("describeOverlayFailure", () => {
 });
 
 describe("describeProbeCleanupFailure", () => {
-  // The probe already proved overlayfs works, so the message has to say what
-  // is actually wrong instead of repeating the unsupported-overlayfs advice.
   it("names the directory and points at sudo rather than at overlayfs support", () => {
     const message = describeProbeCleanupFailure("/var/tmp/buildcage-1001/overlay-probe-abc", {
       stderr: "rm: Permission denied\n",
@@ -123,9 +121,7 @@ describe("checkOverlayfsSupport", () => {
     }
   });
 
-  // Retried on any failure: `sudo rm` reports an exit status and no errno, so
-  // nothing here can tell one cause from another. The retry is insurance
-  // rather than a race this probe is known to lose; see removeProbeDir.
+  // Retried on any failure rather than EBUSY alone; see retryBriefly.
   it("retries the probe-dir cleanup and succeeds on a later attempt", () => {
     base = freshBasePath();
     let cleanupAttempts = 0;
@@ -157,8 +153,6 @@ describe("checkOverlayfsSupport", () => {
     expect((err as Error).message).toContain("rm: Permission denied");
   });
 
-  // A `finally` would have let the cleanup's own error replace this one,
-  // taking REQUIREMENT, the reason the probe exists, with it.
   it("keeps the probe's verdict when the cleanup fails too", () => {
     base = freshBasePath();
     const exec = vi.fn((_cmd: string, args: readonly string[]) => {
@@ -179,8 +173,6 @@ describe("checkOverlayfsSupport", () => {
     expect((err as Error).message).not.toContain("device or resource busy");
   });
 
-  // Every exit path leaves the cleanup having been attempted, including the
-  // one where the probe mount itself failed.
   it("still attempts the cleanup when the probe mount fails", () => {
     base = freshBasePath();
     const exec = vi.fn((_cmd: string, args: readonly string[]) => {

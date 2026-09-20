@@ -15,7 +15,6 @@ export type ProxyEngine = (typeof ENGINES)[number];
 // here so nothing downstream has to know about it.
 const ENGINE_ALIASES: Record<string, ProxyEngine> = { transparent: "universal" };
 
-/** Resolve and validate the proxy_engine input. */
 export function resolveProxyEngine(
   input: string | undefined,
   notice: (message: string) => void,

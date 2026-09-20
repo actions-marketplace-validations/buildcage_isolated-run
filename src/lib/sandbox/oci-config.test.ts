@@ -9,9 +9,6 @@ import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 import { WritablePathConflictError } from "./paths.ts";
 import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
 
-// A minimal stand-in for what `runc spec` actually produces (see
-// runc-bootstrap.ts's generateBaseOciSpec): only the fields buildOciConfig
-// reads/overrides are included.
 const SHM_BYTES = 4 * 1024 * 1024 * 1024;
 const PROC_LIMITS = [
   "Limit                     Soft Limit           Hard Limit           Units",
@@ -49,6 +46,9 @@ function build(baseSpec: OciSpec, options: BuildOciConfigOptions) {
   return buildOciConfig(baseSpec, options, probes);
 }
 
+// A minimal stand-in for what `runc spec` actually produces (see
+// runc-bootstrap.ts's generateBaseOciSpec): only the fields buildOciConfig
+// reads/overrides are included.
 function fakeBaseSpec() {
   return {
     ociVersion: "1.0.2",
@@ -152,8 +152,6 @@ describe("buildOciConfig", () => {
       ]);
     });
 
-    // run-isolated.sh has already confirmed setpriv is on root's PATH by this
-    // point, so a PATH lookup is a safe last resort.
     it("passes a bare PATH lookup through when the host has no candidate", () => {
       probes = pinnedProbes({ absent: ["setpriv"] });
       expect(build(fakeBaseSpec(), baseArgs).process.args[0]).toBe("setpriv");
@@ -339,8 +337,6 @@ describe("buildOciConfig", () => {
             writable: { ...baseArgs.writable, writablePaths: [path] },
           });
         expect(attempt).toThrow(/the sandbox mounts itself/);
-        // The class is what keeps the misconfiguration reportable under its own
-        // code rather than a generic build failure; see sandboxed-command.ts.
         expect(attempt).toThrow(WritablePathConflictError);
       }
     });
@@ -465,8 +461,6 @@ describe("buildOciConfig", () => {
         source: "tmpfs",
         options: ["nosuid", "nodev", "mode=0555"],
       });
-      // Not `rbind`: the scratch dir also holds the live `mount --rbind /`
-      // rootfs, which a recursive bind would re-expose read-write.
       expect(config.mounts).toContainEqual({
         destination: baseArgs.runtime.execDir,
         type: "none",

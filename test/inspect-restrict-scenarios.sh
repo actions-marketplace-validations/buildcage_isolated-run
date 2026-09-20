@@ -1,9 +1,8 @@
 #!/bin/bash
 # Runs inside the sandbox, as the `run:` input of a real proxy_engine:
 # inspect step (see test/integration-test-inspect-restrict.sh). One shell
-# script covers every case: isolated-run's rootfs is the real host, not a
-# disposable BuildKit layer, so there is no per-RUN-step image layer to
-# assert on here.
+# script covers every case: isolated-run's rootfs is the real host, so there
+# is no per-step image layer to assert on.
 #
 # ---------------------------------------------------------------------------
 # Rules under test (set by test/integration-test-inspect-restrict.sh):

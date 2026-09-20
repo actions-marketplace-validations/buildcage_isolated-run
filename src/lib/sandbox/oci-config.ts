@@ -11,7 +11,6 @@ import {
 } from "./oci-mounts.ts";
 import { realHostProbes, type HostProbes, type NofileLimit } from "./host-probes.ts";
 import { caTrustAdditions, type CaTrustFiles } from "./ca-trust.ts";
-/** Linux-level identity the sandboxed process runs as. */
 export interface SandboxIdentity {
   uid: number;
   gid: number;
@@ -71,41 +70,16 @@ export interface BuildOciConfigOptions {
 }
 
 /**
- * Build the final OCI Runtime Spec (config.json) for the isolated command,
- * starting from runc's own `baseSpec` (see generateBaseOciSpec) and
- * overriding only what this sandbox needs to control:
+ * Build the final OCI Runtime Spec (config.json) from runc's own `baseSpec`
+ * (see generateBaseOciSpec), overriding only what this sandbox controls: the
+ * read-only rootfs bind and its writable exceptions, the netns to join, a
+ * cleared capability set, an empty process.env, the seccomp filter, and the
+ * mount stack. Each override is commented where it is made below.
  *
- * - root: a bind-mounted copy of the host's own `/` (rootfsBindDir, set up
- *   by run-isolated.sh before invoking runc; pivot_root can't target `/`
- *   itself), made read-only via `root.readonly` plus an explicit
- *   `linux.readonlyPaths` entry per real host mount point `--rbind`
- *   duplicated in (see oci-protected-paths.ts; root.readonly alone only
- *   covers the top-level mount), except workdir/home/tmp/runnerTemp/
- *   writablePaths. rootfsBindDir itself lives under SANDBOX_SCRATCH_BASE,
- *   which is never one of those writable exceptions (see
- *   assertScratchBaseNotWritable, which fails closed if a `write_through:`
- *   entry would break that invariant).
- * - linux.namespaces: same six namespace types runc's own default spec
- *   already requests (no user namespace; see docs/security.md's
- *   rationale for preserving the real UID/GID), just adding `path` to the
- *   network entry so it joins the netns run-isolated.sh already wired a
- *   veth into, instead of creating a fresh, unconnected one.
- * - process.capabilities: fully cleared (all five sets empty) plus
- *   noNewPrivileges. runc applies both natively, so no setpriv is needed.
- * - process.env: emptied. The step's real environment (and, inspect engine
- *   only, the CA-trust variables ca-trust.ts adds) is handed to the sandbox
- *   over stdin instead. See env-loader.ts.
- * - linux.seccomp: the Docker-default-profile-derived filter (see
- *   gen-seccomp-profile), resolved against this same empty capability
- *   set.
- * - process.rlimits, hostname, /dev/shm size: matched to the runner rather
- *   than left at runc's container defaults. This sandbox restricts network
- *   and filesystem writes, not resources.
- * - mounts: assembled here in the order the comment on that assembly gives;
- *   each mode's own layers come from oci-mounts.ts.
- *
- * `writablePaths` containing "/" is a sentinel meaning "disable the
- * read-only restriction entirely" (see README.md's `write_through` input).
+ * No user namespace is requested, so the sandbox keeps the runner's real
+ * UID/GID; see docs/security.md. rlimits, hostname and /dev/shm's size are
+ * matched to the runner rather than left at runc's container defaults: this
+ * sandbox restricts network and filesystem writes, not resources.
  */
 export function buildOciConfig(
   baseSpec: OciSpec,

@@ -215,9 +215,6 @@ jobs:
             fi
             echo "OK: example.org correctly blocked"
 
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
-
   # One representative case through the real action wrapper, against real
   # internet hosts (no fixture network), proves proxy_engine: inspect wiring
   # end-to-end: engine selection, method/path enforcement via
@@ -348,9 +345,6 @@ jobs:
             console.log("Traffic artifact verified.");
           '
 
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
-
   # fail_on_blocked defaults to true and should fail on a blocked
   # connection; known_blocked_rules should exempt a matching one. Both are
   # unit-tested at the logic level: this proves the wiring end-to-end,
@@ -424,9 +418,6 @@ jobs:
             exit 1
           fi
           echo "OK: known_blocked_rules correctly kept the step from failing"
-
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
 
   # Proves container/network/Compose-project namespacing holds under
   # Actions' own `parallel:` keyword; the direct-script counterpart is
@@ -504,9 +495,6 @@ jobs:
             echo "::error::leftover buildcage-proxy containers/networks found after parallel sandbox steps"
             exit 1
           fi
-
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
 
   # Single, stably-named required status check for branch protection: the
   # jobs above vary their own names by matrix entry, so branch protection

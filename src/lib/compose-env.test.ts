@@ -5,7 +5,7 @@ import { buildComposeEnv, type ComposeEnvOptions } from "./compose-env.ts";
 const CONTAINER = "buildcage-proxy-deadbeef";
 const HOST_ADDRESSES = () => ["10.0.0.4", "172.17.0.1"];
 
-/** Set by the runner per step; ownerToken hashes the four together. */
+/** Set by the runner per step; ownerToken joins the four into one token. */
 const STEP_ENV = {
   GITHUB_RUN_ID: "1",
   GITHUB_RUN_ATTEMPT: "1",
@@ -73,8 +73,6 @@ describe("buildComposeEnv", () => {
     expect(env.PATH).toBe("/usr/bin");
   });
 
-  // In persistent mode an isolated command can write $GITHUB_ENV, so a
-  // resolver left to the step environment would be a previous step's choice.
   it("pins EXTERNAL_RESOLVER rather than inheriting it", () => {
     const env = buildComposeEnv(options(), { EXTERNAL_RESOLVER: "8.8.8.8" }, () => []);
 

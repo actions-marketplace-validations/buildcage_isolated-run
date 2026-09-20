@@ -121,8 +121,6 @@ describe("persistentLayers", () => {
   });
 
   it("refuses a writable dir inside a destination runc mounts fresh content at", () => {
-    // The bind would shadow it: `write_through: /proc` would hand the sandbox
-    // the host's real procfs and undo the PID-namespace separation.
     expect(() => persistentLayers(["/proc/sys"], fresh, { disableReadonly: false })).toThrow(
       /which the sandbox mounts itself/,
     );
@@ -193,9 +191,6 @@ describe("scratchBaseLayers", () => {
   const execDir = `${SANDBOX_SCRATCH_BASE}/sandbox-xyz/exec`;
 
   it("covers the scratch base with an empty tmpfs the sandbox can only traverse", () => {
-    // The rootfs rbind sweeps in every other concurrent run's scratch dir, and
-    // their 0700 modes separate nothing without a user namespace. An empty
-    // tmpfs over the scratch base is what separates them.
     const [mask] = scratchBaseLayers(execDir);
     expect(mask).toStrictEqual({
       destination: SANDBOX_SCRATCH_BASE,
@@ -211,9 +206,6 @@ describe("scratchBaseLayers", () => {
   });
 
   it("reveals it with `bind`, never `rbind`, which would pull in the whole host /", () => {
-    // By this point the scratch dir also holds the live `mount --rbind /`
-    // rootfs. A recursive bind would carry that in as a second copy of the
-    // host's own /, read-write at that, since `ro` covers only the top mount.
     const [, reveal] = scratchBaseLayers(execDir);
     expect(reveal.options).toStrictEqual(["bind", "ro"]);
   });

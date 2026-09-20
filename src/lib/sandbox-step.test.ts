@@ -1,16 +1,10 @@
-/**
- * Unit tests for sandbox-step.ts
- *
- * Run with: vp test run src/lib/sandbox-step.test.ts
- */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { runSandboxStep, type SandboxStepDeps } from "./sandbox-step.ts";
 import { SandboxError } from "./errors.ts";
 
-// Every collaborator is tested in its own file; what is left to check here is
-// the order they run in, what each one is handed, and which of them still run
-// when an earlier step fails.
+// What is left to check here is the order they run in, what each one is
+// handed, and which of them still run when an earlier step fails.
 const annotation = { notice: vi.fn(), warning: vi.fn(), error: vi.fn() };
 
 const mocks = {
@@ -42,8 +36,7 @@ const mocks = {
   warn: vi.fn(),
 };
 
-// A bag of doubles, not a partially-typed stand-in: every step is replaced, so
-// the cast says what the shape already is.
+// Every step is replaced, so the cast only says what the shape already is.
 const deps = mocks as unknown as SandboxStepDeps;
 
 const DIGEST = "sha256:" + "a".repeat(64);
@@ -246,8 +239,6 @@ describe("runSandboxStep", () => {
     expect(mocks.readEngineInputs.mock.calls[0][0]).not.toBe(annotation.notice);
   });
 
-  // The sandbox warns about the step's own environment and about a scratch dir
-  // it could not unmount; both matter whether or not a report is being written.
   it("gives the sandbox the emitter the annotation gate cannot suppress", async () => {
     await runSandboxStep({ ...ENV, GITHUB_STEP_SUMMARY: "" }, deps);
 
@@ -301,8 +292,6 @@ describe("runSandboxStep", () => {
       ]);
     });
 
-    // core.saveState writes to GITHUB_STATE; without it there is no post step
-    // to read any of this back.
     it("records nothing when the runner set no state file", async () => {
       await runSandboxStep({ ...ENV, GITHUB_STATE: "" }, deps);
 
@@ -348,9 +337,6 @@ describe("runSandboxStep", () => {
       expect(mocks.removeCreatedDirsIfEmpty).toHaveBeenCalledWith(CREATED_DIRS);
     });
 
-    // The directories exist from resolveFilesystemPlan onwards, so every way
-    // out after that point has to give them back, not just the paths that
-    // reach the proxy teardown.
     it("gives them back even when the step fails before the proxy starts", async () => {
       mocks.verifyImageDigestOrThrow.mockRejectedValue(new Error("no signature found"));
 

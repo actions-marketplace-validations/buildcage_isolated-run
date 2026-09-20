@@ -80,15 +80,9 @@ export function shmSizeFromStatfs({ type, bsize, blocks }: StatfsShape): number 
   return Number.isFinite(size) && size > 0 ? size : undefined;
 }
 
-/** What the sandbox spec needs to know about this machine. */
 export interface HostProbes {
-  /** Absolute path to setpriv, or bare "setpriv" if none of the usual
-   *  locations exist. */
   setprivPath(): string;
-  /** The runner's own RLIMIT_NOFILE, or undefined if it can't be read. */
   nofileRlimit(): NofileLimit | undefined;
-  /** Size of the host's /dev/shm in bytes, or undefined where it isn't a
-   *  tmpfs mount of its own or can't be read. */
   shmSizeBytes(): number | undefined;
   hostname(): string;
 }

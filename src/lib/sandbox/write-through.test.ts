@@ -55,8 +55,6 @@ describe("resolveWriteThroughEntry", () => {
   });
 
   it("rejects an allowed variable that isn't set, rather than resolving somewhere else", () => {
-    // "" would leave "$RUNNER_TEMP/cache" resolving to "<workspace>/cache":
-    // a different path than the one named, made write-through silently.
     const { RUNNER_TEMP: _omitted, ...noRunnerTemp } = ENV;
     expect(() => resolveWriteThroughEntry("$RUNNER_TEMP/cache", noRunnerTemp)).toThrow(
       /\$RUNNER_TEMP, which is not set/,
@@ -175,10 +173,6 @@ describe("ensureWriteThroughTargetsExist", () => {
       execFile: (cmd, args) => calls.push([cmd, ...args]),
     });
 
-    // One call, and no chown/chmod: the identity comes from sudo -u/-g and the
-    // mode from -m, leaving nothing that names the path a second time.
-    // Splitting this per segment would undo mkdir -p's O_NOFOLLOW descent into
-    // the names it just created.
     expect(calls).toStrictEqual([["sudo", ...asOwner, "mkdir", "-p", "-m", "755", "/a/b/c"]]);
   });
 

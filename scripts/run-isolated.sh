@@ -96,8 +96,7 @@ RAND_ID=$(od -An -tx1 -N4 /dev/urandom 2>/dev/null | tr -d ' \n')
 [ -z "$RAND_ID" ] && RAND_ID=$(printf '%08x' "$$")
 VETH_T="sbxt${RAND_ID}"
 VETH_P="sbxp${RAND_ID}"
-# `ip link set ... netns` needs a name under /var/run/netns/, not a path;
-# see the bind right before its use below.
+# `ip link set ... netns` takes a name under /var/run/netns/, not a path.
 PROXY_NETNS_NAME="${NETNS_NAME}-proxy"
 
 CODE=1
@@ -185,8 +184,8 @@ ip netns add "$NETNS_NAME"
 echo "Creating veth pair ${VETH_T} <-> ${VETH_P}..." >&2
 ip link add "$VETH_T" type veth peer name "$VETH_P"
 ip link set "$VETH_T" netns "$NETNS_NAME"
-# Bind PROXY_NETNS to a name so `ip link set` can take it, same as what
-# `ip netns attach` does internally, minus the pid.
+# Bind PROXY_NETNS to that name, as `ip netns attach` does internally, minus
+# the pid.
 mkdir -p /var/run/netns
 : > "/var/run/netns/${PROXY_NETNS_NAME}"
 mount --bind "$PROXY_NETNS" "/var/run/netns/${PROXY_NETNS_NAME}"
@@ -206,11 +205,9 @@ ip netns exec "$NETNS_NAME" sh -c "
 " </dev/null
 
 echo "Configuring proxy-side veth as buildcage0..." >&2
-# No bridge: this is always a 1:1 connection (one sandbox, one proxy), so
-# the veth end is renamed to a fixed, predictable name and given the
-# proxy's own gateway address directly. init-iptables's "-i buildcage0"
-# rule (added at container startup, before this device exists) matches
-# against that name regardless of when the device actually appears.
+# The name is fixed because init-iptables's "-i buildcage0" rule is added at
+# container startup, before this device exists, and matches on the name
+# whenever it appears.
 nsenter --net="$PROXY_NETNS" -- sh -c "
   set -e
   ip link set '${VETH_P}' name buildcage0

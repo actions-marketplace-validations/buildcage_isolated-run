@@ -10,7 +10,6 @@ import {
   type CleanupScratchDirOptions,
 } from "./sandbox/scratch-dir.ts";
 
-/** Injectable seams for testing without a real Docker daemon or scratch dir. */
 export interface PostCleanupDeps {
   readOwner?: (containerName: string) => string | null;
   fileExists?: (path: string) => boolean;

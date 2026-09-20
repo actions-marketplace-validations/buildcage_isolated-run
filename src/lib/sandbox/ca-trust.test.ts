@@ -91,9 +91,6 @@ describe("writeCaTrustFiles", () => {
   });
 });
 
-// caTrustAdditions never touches the filesystem itself: it only reasons
-// about the CaTrustFiles paths it's given, so these don't need
-// withScratchDir; only writeCaTrustFiles above does real file I/O.
 describe("caTrustAdditions", () => {
   it("mounts the CA-only file and points the additive variables at it, when unset", () => {
     const { mounts, env } = caTrustAdditions(

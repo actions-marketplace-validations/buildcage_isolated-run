@@ -1,8 +1,3 @@
-/**
- * Unit tests for compose-file.ts
- *
- * Run with: vp test run src/lib/compose-file.test.ts
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import {

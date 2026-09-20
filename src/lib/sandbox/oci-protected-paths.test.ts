@@ -4,9 +4,8 @@ import { computeReadonlyHostMounts, resolveProtectedPaths } from "./oci-protecte
 import { parseMountinfo } from "./mountinfo.ts";
 import type { HostMount } from "./types.ts";
 
-// Realistic /proc/self/mountinfo lines (see parseMountinfo's doc comment
-// for the field layout). Each has one optional field ("shared:N") before
-// the "-" separator, matching what a systemd-managed host typically shows.
+// Realistic /proc/self/mountinfo lines; only the mount points matter here.
+// The field layout and its parsing are mountinfo.test.ts's business.
 const SAMPLE_MOUNTINFO = [
   "1 0 0:1 / / rw,relatime shared:1 - ext4 /dev/root rw",
   "2 1 0:2 / /proc rw,relatime shared:2 - proc proc rw",
@@ -80,10 +79,7 @@ describe("resolveProtectedPaths", () => {
     expect(maskedPaths).toContain("/run/user/1000");
   });
 
-  // Masked and read-only on the same path is not belt and braces: in the
-  // order runc applies them the read-only remount lands on top and makes the
-  // mask pointless. A path can reach readonlyPaths two ways, and both are
-  // filtered here.
+  // A path can reach readonlyPaths two ways; the next two cases cover both.
   it("takes a path it masks out of the readonlyPaths runc's own base spec listed", () => {
     const { readonlyPaths } = resolveProtectedPaths(base);
     expect(readonlyPaths).not.toContain("/proc/sysrq-trigger");

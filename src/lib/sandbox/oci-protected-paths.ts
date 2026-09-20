@@ -54,11 +54,7 @@ const EXTRA_MASKED_NETNS_PATHS = ["/run/netns", "/var/run/netns"];
  * sets up the sandbox's own further-nested namespaces, shadowing whatever
  * the rbind copy swept in from the host at that path, so forcing that
  * (about-to-be-overridden) copy read-only would be pointless, and some
- * pseudo-filesystems reject a read-only remount outright. Any other real
- * host mount point not covered would otherwise remain fully writable
- * despite the sandbox's documented read-only-outside-workdir/home/tmp/
- * writable guarantee. "/" itself is excluded since root.readonly already
- * covers it directly.
+ * pseudo-filesystems reject a read-only remount outright.
  */
 export function computeReadonlyHostMounts(
   hostMounts: HostMount[],

@@ -3,9 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { reportStepTraffic, type ReportStepDeps, type ReportStepOptions } from "./step-report.ts";
 import { reportParams } from "#core/lib/test/report-data.node.ts";
 
-// Every collaborator is tested in its own file; what is left to check here is
-// the order they run in, what each one is handed, and that a failure anywhere
-// in the sequence still leaves the caller able to tear the proxy down.
+// What is left to check here is the order they run in, what each one is
+// handed, and that a failure anywhere in the sequence still leaves the caller
+// able to tear the proxy down.
 const mocks = {
   fetchReport: vi.fn(),
   readActionVersion: vi.fn(),
@@ -16,8 +16,7 @@ const mocks = {
   readStepLabel: vi.fn(),
 };
 
-// A bag of doubles, not a partially-typed stand-in: every step is replaced, so
-// the cast says what the shape already is.
+// Every step is replaced, so the cast only says what the shape already is.
 const deps = mocks as unknown as ReportStepDeps;
 
 const CONTAINER = "buildcage-proxy-deadbeef";
@@ -123,8 +122,6 @@ describe("reportStepTraffic", () => {
   });
 
   it("warns rather than throwing when writing the summary fails", async () => {
-    // The step's exit code is the isolated command's own; nothing here may
-    // replace it, and the proxy still has to be torn down afterwards.
     mocks.writeReportSummary.mockRejectedValue(new Error("summary too large"));
 
     await expect(reportStepTraffic(options(), deps)).resolves.toBeUndefined();

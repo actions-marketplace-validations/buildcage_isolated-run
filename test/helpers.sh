@@ -22,7 +22,6 @@ fail() {
   FAILURES=$((FAILURES + 1))
 }
 
-# The HTTP status the proxy is expected to have produced.
 check_status() {
   local label="$1" code="$2" want="$3"
   if [ "$code" = "$want" ]; then

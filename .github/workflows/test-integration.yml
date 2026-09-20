@@ -95,12 +95,7 @@ jobs:
           BUILDCAGE_LOCAL_IMAGE_REF: ${{ steps.local_image.outputs.ref }}
         run: make test_integration_sandbox_linux
 
-  # Separate job from test_sandbox: brings up the fixture origin network in
-  # compose.test-universal.yaml (fake DNS + an origin this suite controls)
-  # instead of the real internet, covering cases real hosts can't: an
-  # allowlisted name resolving to an internal address, NXDOMAIN, and so on. Same
-  # proxy image build as test_sandbox (universal needs no test-hooks build
-  # arg, unlike inspect below).
+  # Separate job from test_sandbox: this one needs compose.test-universal.yaml's fixtures.
   test_sandbox_universal:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox_universal == 'true'
@@ -144,9 +139,7 @@ jobs:
             exit 1
           fi
 
-  # Separate job from test_sandbox: needs its own (inspect-engine) image build
-  # and the fixture origin network in compose.test-inspect.yaml, which the
-  # universal-engine tests above have no reason to know about.
+  # Separate job from test_sandbox: this one needs an inspect-engine image and fixtures.
   test_sandbox_inspect:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox_inspect == 'true'
@@ -194,10 +187,7 @@ jobs:
             exit 1
           fi
 
-  # Separate job from the others: builds both engines' proxy images itself
-  # (docker compose build), with no sandbox attached, so buildcage0 never
-  # exists, proving :10024/:53 stay unreachable from anywhere else rather
-  # than merely reachable from the one interface the tests above exercise.
+  # Separate job from the others: it builds both engines' images and attaches no sandbox.
   test_listener_scope:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox == 'true'

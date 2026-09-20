@@ -36,8 +36,8 @@ export type UploadArtifact = (
 /**
  * Imported lazily so a run that asks for no artifact does not load it.
  *
- * Untested by design: the default behind the seam above, which only hands
- * @actions/artifact what the tested caller decided.
+ * Untested by design: the default behind `upload`'s seam below, which only
+ * hands @actions/artifact what the tested caller decided.
  */
 /* v8 ignore start */
 const uploadViaActionsArtifact: UploadArtifact = async (name, files, rootDirectory, options) => {

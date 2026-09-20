@@ -25,13 +25,10 @@ import type { MountEntry } from "./types.ts";
  * never touched (it already exists, so runc mounts straight over it).
  *
  * OWN_CA_DESTINATION is the one exception: nothing exists at that path
- * ahead of time, so runc itself creates an empty placeholder file there to
- * have something to mount onto. That is ordinarily harmless on a disposable
- * layer, but ROOTFS_BIND_DIR is a bind-mount of the real host `/`, so that
- * placeholder is a real (if empty) write to the host filesystem that
- * unmounting alone does not undo. run-isolated.sh's cleanup() removes it
- * explicitly, once the mount covering it is gone but before the rootfs
- * bind-mount itself is torn down.
+ * ahead of time, so runc creates an empty placeholder file to mount onto,
+ * which on this rootfs is a real write to the host filesystem. It is
+ * removed by run-isolated.sh's cleanup(), whose comment gives the ordering
+ * and the guard it removes it under.
  */
 export interface CaTrustFiles {
   /** A CA-only file, mounted at OWN_CA_DESTINATION, for variables that add
