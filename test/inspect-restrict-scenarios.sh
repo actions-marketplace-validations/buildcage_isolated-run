@@ -164,6 +164,18 @@ echo "=== [Name outside the allowlist is not even looked up] ==="
 CODE=$($C https://notallowed.example.com/)
 check_status "GET notallowed.example.com" "$CODE" "403"
 
+# A client that completes the handshake and then leaves without sending a
+# request. Pinning a key the generated certificate cannot have makes curl stop
+# at exactly that point (exit 90); what does this in the wild is an image with
+# no CA store, which cannot verify the injected CA and gives up there too.
+# integration-test-inspect-restrict.sh checks that the report calls it neither
+# allowed nor blocked: no request arrived, so no rule decided anything.
+echo "=== [Client leaves before sending a request] ==="
+curl -sS -o /dev/null --max-time 10 \
+  --pinnedpubkey "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" \
+  https://aborted.example.com/
+check_status "GET aborted.example.com" "$?" "90"
+
 echo "=== [Forged Host - the destination is not the client's to choose] ==="
 OUT=$($S --insecure -H 'Host: allowed.example.com' https://10.200.0.101/public/pkg.tgz)
 case "$OUT" in

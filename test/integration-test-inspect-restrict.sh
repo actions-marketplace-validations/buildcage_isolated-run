@@ -139,6 +139,25 @@ if grep -qE 'DNS allowed\.example\.com ->' <<< "$SUMMARY"; then
 else
   pass "a name that merely resolved is left out of the timeline"
 fi
+# A connection the client left before sending a request: nothing reached an
+# origin and no rule decided anything, so it belongs in neither table and the
+# timeline is the only place it can appear. Its host comes from the SNI, the
+# only name such a connection ever gave.
+if grep -qE "⚠️ .*: HTTPS aborted\.example\.com:443 -> client-(aborted|timeout)$" <<< "$SUMMARY"; then
+  pass "a connection the client left is in the timeline, with a mark of its own"
+else
+  fail "the aborted connection is missing from the timeline"
+fi
+if grep -qF "| aborted.example.com:443 | HTTPS |" <<< "$SUMMARY"; then
+  fail "the aborted connection was put in one of the host tables"
+else
+  pass "the aborted connection is in neither host table"
+fi
+# Writing a rule for the host would not take the row above away, so the
+# refused lookup for the same name has to survive: it is the only row a reader
+# can act on.
+assert_summary_contains "| aborted.example.com | DNS | dns-not-allowed |" \
+  "the refused lookup for the same name is still its own Blocked row"
 
 echo ""
 echo "--- positive control: the UDP echo server is reachable from beside the cage ---"
