@@ -1,14 +1,5 @@
 import type { ExpectedFlag } from "../build/aggregate.ts";
 
-/**
- * Decide whether blocked connections should fail the step.
- *
- * `blockedRows` must already be annotated via annotateKnownBlocked. Uses
- * per-row matching rather than count arithmetic because `blockedCount`'s
- * meaning differs by proxy engine, so subtracting summed row counts from it
- * isn't reliable. An empty `blockedRows` with a nonzero `blockedCount` is
- * treated as unexpected too (fail closed).
- */
 export interface BlockedOutcome {
   level: "none" | "notice" | "error";
   shouldFail: boolean;
@@ -23,6 +14,18 @@ export interface DetermineBlockedOutcomeOptions {
   logLooksPlausible: boolean;
 }
 
+/**
+ * Decide whether blocked connections should fail the step.
+ *
+ * `blockedRows` must already be annotated via annotateKnownBlocked. Uses
+ * per-row matching rather than count arithmetic because `blockedCount`'s
+ * meaning differs by proxy engine, so subtracting summed row counts from it
+ * isn't reliable. An empty `blockedRows` with a nonzero `blockedCount` is
+ * treated as unexpected too (fail closed).
+ *
+ * An implausible log decides on its own: what survived says nothing about
+ * what was dropped, so known_blocked_rules cannot clear the step.
+ */
 export function determineBlockedOutcome({
   isAudit,
   failOnBlocked,
@@ -30,33 +33,19 @@ export function determineBlockedOutcome({
   blockedRows,
   logLooksPlausible,
 }: DetermineBlockedOutcomeOptions): BlockedOutcome {
-  if (!blockedCount) {
-    // A log with no recognizable trace of a real proxy run is treated as
-    // suspicious rather than as "nothing was blocked" — this is a
-    // heuristic against a naive wholesale-erasure tamper, not a guarantee
-    // against a deliberate, format-aware forgery.
-    if (logLooksPlausible) return { level: "none", shouldFail: false };
+  if (!logLooksPlausible) {
     if (isAudit) return { level: "notice", shouldFail: false };
     return failOnBlocked
       ? { level: "error", shouldFail: true }
       : { level: "notice", shouldFail: false };
   }
+  if (!blockedCount) return { level: "none", shouldFail: false };
   if (isAudit) return { level: "notice", shouldFail: false };
   const hasUnexpected = blockedRows.length === 0 || blockedRows.some((row) => !row.expected);
   if (failOnBlocked && hasUnexpected) return { level: "error", shouldFail: true };
   return { level: "notice", shouldFail: false };
 }
 
-/**
- * Build the annotation message text for a blocked-connections check.
- *
- * In audit mode the text always stays the fixed-format base string,
- * regardless of known_blocked_rules matching — audit mode's pass/fail
- * outcome is unaffected by matching (see determineBlockedOutcome), so
- * varying the notice text there would be misleading and would silently
- * break any tooling that matches the old fixed-format notice.
- *
- */
 export interface BuildBlockedMessageOptions {
   blockedCount: number;
   blockedRows: ExpectedFlag[];
@@ -64,6 +53,15 @@ export interface BuildBlockedMessageOptions {
   isAudit: boolean;
 }
 
+/**
+ * Build the annotation message text for a blocked-connections check.
+ *
+ * In audit mode the text always stays the fixed-format base string,
+ * regardless of known_blocked_rules matching: audit mode's pass/fail
+ * outcome is unaffected by matching (see determineBlockedOutcome), so
+ * varying the notice text there would be misleading and would silently
+ * break any tooling that matches the old fixed-format notice.
+ */
 export function buildBlockedMessage({
   blockedCount,
   blockedRows,
@@ -107,6 +105,28 @@ export function describeBlockedOutcome({
     blockedRows,
     logLooksPlausible,
   });
-  const message = buildBlockedMessage({ blockedCount, blockedRows, engineLabel, isAudit });
+  const base = buildBlockedMessage({ blockedCount, blockedRows, engineLabel, isAudit });
+  if (logLooksPlausible) return { ...outcome, message: base };
+  // audit's notice keeps the fixed-format opening buildBlockedMessage
+  // promises, so the warning is appended rather than replacing it.
+  if (isAudit) {
+    return {
+      ...outcome,
+      message: `${base}, but the logs are incomplete and this is not a full record`,
+    };
+  }
+  // Plural: inspect has a resolver log too, and either can be the truncated one.
+  const incomplete = `buildcage ${engineLabel} logs are incomplete, so this report is not a full record of what ran`;
+  // Not the whole count when the log is incomplete, hence "still recorded".
+  const counted = blockedCount
+    ? `${incomplete} (${blockedCount} blocked connection(s) still recorded)`
+    : incomplete;
+  // Enumerated, not attributed: logLooksPlausible collapses several conditions
+  // into one flag, and only the benign reading is the reader's to act on.
+  const message =
+    `${counted}. Either the logs don't begin where a real run does, or one carries a line the ` +
+    "report cannot read. A missing beginning was either removed or rotated out by traffic heavy " +
+    "enough to fill the 100 MB of log kept, which takes a few hundred thousand requests: the " +
+    "report's own tables still count what survived, per host.";
   return { ...outcome, message };
 }

@@ -1,14 +1,18 @@
 #!/bin/bash
-# build-test-bundle.sh — dev-only stand-in for sandbox/oci-config.ts's
+# build-test-bundle.sh: dev-only stand-in for sandbox/oci-config.ts's
 # buildOciConfig, used by `make test_sandbox_dev` to build just enough of
 # an OCI bundle to exercise run-isolated.sh directly (see
-# ../compose.sandbox-dev.yaml and ../dev/Dockerfile for why this dev loop
-# doesn't run the real run/dist/main.cjs, and so needs a minimal
+# ../docker/compose.sandbox-dev.yaml and ./Dockerfile for why this dev loop
+# doesn't run the real dist/main.cjs, and so needs a minimal
 # hand-built substitute for the config.json JS would normally produce).
 #
 # Not a full reimplementation: no writable-path/writable-/ handling, no
-# read env passthrough beyond PATH -- just enough to run the smoke test
-# with the same namespaces/capabilities/seccomp policy production uses.
+# scratch-base mask, no env passthrough beyond runc's own PATH default
+# (production pipes the step environment to a loader instead, see
+# sandbox/env-loader.ts), and none of the runner-matching rlimit/shm/hostname
+# overrides (this loop runs inside a container, where they'd match nothing
+# useful). Just enough to run the smoke test with the same
+# namespaces/capabilities/seccomp policy production uses.
 set -euo pipefail
 
 NETNS_NAME=""
@@ -40,16 +44,19 @@ jq \
   --arg scriptPath "$SCRIPT_PATH" \
   --slurpfile seccomp "$BUNDLE_DIR/seccomp.json" \
   --slurpfile extraMasked /etc/buildcage/extra-masked-proc-paths.json \
+  --slurpfile extraMaskedRuntime /etc/buildcage/extra-masked-runtime-paths.json \
+  --arg perUserRuntimeDir "/run/user/1000" \
   '
   .root.path = $rootfsBindDir | .root.readonly = true |
+  ($extraMasked[0] + $extraMaskedRuntime[0] + [$perUserRuntimeDir, "/run/netns", "/var/run/netns"]) as $allExtraMasked |
   .mounts += [
     {"destination":"/etc/resolv.conf","type":"none","source":$resolvConf,"options":["rbind","ro"]},
     {"destination":"/tmp","type":"none","source":"/tmp","options":["rbind","rw"]}
   ] |
   .linux.namespaces = (.linux.namespaces | map(if .type == "network" then . + {"path": $netnsPath} else . end)) |
   .linux.seccomp = $seccomp[0] |
-  .linux.maskedPaths += $extraMasked[0] |
-  .linux.readonlyPaths -= $extraMasked[0] |
+  .linux.maskedPaths += $allExtraMasked |
+  .linux.readonlyPaths -= $allExtraMasked |
   .process.terminal = false |
   .process.user = {"uid": 1000, "gid": 1000} |
   .process.args = ["setpriv", "--pdeathsig=KILL", "--", $scriptPath] |

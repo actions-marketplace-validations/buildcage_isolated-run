@@ -3,17 +3,17 @@
 # Buildcage's own runc/kernel-namespace operations can't run natively on
 # macOS (Darwin), so local development drives run-isolated.sh from inside a
 # container instead: this one runs with `pid: host` (see
-# ../compose.sandbox-dev.yaml) so it can see the proxy
+# ../docker/compose.sandbox-dev.yaml) so it can see the proxy
 # container's PID/netns via /proc, exactly like the real GitHub Actions
-# runner host does for the real proxy container in production. It is NOT
+# runner host does for the real proxy container in production. It is not
 # used in production or in CI's test_sandbox job (see
-# docs/development.md) — those run run-isolated.sh directly on the runner
+# docs/development.md): those run run-isolated.sh directly on the runner
 # host, matching what actually happens when a user's workflow executes.
 #
 # runc and gen-seccomp-profile are built directly into this image (mirroring
-# ../docker/Dockerfile's own stages) rather than `docker cp`-extracted from
+# ../docker/universal/Dockerfile's own stages) rather than `docker cp`-extracted from
 # the proxy image at runtime, so this dev loop doesn't need the Docker
-# socket mounted in just to reach a sibling container — it stays scoped to
+# socket mounted in just to reach a sibling container: it stays scoped to
 # testing run-isolated.sh itself.
 # renovate: datasource=github-releases depName=opencontainers/runc
 ARG RUNC_VERSION=v1.5.1
@@ -33,7 +33,7 @@ RUN apk add --no-cache curl && \
     echo "${EXPECTED_SHA256}  /opt/buildcage/bin/runc" | sha256sum -c && \
     chmod +x /opt/buildcage/bin/runc
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS gen-seccomp-profile-build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:4cb7ac979db5fcc41cae44b2227ba5ab8a51e8807f40d9ba4dee20a0ad960b5b AS gen-seccomp-profile-build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

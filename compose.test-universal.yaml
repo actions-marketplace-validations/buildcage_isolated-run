@@ -1,0 +1,43 @@
+# Fixture network for the universal engine's integration tests
+# (test/integration-test-universal-restrict.sh, test/integration-test-universal-audit.sh).
+#
+# This file does not define the proxy service: isolated-run's real action
+# always starts its own throwaway proxy container via
+# docker/compose.action.yaml (or, for these tests,
+# docker/compose.action.test-universal.yaml; see BUILDCAGE_TEST_COMPOSE_FILE
+# in src/core/lib/provenance/local-image-override.ts), a separate
+# `docker compose` invocation/project from this one. This file only has to
+# bring up the fixture origin and the network both invocations join.
+services:
+  # The origin every allowed name resolves to.
+  test-server:
+    build: test/test-server-universal
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - TEST_NET_ADDR=10.200.0.100/24
+    networks:
+      test-net:
+
+  # Upstream resolver for the proxy's HAProxy.
+  test-dns:
+    build: test/test-dns-universal
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - TEST_NET_ADDR=10.200.0.53/24
+    networks:
+      test-net:
+
+networks:
+  # Explicitly named, because docker/compose.action.test-universal.yaml joins this
+  # same network from its own, separate compose project. The name is global to
+  # the daemon, so the suffix is what keeps linked worktrees apart.
+  test-net:
+    name: buildcage-test-universal-net${BUILDCAGE_WORKTREE_SUFFIX:-}
+    ipam:
+      config:
+        # Pinned rather than auto-assigned: Docker's pool includes
+        # 172.20.0.0/16, which collides with the proxy's own bridge inside its
+        # netns.
+        - subnet: ${TEST_NET_SUBNET:-10.210.0.0/24}

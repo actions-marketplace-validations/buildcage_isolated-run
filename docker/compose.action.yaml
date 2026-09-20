@@ -2,8 +2,8 @@ services:
   proxy:
     container_name: ${PROXY_CONTAINER_NAME:-buildcage-proxy}
     image: ${BUILDCAGE_PROXY_IMAGE_REF:-placeholder}
-    # No buildkitd/runc in this image, so only NET_ADMIN is needed
-    # (interface renaming/addressing + iptables) — no SYS_ADMIN/SYS_PTRACE,
+    # Nothing in this image runs buildkitd or runc, so only NET_ADMIN is needed
+    # (interface renaming/addressing + iptables), no SYS_ADMIN/SYS_PTRACE,
     # no cgroup:host, no default-seccomp/apparmor bypass.
     cap_add:
       - NET_ADMIN
@@ -14,6 +14,25 @@ services:
       - ALLOWED_IP_RULES=${ALLOWED_IP_RULES:-}
       # inspect only: it is the one engine that can see a method or a path.
       - ALLOWED_URL_RULES=${ALLOWED_URL_RULES:-}
-      - ALLOW_TLS_RULES=${ALLOW_TLS_RULES:-}
-      - EXTERNAL_RESOLVER=${EXTERNAL_RESOLVER:-}
-    restart: unless-stopped
+      - ALLOWED_TLS_RULES=${ALLOWED_TLS_RULES:-}
+      # Runner addresses the engine refuses as a resolved destination.
+      - HOST_ADDRESSES=${HOST_ADDRESSES:-}
+    labels:
+      io.buildcage.owner: ${BUILDCAGE_OWNER:-}
+    # `--wait` would otherwise return on "running" alone. Runs every service's
+    # own s6 check: the resolver starts in parallel with HAProxy, so probing
+    # HAProxy alone would pass while DNS is still coming up. No restart policy
+    # goes with it: a container that stopped itself has to stay stopped for the
+    # wait to see it.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'for check in /etc/s6-overlay/s6-rc.d/*/data/check; do "$$check" || exit 1; done',
+        ]
+      interval: 30s
+      # Every start pays this before the first probe, and the tree is ready in ~0.3s.
+      start_interval: 250ms
+      timeout: 10s
+      retries: 3
+      start_period: 60s

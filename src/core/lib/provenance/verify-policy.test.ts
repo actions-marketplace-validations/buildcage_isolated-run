@@ -1,14 +1,9 @@
-/**
- * Unit tests for core/lib/provenance/verify-policy.ts
- *
- * Run with: vp test run core/lib/provenance/verify-policy.test.ts
- */
 import { describe, it, expect } from "vitest";
 
 import { buildVerifyOptions } from "./verify-policy.ts";
 import type { VerifyBundleOptions } from "./sigstore.ts";
 
-// ── Constants mirrored from verify-policy.ts (for assertion readability) ──────
+// ── Constants mirrored from verify-policy.ts ──────────────────────────────────
 
 const EXPECTED_ISSUER = "https://token.actions.githubusercontent.com";
 const RELEASE_WORKFLOW = ".github/workflows/docker-publish.yml";
@@ -22,10 +17,10 @@ function makeSAN(ref: string) {
 
 // ── buildVerifyOptions ────────────────────────────────────────────────────────
 //
-// We test the generated options by converting certificateIdentityURI to a
-// RegExp and matching sample SAN strings — the same test cosign would apply.
+// The generated options are checked by converting certificateIdentityURI to a
+// RegExp and matching sample SAN strings, the same test cosign would apply.
 
-describe("buildVerifyOptions — version tag", () => {
+describe("buildVerifyOptions: version tag", () => {
   function getOpts(ref: string): VerifyBundleOptions {
     const opts = buildVerifyOptions({ actionRef: ref, actionRepo: REPO });
     expect(opts, `expected non-null options for ref "${ref}"`).toBeTruthy();
@@ -55,35 +50,21 @@ describe("buildVerifyOptions — version tag", () => {
     expect(matchesSAN(opts, makeSAN("refs/tags/v2.99.0"))).toBeTruthy();
   });
 
-  // ── v2.1 / v2.10 boundary ───────────────────────────────────────────────────
-  it("does NOT match @v2.1 against cert SAN v2.10.0 (boundary check)", () => {
-    const opts = getOpts("v2.1");
+  it("does NOT match a tag the requested version does not cover", () => {
     expect(
-      !matchesSAN(opts, makeSAN("refs/tags/v2.10.0")),
+      !matchesSAN(getOpts("v2.1"), makeSAN("refs/tags/v2.10.0")),
       "@v2.1 must not match v2.10.0",
     ).toBeTruthy();
-  });
-
-  it("does NOT match @v2 against cert SAN v20.0.0 (boundary check)", () => {
-    const opts = getOpts("v2");
     expect(
-      !matchesSAN(opts, makeSAN("refs/tags/v20.0.0")),
+      !matchesSAN(getOpts("v2"), makeSAN("refs/tags/v20.0.0")),
       "@v2 must not match v20.0.0",
     ).toBeTruthy();
-  });
-
-  it("does NOT match @v2.1.0 against cert SAN v2.1.1", () => {
-    const opts = getOpts("v2.1.0");
     expect(
-      !matchesSAN(opts, makeSAN("refs/tags/v2.1.1")),
+      !matchesSAN(getOpts("v2.1.0"), makeSAN("refs/tags/v2.1.1")),
       "exact pin must not match different patch",
     ).toBeTruthy();
-  });
-
-  it("does NOT match @v2.1 against cert SAN v2.2.0", () => {
-    const opts = getOpts("v2.1");
     expect(
-      !matchesSAN(opts, makeSAN("refs/tags/v2.2.0")),
+      !matchesSAN(getOpts("v2.1"), makeSAN("refs/tags/v2.2.0")),
       "@v2.1 must not match v2.2.0",
     ).toBeTruthy();
   });
@@ -92,15 +73,27 @@ describe("buildVerifyOptions — version tag", () => {
     const opts = getOpts("v2.1.0");
     expect(opts.certificateOIDs).toBe(undefined);
   });
+
+  it("matches exact prerelease @v1.1.0-rc1 against cert SAN v1.1.0-rc1", () => {
+    const opts = getOpts("v1.1.0-rc1");
+    expect(matchesSAN(opts, makeSAN("refs/tags/v1.1.0-rc1"))).toBeTruthy();
+  });
+
+  it("does NOT match a prerelease tag beyond the one requested", () => {
+    const opts = getOpts("v1.1.0-rc1");
+    expect(
+      !matchesSAN(opts, makeSAN("refs/tags/v1.1.0")),
+      "@v1.1.0-rc1 must not match the base release v1.1.0",
+    ).toBeTruthy();
+    expect(
+      !matchesSAN(opts, makeSAN("refs/tags/v1.1.0-rc10")),
+      "@v1.1.0-rc1 must not match v1.1.0-rc10",
+    ).toBeTruthy();
+  });
 });
 
-describe("buildVerifyOptions — SHA pin", () => {
+describe("buildVerifyOptions: SHA pin", () => {
   const pinSha = "a".repeat(40);
-
-  it("sets certificateIssuer", () => {
-    const opts = buildVerifyOptions({ actionRef: pinSha, actionRepo: REPO })!;
-    expect(opts.certificateIssuer).toBe(EXPECTED_ISSUER);
-  });
 
   it("sets certificateOIDs for OID 1.13 with DER UTF8String-encoded SHA", () => {
     const opts = buildVerifyOptions({ actionRef: pinSha, actionRepo: REPO })!;
@@ -125,13 +118,12 @@ describe("buildVerifyOptions — SHA pin", () => {
   it("certificateIdentityURI accepts any version tag SAN (SHA checked via OID)", () => {
     const opts = buildVerifyOptions({ actionRef: pinSha, actionRepo: REPO })!;
     const regexp = new RegExp(opts.certificateIdentityURI!);
-    // should match some version tags (the SHA in OID is what pins to the commit)
     expect(regexp.test(makeSAN("refs/tags/v2.1.0"))).toBeTruthy();
     expect(regexp.test(makeSAN("refs/tags/v3.0.0"))).toBeTruthy();
   });
 });
 
-describe("buildVerifyOptions — unverifiable refs", () => {
+describe("buildVerifyOptions: unverifiable refs", () => {
   it("returns null for a branch ref", () => {
     expect(buildVerifyOptions({ actionRef: "main", actionRepo: REPO })).toBe(null);
   });

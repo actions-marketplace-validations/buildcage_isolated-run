@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
@@ -35,11 +39,13 @@ jobs:
               - 'tsconfig.json'
               - 'tsconfig.qjs.json'
               - 'vite.config.ts'
+              - '.glf.jsonc'
               - '.dockerignore'
               - '.github/actions/setup-vp/**'
               - '.github/workflows/test-unit.yml'
               - 'src/**'
               - 'docker/**'
+              - 'licenses/**'
               - 'Makefile'
 
   unit_test:
@@ -66,7 +72,7 @@ jobs:
       - name: Build
         run: vp run build
 
-      - name: Check dist is up to date
+      - name: Check dist and THIRD_PARTY_LICENSES_NPM are up to date
         run: git diff --exit-code
 
       - name: Check dist is free of the BUILDCAGE_BUILD_TEST_HOOKS test hooks
@@ -79,8 +85,21 @@ jobs:
             echo "confirmed: $f has no live BUILDCAGE_BUILD_TEST_HOOKS read — its test hooks are unreachable in this build."
           done
 
-      - name: Run unit tests
-        run: make test_unit
+      - name: Run unit tests (with coverage)
+        run: make test_unit_coverage
+
+      - name: Publish the coverage summary
+        run: |
+          {
+            echo '### Unit test coverage'
+            echo
+            echo '```'
+            cat coverage/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run unit tests under QuickJS
+        run: make test_unit_qjs
 
   # Single, stably-named required status check for branch protection: the
   # matrix-based integration/e2e jobs live in their own workflow files (see

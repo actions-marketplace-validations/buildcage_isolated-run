@@ -4,7 +4,7 @@ export interface LocalImageOverride {
   /**
    * BUILDCAGE_TEST_COMPOSE_FILE, when set: a compose file to start the proxy
    * from in place of docker/compose.action.yaml. Used only by this repo's own
-   * fixture-network integration tests (see test/compose.test-inspect.yaml),
+   * fixture-network integration tests (see compose.test-inspect.yaml),
    * which need the proxy container to join a test-only Docker network the
    * shipped compose.action.yaml has no reason to know about.
    */
@@ -14,7 +14,7 @@ export interface LocalImageOverride {
 /**
  * Reads BUILDCAGE_LOCAL_IMAGE_REF (and BUILDCAGE_TEST_COMPOSE_FILE) from the
  * given env. Kept in its own module so a normal build can exclude it
- * entirely — see LOCAL_IMAGE_OVERRIDE_ENABLED in main.ts.
+ * entirely; see readLocalImageOverride in lib/compose-file.ts.
  */
 export function readLocalImageOverride(env: NodeJS.ProcessEnv): LocalImageOverride | null {
   const ref = env.BUILDCAGE_LOCAL_IMAGE_REF;

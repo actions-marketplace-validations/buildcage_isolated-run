@@ -4,37 +4,48 @@ import { existsSync } from "node:fs";
 import { SandboxError } from "./errors.ts";
 import {
   SLIM_RUNNER_DETECTED_PREFIX,
+  capturedStderr,
   isLikelySlimRunner,
-  type DockerErrorLike,
 } from "#core/lib/actions/docker-error.ts";
 
 const REQUIREMENT =
   "The run action requires a Linux runner with passwordless sudo for the isolation setup itself " +
-  '(network namespace, veth, iptables) — this is the default on GitHub-hosted "ubuntu-*" runners, ' +
-  'but NOT on lightweight images such as "ubuntu-slim" or many self-hosted/minimal runners. See ' +
-  "README.md and docs/security.md for details.";
+  '(network namespace, veth, iptables). That is the default on GitHub-hosted "ubuntu-*" ' +
+  'runners, but not on lightweight images such as "ubuntu-slim" or many self-hosted or minimal ' +
+  "runners. See README.md and docs/security.md for details.";
 
-const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX} — these typically don't have passwordless sudo configured for this kind of privileged setup.`;
+const SLIM_RUNNER_NOTE = `${SLIM_RUNNER_DETECTED_PREFIX}: these typically don't have passwordless sudo configured for this kind of privileged setup.`;
+
+export interface DescribeSudoFailureOptions {
+  env?: NodeJS.ProcessEnv;
+  exists?: (path: string) => boolean;
+}
 
 /**
  * Kept pure (takes the error, not execFileSync's raw output) so it's
  * unit-testable the same way as core/lib/actions/docker-error.ts's
  * describeDockerFailure.
  */
-export interface DescribeSudoFailureOptions {
-  env?: NodeJS.ProcessEnv;
-  exists?: (path: string) => boolean;
-}
-
 export function describeSudoFailure(
   e: unknown,
   { env = process.env, exists = existsSync }: DescribeSudoFailureOptions = {},
 ): string {
-  const err = (e && typeof e === "object" ? e : {}) as DockerErrorLike;
-  const captured = typeof err.stderr === "string" ? err.stderr.trim() : "";
+  const captured = capturedStderr(e);
   const slimNote = isLikelySlimRunner(env, exists) ? SLIM_RUNNER_NOTE : "";
   return `'sudo' is not available without a password on this runner.${slimNote} ${REQUIREMENT}${captured ? ` (${captured})` : ""}`;
 }
+
+export interface CheckPasswordlessSudoOptions {
+  execFile?: (command: string, args: string[]) => void;
+}
+
+// Untested by design: the default behind checkPasswordlessSudo's seam, which
+// only hands node:child_process what the tested caller decided to run.
+/* v8 ignore start */
+function defaultExecFile(command: string, args: string[]): void {
+  execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+}
+/* v8 ignore stop */
 
 /**
  * Fails fast, before spinning up the proxy container, so a missing
@@ -43,9 +54,11 @@ export function describeSudoFailure(
  * a specific command (rather than blanket NOPASSWD:ALL) can pass this probe
  * yet still fail runIsolated()'s later, differently-shaped invocation.
  */
-export function checkPasswordlessSudo(): void {
+export function checkPasswordlessSudo({
+  execFile = defaultExecFile,
+}: CheckPasswordlessSudoOptions = {}): void {
   try {
-    execFileSync("sudo", ["-n", "true"], { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+    execFile("sudo", ["-n", "true"]);
   } catch (e) {
     throw new SandboxError(describeSudoFailure(e), "PASSWORDLESS_SUDO_REQUIRED");
   }

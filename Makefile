@@ -1,3 +1,22 @@
+# The fixture network's name and subnet are global to the daemon: a linked
+# worktree's run would otherwise collide with the main checkout's. The
+# worktree's own name keeps them apart, so nothing needs configuring, and the
+# main checkout keeps the names CI uses. Exported because the integration test
+# scripts reach docker/compose.action.test-*.yaml through the action's own
+# environment (see buildComposeEnv in src/lib/compose-env.ts).
+GIT_DIR := $(shell git rev-parse --git-dir 2>/dev/null)
+WORKTREE_NAME := $(if $(findstring /worktrees/,$(GIT_DIR)),$(notdir $(GIT_DIR)))
+# A worktree directory carries the `+` that replaced the branch name's `/`, and
+# no image tag, container name or Compose project name accepts it.
+WORKTREE_SLUG := $(if $(WORKTREE_NAME),$(shell printf '%s' '$(WORKTREE_NAME)' | tr 'A-Z' 'a-z' | tr -Cs 'a-z0-9_-' '-' | sed -e 's/^-//' -e 's/-$$//'))
+BUILDCAGE_WORKTREE_SUFFIX ?= $(if $(WORKTREE_SLUG),-$(WORKTREE_SLUG))
+# test-net cannot be left to Docker's pool, which includes 172.20.0.0/16 and so
+# overlaps the proxy's own bridge, so pick a subnet from the worktree name.
+TEST_NET_SUBNET ?= $(if $(WORKTREE_NAME),$(shell printf '%s' '$(WORKTREE_NAME)' | cksum | awk '{printf "10.%d.%d.0/24", $$1 % 40 + 210, int($$1 / 40) % 254 + 1}'),10.210.0.0/24)
+QJS_TEST_IMAGE ?= buildcage-qjs-test$(BUILDCAGE_WORKTREE_SUFFIX)
+export BUILDCAGE_WORKTREE_SUFFIX
+export TEST_NET_SUBNET
+
 .PHONY: help
 help:
 	@grep -E '^[a-zA-Z_0-9-]+(-%)?:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -20,6 +39,13 @@ test_unit_core: ## Run core library unit tests
 test_unit_sandbox: ## Run the action's own unit tests
 	@vp test run src/lib src/main
 
+# Unfiltered, so this always covers whatever test.include matches. One run,
+# because each overwrites the coverage report: if it were split the way the
+# targets above are, only the last one's numbers would survive.
+.PHONY: test_unit_coverage
+test_unit_coverage: ## Run every Node unit test once, with coverage
+	@vp test run --coverage
+
 # qjs can't execute .ts directly, so compile fresh (vp run build:qjs-test)
 # and bind-mount the output in.
 QJS_MOUNTS := \
@@ -30,14 +56,14 @@ QJS_TEST_DIRS := \
 .PHONY: test_unit_qjs
 test_unit_qjs: ## Run unit tests in Docker
 	@vp run build:qjs-test
-	@docker build -f docker/universal/Dockerfile -t buildcage-qjs-test .
-	@docker run --rm --entrypoint qjs $(QJS_MOUNTS) buildcage-qjs-test \
+	@docker build -f docker/universal/Dockerfile -t $(QJS_TEST_IMAGE) .
+	@docker run --rm --entrypoint qjs $(QJS_MOUNTS) $(QJS_TEST_IMAGE) \
 		--std -m /opt/buildcage/core/scripts/test/run-tests.qjs.js $(QJS_TEST_DIRS)
 
 # ===========================================================================
-# Sandbox dev loop — mac-friendly local iteration on run-isolated.sh (see
+# Sandbox dev loop: mac-friendly local iteration on run-isolated.sh (see
 # dev/Dockerfile). CI's test_sandbox job runs run-isolated.sh directly on
-# the host instead — see docs/development.md.
+# the host instead; see docs/development.md.
 # ===========================================================================
 
 .PHONY: setup_sandbox_dev
@@ -53,11 +79,11 @@ setup_sandbox_dev: ## Start sandbox proxy + dev runner (mac-friendly dev loop)
 .PHONY: test_sandbox_dev
 test_sandbox_dev: ## Run a sample isolated command in the dev loop and verify isolation
 	@$(MAKE) setup_sandbox_dev
-	@PROXY_PID=$$(docker inspect --format '{{.State.Pid}}' buildcage-proxy); \
+	@PROXY_NETNS=$$(docker inspect --format '{{.NetworkSettings.SandboxKey}}' buildcage-proxy); \
 	  docker compose -f compose.yaml -f docker/compose.sandbox-dev.yaml exec sandbox-dev-runner sh -c " \
 	    set -e; \
 	    build-test-bundle.sh --netns-name buildcage-sandbox-dev --script /usr/local/bin/smoke-test.sh --bundle /var/tmp/buildcage/dev-bundle; \
-	    run-isolated.sh --proxy-pid $$PROXY_PID --runc /usr/local/bin/runc --bundle /var/tmp/buildcage/dev-bundle \
+	    run-isolated.sh --proxy-netns $$PROXY_NETNS --runc /usr/local/bin/runc --bundle /var/tmp/buildcage/dev-bundle \
 	      --container-id buildcage-sandbox-dev --netns-name buildcage-sandbox-dev --rootfs-bind-dir /var/tmp/buildcage/dev-bundle/rootfs \
 	      --gateway 172.20.0.1 --dns 172.20.0.1 --target-ip 172.20.0.101"
 	@$(MAKE) clean_sandbox_dev
@@ -66,26 +92,62 @@ test_sandbox_dev: ## Run a sample isolated command in the dev loop and verify is
 clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 	@docker compose -f compose.yaml -f docker/compose.sandbox-dev.yaml down -v --rmi local
 
+# ===========================================================================
+# Integration tests. The four groups below, and nothing else, are what CI's
+# test-integration.yml runs.
+# ===========================================================================
+
+# One list, so the Makefile and test-integration.yml cannot come to disagree
+# about what "the integration tests" are. Not a target to run straight
+# through, unlike the unit tests: each group wants a different proxy image
+# under BUILDCAGE_LOCAL_IMAGE_REF: universal for the first two, an inspect
+# image built with BUILDCAGE_TEST_HOOKS=1 for the third, and none at all for
+# the fourth, which builds both images itself and wants the variable unset.
+# Build the image a group needs, then run that group, the way each CI job does.
+.PHONY: test_integration
+test_integration: test_integration_sandbox_linux test_integration_sandbox_universal test_integration_sandbox_inspect test_integration_listener_scope ## Every integration test CI runs; the four groups need different proxy images, so build each one's image first
+
 # Drives dist/main.cjs directly (a host command, not a Docker build).
 .PHONY: test_integration_sandbox_linux
 test_integration_sandbox_linux: ## Run the action's integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF and a test-hook build of dist/main.cjs)
+	@./test/integration-test-ephemeral-fs.sh
 	@./test/integration-test-writable-dir.sh
-	@./test/integration-test-writable-disabled.sh
 	@./test/integration-test-defaults.sh
+	@./test/integration-test-host-parity.sh
 	@./test/integration-test-seccomp.sh
 	@./test/integration-test-die-with-parent.sh
 	@./test/integration-test-fs-escape.sh
-	@./test/integration-test-runner-temp.sh
-	@./test/integration-test-nested-mount-readonly.sh
-	@./test/integration-test-non-runc-default-pseudofs-readonly.sh
+	@./test/integration-test-scratch-isolation.sh
+	@./test/integration-test-mounts-readonly.sh
+	@./test/integration-test-zero-traffic.sh
+	@./test/integration-test-runtime-sockets.sh
+	@./test/integration-test-post-state-tampering.sh
+	@./test/integration-test-proxy-gone.sh
+
+# Separate from test_integration_sandbox_linux: these use the fixture origin
+# network in compose.test-universal.yaml (fake DNS + an origin this repo
+# controls) instead of the real internet. That covers cases real hosts can't
+# (an allowlisted name resolving to an internal address, NXDOMAIN, direct-IP
+# blocking with no allowed_ip_rules), and keeps the rest from depending on a
+# third-party site being up.
+.PHONY: test_integration_sandbox_universal
+test_integration_sandbox_universal: ## Run the universal-engine fixture-based integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF built with test hooks)
+	@./test/integration-test-universal-restrict.sh
+	@./test/integration-test-universal-audit.sh
 	@./test/integration-test-concurrent.sh
 	@./test/integration-test-known-blocked-rules.sh
+	@./test/integration-test-reserved-mounts.sh
 
-# Separate from test_integration_sandbox_linux: these need an inspect-engine
-# image (a different Dockerfile/build) and the fixture origin network in
-# compose.test-inspect.yaml, neither of which the universal-engine tests
-# above use.
+# Separate from the above: these need an inspect-engine image (a different
+# Dockerfile/build) and the fixture origin network in compose.test-inspect.yaml.
 .PHONY: test_integration_sandbox_inspect
 test_integration_sandbox_inspect: ## Run the inspect-engine integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF built from docker/inspect with test hooks)
 	@./test/integration-test-inspect-restrict.sh
 	@./test/integration-test-inspect-audit.sh
+	@./test/integration-test-inspect-roundtrip.sh
+
+# Builds each engine's proxy image itself (docker compose build), unlike the
+# two groups above which reuse a pre-built BUILDCAGE_LOCAL_IMAGE_REF.
+.PHONY: test_integration_listener_scope
+test_integration_listener_scope: ## Check :10024/:53 are unreachable outside buildcage0, for both engines
+	@./test/integration-test-listener-scope.sh

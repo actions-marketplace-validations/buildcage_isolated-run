@@ -6,12 +6,7 @@
  * old content into a new `@<timestamp>.<letter>` file in the same
  * directory (see the haproxy-log/coredns-log `run` scripts). Reading only
  * `current` silently drops everything before the last rotation once a step
- * produces enough log traffic to cross that threshold — this is what report
- * generation did before this file existed.
- *
- * Mirrors buildcage/docker's `src/core/lib/docker/rotated-log.ts` (same
- * `Docker` shape, same fix for the same bug in a byte-identical `s6-log`
- * setup — see that repo's PR for the original writeup).
+ * produces enough log traffic to cross that threshold.
  */
 import type { Docker } from "./client.ts";
 

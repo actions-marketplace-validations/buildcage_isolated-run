@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { describe, it, expect, reportResults } from "../test/test-shim.ts";
+import { describe, it, expect } from "vitest";
 import { createDocker, parseContainerIds, type SpawnCommand } from "./client.ts";
 
-// Arbitrary in-container path — copyFromContainer doesn't care what it
+// Arbitrary in-container path: copyFromContainer doesn't care what it
 // points to, only that it forwards the argument verbatim to `docker cp`.
 const SOME_CONTAINER_PATH = "/opt/buildcage/scripts/some-script.js";
 
@@ -138,7 +138,7 @@ async function drain(iterable: AsyncIterable<string>): Promise<string[]> {
 }
 
 describe("createDocker readFileLines", () => {
-  it("is lazy — nothing spawns until iteration actually starts", () => {
+  it("is lazy: nothing spawns until iteration actually starts", () => {
     const { spawnDocker, calls } = fakeSpawn();
     createDocker(undefined, spawnDocker).readFileLines("abc123", "/var/log/haproxy/current");
     expect(calls).toStrictEqual([]);
@@ -159,7 +159,6 @@ describe("createDocker readFileLines", () => {
   it("throws {status, stderr} on a non-zero exit", async () => {
     const { spawnDocker, children } = fakeSpawn();
     const drained = drain(createDocker(undefined, spawnDocker).readFileLines("abc123", "/missing"));
-    // Ensure the child has been created before driving it.
     await Promise.resolve();
     children[0].stderr.write("cat: /missing: No such file or directory\n");
     children[0].finish(1);
@@ -188,11 +187,24 @@ describe("createDocker readFileLines", () => {
     // .next() runs synchronously through spawnDocker(args), so the child
     // already exists once this returns.
     const firstLine = iterator.next();
-    children[0].stdout.write("line one\nline two\n"); // never finish()'d — simulates a still-running process
+    children[0].stdout.write("line one\nline two\n"); // never finish()'d, so this simulates a still-running process
     expect((await firstLine).value).toBe("line one");
     await iterator.return?.(undefined); // what `for await...of` does on an early break
     expect(children[0].killed).toBeTruthy();
   });
-});
 
-reportResults();
+  // A child killed from outside closes stdout, so the consumer reaches EOF and
+  // then finds no exit code at all, only the signal that ended it.
+  it("names the signal, and carries no status, when the child was killed", async () => {
+    const { spawnDocker, children } = fakeSpawn();
+    const drained = drain(createDocker(undefined, spawnDocker).readFileLines("abc123", "/x"));
+    await Promise.resolve();
+    children[0].stderr.write("terminated\n");
+    children[0].kill();
+    await expect(drained).rejects.toSatisfy(
+      (e) =>
+        (e as { status?: number }).status === undefined &&
+        (e as Error).message.includes("(signal SIGTERM)"),
+    );
+  });
+});

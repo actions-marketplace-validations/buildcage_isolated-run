@@ -2,20 +2,13 @@
 # Audit-mode counterpart to integration-test-inspect-restrict.sh: with no
 # rules configured, everything must be allowed and recorded, and the report
 # must offer a restrict-mode allowed_url_rules example built from what was
-# actually observed -- ported from buildcage/docker's
-# test/Dockerfile.inspect-audit + test/assert-inspect-audit.sh.
+# actually observed.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FAILURES=0
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to a locally built inspect-engine image (BUILDCAGE_TEST_HOOKS=1 PROXY_ENGINE=inspect docker compose build proxy)}"
-
-pass() { echo "  PASS  $1"; }
-fail() {
-  echo "  FAIL  $1"
-  FAILURES=$((FAILURES + 1))
-}
 
 echo ""
 echo "=== Inspect Engine Integration Test (audit) ==="
@@ -41,7 +34,6 @@ BUILDCAGE_RUN_DEBUG_SUMMARY_FILE="$SUMMARY_FILE" \
 BUILDCAGE_LOCAL_IMAGE_REF="$BUILDCAGE_LOCAL_IMAGE_REF" \
 BUILDCAGE_TEST_COMPOSE_FILE="$REPO_ROOT/docker/compose.action.test-inspect.yaml" \
 BUILDCAGE_TEST_CERT_PATH="$REPO_ROOT/test/test-server-inspect/cert.pem" \
-EXTERNAL_RESOLVER="10.200.0.53" \
 INPUT_PROXY_ENGINE="inspect" \
 INPUT_PROXY_MODE="audit" \
 INPUT_RUN="
@@ -66,15 +58,6 @@ echo ""
 echo "--- report assertions (Job Summary) ---"
 SUMMARY=$(cat "$SUMMARY_FILE")
 
-assert_summary_contains() {
-  local pattern="$1" label="$2"
-  if grep -qF -- "$pattern" <<< "$SUMMARY"; then
-    pass "$label"
-  else
-    fail "$label -- not found in report"
-  fi
-}
-
 assert_summary_contains "📋 Audited Hosts" "audited-hosts heading present"
 assert_summary_contains "| allowed.example.com:443 | HTTPS |" "allowed.example.com:443 audited"
 assert_summary_contains "| blocked.example.com:443 | HTTPS |" "blocked.example.com:443 audited (nothing enforced)"
@@ -92,10 +75,4 @@ assert_summary_contains "GET https://blocked.example.com/exfil" "the example inc
 
 rm -rf "$TMPDIR"
 
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-  echo "❌ FAILED: $FAILURES assertion(s) failed"
-  exit 1
-fi
-echo "✅ All assertions passed."
-echo ""
+assert_results

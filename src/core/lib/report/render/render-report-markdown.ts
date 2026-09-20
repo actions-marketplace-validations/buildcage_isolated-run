@@ -1,4 +1,5 @@
 import { renderHostTable } from "./host-table.ts";
+import { foldExpectedBlockedRows } from "./fold-expected-blocked.ts";
 import { buildRestrictExample } from "./build-example.ts";
 import { renderInspectDetails } from "./inspect-details.ts";
 import { buildInspectRestrictExample } from "./inspect-example.ts";
@@ -15,8 +16,7 @@ export interface RenderReportMarkdownOptions {
 }
 
 /** Branches on `report.engine` rather than being duplicated per engine. There
- *  is no explicit-engine branch: isolated-run's proxy image never produces
- *  buildkitd/vertex logs (see ../types.ts). */
+ *  is no explicit-engine branch (see ../types.ts). */
 export function renderReportMarkdown(
   report: ReportData,
   actionRepo: string,
@@ -31,7 +31,19 @@ export function renderReportMarkdown(
   const showExpected = report.parameters.knownBlockedRules.length > 0;
   const heading = isAudit ? "📋 Audited Hosts" : "✅ Allowed Hosts";
 
-  let markdown = `## ${title} (${report.parameters.mode} mode)\n\n`;
+  // restrict is what a real run normally uses day to day, so its heading
+  // stays bare; audit is the occasional, deliberately different mode and
+  // says so, the same way the heading below calls out "Audited" vs "Allowed".
+  let markdown = `## ${title}${isAudit ? " (audit mode)" : ""}\n\n`;
+
+  // The tables would otherwise read as the whole story.
+  if (!report.logLooksPlausible) {
+    markdown +=
+      "> ⚠️ **This report is incomplete**, so the tables below are not a full record of this run.\n" +
+      "> Either the logs don't begin where a real run does, or one carries a line that cannot be\n" +
+      "> read. A missing beginning was either removed or rotated out by traffic heavy enough to\n" +
+      "> fill the 100 MB of log kept, which takes a few hundred thousand requests.\n\n";
+  }
 
   if (report.passed.length > 0) {
     markdown += `### ${heading}\n\n` + renderHostTable(report.passed) + "\n";
@@ -44,28 +56,33 @@ export function renderReportMarkdown(
         ? buildInspectRestrictExample(report.timeline, actionRepo, actionRef, {
             runCommand,
             actionVersion,
+            allowedIpRules: report.parameters.allowedIpRules,
+            allowedTlsRules: report.parameters.allowedTlsRules,
           })
         : buildRestrictExample(report.passed, actionRepo, actionRef, { runCommand, actionVersion });
   }
   if (report.blocked.length > 0) {
     if (report.passed.length > 0) markdown += "\n";
+    // universal has no Communication details section to name a folded row's
+    // hosts in.
+    const blocked =
+      report.engine === "universal" ? report.blocked : foldExpectedBlockedRows(report.blocked);
     markdown +=
       "### 🚫 Blocked Hosts\n\n" +
-      renderHostTable(report.blocked, { showReason: true, showExpected }) +
+      renderHostTable(blocked, { showReason: true, showExpected }) +
       "\n";
   }
   if (report.passed.length === 0 && report.blocked.length === 0) {
-    // Otherwise a no-traffic build leaves nothing between the heading and the
-    // footer — indistinguishable from a report that failed to generate.
+    // Otherwise a no-traffic run leaves nothing between the heading and the
+    // footer, indistinguishable from a report that failed to generate.
     markdown += "_(no communication)_\n\n";
   }
 
   if (report.engine === "inspect") {
     markdown += renderInspectDetails(report.timeline, report.startedAt);
   } else {
-    // SNI-based sniffing is how the proxy classifies HTTPS traffic — see
-    // docs/security.md. inspect terminates TLS instead, so this caveat
-    // doesn't apply there.
+    // Only the universal engine identifies a host this way (see
+    // docs/security.md); inspect terminates TLS instead.
     markdown +=
       "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n";
   }

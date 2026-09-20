@@ -8,8 +8,9 @@
 #
 # BUILDCAGE_TEST_COMPOSE_FILE only takes effect at all when
 # BUILDCAGE_BUILD_TEST_HOOKS=1 was set at build time (see
-# LOCAL_IMAGE_OVERRIDE_ENABLED in src/main.ts) -- unreachable, and therefore
-# irrelevant, in a published action's dist/main.cjs.
+# readLocalImageOverride in src/lib/compose-file.ts); without that flag the
+# override is unreachable, and therefore irrelevant, in a published action's
+# dist/main.cjs.
 services:
   proxy:
     container_name: ${PROXY_CONTAINER_NAME:-buildcage-proxy}
@@ -22,24 +23,47 @@ services:
       - ALLOWED_HTTP_RULES=${ALLOWED_HTTP_RULES:-}
       - ALLOWED_IP_RULES=${ALLOWED_IP_RULES:-}
       - ALLOWED_URL_RULES=${ALLOWED_URL_RULES:-}
-      - ALLOW_TLS_RULES=${ALLOW_TLS_RULES:-}
-      - EXTERNAL_RESOLVER=${EXTERNAL_RESOLVER:-}
+      - ALLOWED_TLS_RULES=${ALLOWED_TLS_RULES:-}
+      # The test-dns fixture's address on test-net (../compose.test-inspect.yaml).
+      - EXTERNAL_RESOLVER=10.200.0.53
+      - TEST_NET_ADDR=10.200.0.2/24
+      - TEST_NET_SUBNET=${TEST_NET_SUBNET:-10.210.0.0/24}
+      # What the action computed, plus a fixture address nothing answers on so
+      # the blocked-name scenario has a deterministic target.
+      - HOST_ADDRESSES=${HOST_ADDRESSES:-} 10.200.0.199
       # Test-only: init-inspect-cfg only honours this in an image built with
       # BUILDCAGE_TEST_HOOKS=1 (see docker/inspect/Dockerfile's
-      # /opt/buildcage/.test-hooks marker) -- a fixed in-container path,
-      # regardless of where the host-side cert actually lives.
+      # /opt/buildcage/.test-hooks marker). The value below is a fixed
+      # in-container path, regardless of where the host-side cert actually lives.
       - BUILDCAGE_EXTRA_CA_FILE=/test-fixtures/test-server-cert.pem
     volumes:
+      - ../test/test-net-addr/attach.sh:/test-hooks/attach-test-net-addr.sh:ro
       # BUILDCAGE_TEST_CERT_PATH: an absolute host path, set by the test
-      # script itself -- a relative path here would resolve against this
+      # script itself. A relative path here would resolve against this
       # file's own directory (docker/), not the repo root.
       - ${BUILDCAGE_TEST_CERT_PATH:?BUILDCAGE_TEST_CERT_PATH must be an absolute path to test-server-inspect/cert.pem}:/test-fixtures/test-server-cert.pem:ro
+    # Wrapped here rather than in the image: the proxy is the product image
+    # and carries no test-only setup.
+    entrypoint: ["/test-hooks/attach-test-net-addr.sh", "/init"]
     networks:
       default:
       test-net:
-    restart: unless-stopped
+    labels:
+      io.buildcage.owner: ${BUILDCAGE_OWNER:-}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'for check in /etc/s6-overlay/s6-rc.d/*/data/check; do "$$check" || exit 1; done',
+        ]
+      interval: 30s
+      start_interval: 250ms
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 networks:
   test-net:
-    name: buildcage-test-inspect-net
+    # Must match ../compose.test-*.yaml's own name, suffix included.
+    name: buildcage-test-inspect-net${BUILDCAGE_WORKTREE_SUFFIX:-}
     external: true

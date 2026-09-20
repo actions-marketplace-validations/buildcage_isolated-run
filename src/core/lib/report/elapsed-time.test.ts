@@ -1,4 +1,4 @@
-import { describe, it, expect, reportResults } from "#core/lib/test/test-shim.ts";
+import { describe, it, expect } from "vitest";
 import { formatElapsedVariable, formatElapsedFixed } from "./elapsed-time.ts";
 
 describe("formatElapsedVariable", () => {
@@ -32,7 +32,7 @@ describe("formatElapsedFixed", () => {
     expect(formatElapsedFixed(0)).toBe("00:00:00.000");
   });
 
-  it("does not widen further past an hour -- the shape never changes", () => {
+  it("does not widen further past an hour, so the shape never changes", () => {
     expect(formatElapsedFixed(3600)).toBe("01:00:00.000");
     expect(formatElapsedFixed(25 * 3600)).toBe("25:00:00.000");
   });
@@ -41,5 +41,3 @@ describe("formatElapsedFixed", () => {
     expect(formatElapsedFixed(-1)).toBe("00:00:00.000");
   });
 });
-
-reportResults();

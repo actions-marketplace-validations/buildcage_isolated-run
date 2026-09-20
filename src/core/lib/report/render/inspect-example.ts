@@ -5,27 +5,26 @@
  *
  * A generated rule must never permit more than was observed:
  *
- * - **Hosts are enumerated, never generalised** into `*.example.com`: the
+ * - Hosts are enumerated, never generalised into `*.example.com`: the
  *   resolver's scope follows these patterns, so a widened host is leakable.
- * - **Methods are listed exactly**, never `*`.
- * - **A path keeps its longest unchanging prefix**; only what varied becomes
+ * - Methods are listed exactly, never `*`.
+ * - A path keeps its longest unchanging prefix; only what varied becomes
  *   `**`, and a single observed path stays exact.
  *
- * A host reached at many unrelated paths therefore collapses to `/**` -- the
+ * A host reached at many unrelated paths therefore collapses to `/**`, the
  * honest answer, since clustering would invent permissions nobody observed. The
  * rule still constrains the method, which no host-level rule can.
  */
 
 import type { TrafficEvent } from "#core/lib/log/traffic-event.ts";
-
-/** Ports a URL rule may leave unwritten, because the scheme implies them. */
-const DEFAULT_PORT: Record<string, string> = { https: "443", http: "80" };
+import { restrictExampleBlock, usesLine } from "./restrict-example.ts";
+import { DEFAULT_PORT, parseObservedUrl } from "#core/lib/log/authority.ts";
 
 /** Conventional ordering, so a rule reads the way a person would write it. */
 const METHOD_ORDER = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
 interface ParsedRequest {
-  /** `https://host` or `https://host:9443` — what a rule is written against. */
+  /** `https://host` or `https://host:9443`: what a rule is written against. */
   origin: string;
   method: string;
   /** Path only. The query is deliberately dropped: rules match the path, and
@@ -36,25 +35,21 @@ interface ParsedRequest {
 
 function parseRequest(request: TrafficEvent): ParsedRequest | null {
   if (request.url === undefined || request.method === undefined) return null;
-  const match = /^(https?):\/\/([^/?#]+)([^?#]*)/.exec(request.url);
-  if (!match) return null;
-  const [, scheme, authority, rawPath] = match;
+  const parsed = parseObservedUrl(request.url);
+  if (!parsed) return null;
+  const { scheme, host, port, path } = parsed;
 
   // Drop a port the scheme already implies, so the common case reads plainly.
-  const colon = authority.lastIndexOf(":");
-  const port = colon > 0 ? authority.slice(colon + 1) : "";
   const origin =
-    port && port === DEFAULT_PORT[scheme]
-      ? `${scheme}://${authority.slice(0, colon)}`
-      : `${scheme}://${authority}`;
+    port === DEFAULT_PORT[scheme] ? `${scheme}://${host}` : `${scheme}://${host}:${port}`;
 
-  return { origin, method: request.method, path: rawPath || "/" };
+  return { origin, method: request.method, path };
 }
 
 /** The segments every path shares, from the left. */
 function commonPrefixSegments(paths: string[]): string[] {
+  // Two or more: pathPatternsFor has already answered the shorter cases.
   const split = paths.map((p) => p.split("/").filter((s) => s !== ""));
-  if (split.length === 0) return [];
   let prefix = split[0];
   for (const segments of split.slice(1)) {
     let i = 0;
@@ -68,7 +63,7 @@ function commonPrefixSegments(paths: string[]): string[] {
  * The path patterns covering one group of observed paths.
  *
  * Usually one. A second is needed when the shared prefix is itself one of the
- * observed paths: `/express/**` does not match `/express`, so a build that
+ * observed paths: `/express/**` does not match `/express`, so a step that
  * fetched both a package's metadata and its tarball needs both spelled out.
  */
 export function pathPatternsFor(paths: Iterable<string>): string[] {
@@ -93,7 +88,7 @@ function sortMethods(methods: Iterable<string>): string[] {
     if (ai !== -1 && bi !== -1) return ai - bi;
     if (ai !== -1) return -1;
     if (bi !== -1) return 1;
-    return a < b ? -1 : a > b ? 1 : 0;
+    return a < b ? -1 : 1;
   });
 }
 
@@ -106,7 +101,7 @@ function sortMethods(methods: Iterable<string>): string[] {
  * `GET|HEAD` on one line instead of two.
  */
 export function buildUrlRuleLines(requests: TrafficEvent[]): string[] {
-  // Only what the build actually reached: a refused request is not a rule to
+  // Only what the step actually reached: a refused request is not a rule to
   // reproduce, and a passthrough or a name lookup has no URL to write one from.
   const byOriginMethod = new Map<string, { origin: string; method: string; paths: string[] }>();
   for (const request of requests) {
@@ -143,16 +138,23 @@ export function buildUrlRuleLines(requests: TrafficEvent[]): string[] {
 }
 
 export interface BuildInspectRestrictExampleOptions {
-  /** the `run:` input, always included — isolated-run's action.yml requires it,
+  /** the `run:` input, always included: isolated-run's action.yml requires it,
    *  same as build-example.ts's own BuildRestrictExampleOptions. */
   runCommand?: string;
   /** Version to annotate the `uses:` line with, if known, as `# 3.1.4`. */
   actionVersion?: string;
+  /** Not derived from `requests`: a passthrough is never decrypted, so there
+   *  is nothing in the traffic to build these from. They are the same values
+   *  the audit run was configured with, echoed back as-is,
+   *  since they apply unchanged under `restrict` (only enforcement
+   *  differs). */
+  allowedIpRules?: string[];
+  allowedTlsRules?: string[];
 }
 
 /**
- * Render the rules as a collapsed markdown section, or "" if nothing was
- * observed.
+ * Render the rules as a collapsed markdown section, or "" if there is
+ * nothing to show.
  *
  * `actionRef` is the ref this action was invoked with.
  */
@@ -160,16 +162,21 @@ export function buildInspectRestrictExample(
   requests: TrafficEvent[] | null | undefined,
   actionRepo: string,
   actionRef?: string,
-  { runCommand, actionVersion }: BuildInspectRestrictExampleOptions = {},
+  {
+    runCommand,
+    actionVersion,
+    allowedIpRules = [],
+    allowedTlsRules = [],
+  }: BuildInspectRestrictExampleOptions = {},
 ): string {
   const lines = buildUrlRuleLines(requests ?? []);
-  if (lines.length === 0) return "";
+  if (lines.length === 0 && allowedIpRules.length === 0 && allowedTlsRules.length === 0) return "";
 
   let yaml = "- name: Start isolated-run\n";
-  yaml += `  uses: ${actionRepo}@${actionRef}${actionVersion ? ` # ${actionVersion}` : ""}\n`;
+  yaml += usesLine(actionRepo, actionRef, actionVersion);
   yaml += "  with:\n";
   // `run` is a single self-contained step, so the example must repeat the
-  // run: command to stay copy-pasteable on its own — see build-example.ts.
+  // run: command to stay copy-pasteable on its own; see build-example.ts.
   if (runCommand) {
     yaml += "    run: |\n";
     for (const line of runCommand.replace(/\r?\n$/, "").split(/\r?\n/)) {
@@ -180,27 +187,20 @@ export function buildInspectRestrictExample(
   yaml += "    proxy_engine: inspect\n";
   // A literal block, not a folded one: a URL rule contains a space, so the
   // rules are separated by newlines and folding would join them into one.
-  yaml += "    allowed_url_rules: |\n";
-  for (const line of lines) yaml += `      ${line}\n`;
+  if (lines.length > 0) {
+    yaml += "    allowed_url_rules: |\n";
+    for (const line of lines) yaml += `      ${line}\n`;
+  }
+  if (allowedTlsRules.length > 0) {
+    yaml += "    allowed_tls_rules: |\n";
+    for (const rule of allowedTlsRules) yaml += `      ${rule}\n`;
+  }
+  if (allowedIpRules.length > 0) {
+    yaml += "    allowed_ip_rules: |\n";
+    for (const rule of allowedIpRules) yaml += `      ${rule}\n`;
+  }
 
-  // GitHub Actions' own indentation convention (jobs: -> <id>: -> steps: ->
-  // "- name:") always puts a step 6 spaces in, so the generated snippet can
-  // be pasted directly into an existing steps: list without re-indenting it.
-  const STEP_INDENT = "      ";
-  yaml = yaml
-    .split("\n")
-    .map((line) => (line ? STEP_INDENT + line : line))
-    .join("\n");
-
-  let md = "\n<details>\n";
-  md += "<summary>🛡️ Switch to restrict mode</summary>\n\n";
-  md += "```yaml\n";
-  md += yaml;
-  md += "```\n\n";
-  md +=
-    "These rules permit exactly what this build did, so read them before using them: a URL that\n";
-  md += "carried a version or a date will not match the next run, and anything reached through\n";
-  md += "`allow_tls_rules` or `allowed_ip_rules` is not here, because it was never inspected.\n\n";
-  md += "</details>\n";
-  return md;
+  return restrictExampleBlock(yaml, {
+    footnote: "Permits exactly what this build did; a versioned or dated URL may drift.",
+  });
 }

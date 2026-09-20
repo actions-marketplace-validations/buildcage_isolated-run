@@ -1,6 +1,6 @@
 # Local-development counterpart to docker/compose.action.yaml (which the
 # action itself uses with a verified, digest-pinned image ref). This one
-# builds the proxy image from source — CI's test_sandbox/test_sandbox_*
+# builds the proxy image from source. CI's test_sandbox/test_sandbox_*
 # jobs use this (via a bare `docker compose build proxy`, relying on
 # Compose's default-filename discovery), never docker/compose.action.yaml.
 services:
@@ -18,6 +18,24 @@ services:
       - ALLOWED_IP_RULES=${ALLOWED_IP_RULES:-}
       # inspect only: it is the one engine that can see a method or a path.
       - ALLOWED_URL_RULES=${ALLOWED_URL_RULES:-}
-      - ALLOW_TLS_RULES=${ALLOW_TLS_RULES:-}
+      - ALLOWED_TLS_RULES=${ALLOWED_TLS_RULES:-}
       - EXTERNAL_RESOLVER=${EXTERNAL_RESOLVER:-}
-    restart: unless-stopped
+      # Runner addresses the engine refuses as a resolved destination.
+      - HOST_ADDRESSES=${HOST_ADDRESSES:-}
+    # `--wait` would otherwise return on "running" alone. Runs every service's
+    # own s6 check: the resolver starts in parallel with HAProxy, so probing
+    # HAProxy alone would pass while DNS is still coming up. No restart policy
+    # goes with it: a container that stopped itself has to stay stopped for the
+    # wait to see it.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'for check in /etc/s6-overlay/s6-rc.d/*/data/check; do "$$check" || exit 1; done',
+        ]
+      interval: 30s
+      # Every start pays this before the first probe, and the tree is ready in ~0.3s.
+      start_interval: 250ms
+      timeout: 10s
+      retries: 3
+      start_period: 60s

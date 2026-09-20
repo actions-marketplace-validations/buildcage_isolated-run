@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
@@ -20,6 +24,7 @@ jobs:
     if: github.event_name == 'pull_request'
     outputs:
       test_sandbox: ${{ steps.filter.outputs.test_sandbox }}
+      test_sandbox_universal: ${{ steps.filter.outputs.test_sandbox_universal }}
       test_sandbox_inspect: ${{ steps.filter.outputs.test_sandbox_inspect }}
     steps:
       - name: Filter changed paths
@@ -35,6 +40,15 @@ jobs:
               - 'test/**'
               - 'Makefile'
               - '.github/workflows/test-integration.yml'
+            test_sandbox_universal:
+              - 'src/core/**'
+              - 'docker/**'
+              - 'compose.yaml'
+              - 'compose.test-universal.yaml'
+              - 'src/**'
+              - 'test/**'
+              - 'Makefile'
+              - '.github/workflows/test-integration.yml'
             test_sandbox_inspect:
               - 'src/core/**'
               - 'docker/**'
@@ -46,7 +60,7 @@ jobs:
               - '.github/workflows/test-integration.yml'
 
   # Drives dist/main.cjs directly (see test/integration-test-*.sh), not
-  # through the real action — test-e2e.yml's test_sandbox_* jobs keep one
+  # through the real action; test-e2e.yml's test_sandbox_* jobs keep one
   # representative case each that does exercise the real action.
   test_sandbox:
     needs: changes
@@ -81,9 +95,51 @@ jobs:
           BUILDCAGE_LOCAL_IMAGE_REF: ${{ steps.local_image.outputs.ref }}
         run: make test_integration_sandbox_linux
 
-  # Separate job from test_sandbox: needs its own (inspect-engine) image build
-  # and the fixture origin network in compose.test-inspect.yaml, which the
-  # universal-engine tests above have no reason to know about.
+  # Separate job from test_sandbox: this one needs compose.test-universal.yaml's fixtures.
+  test_sandbox_universal:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox_universal == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    name: "integration: test (sandbox, universal engine fixture)"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-vp
+
+      - name: Build local sandbox proxy image
+        run: docker compose build proxy
+
+      - name: Resolve local image ref
+        id: local_image
+        run: echo "ref=$(docker compose config --images proxy)" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild the action with the local-image test hook enabled
+        env:
+          BUILDCAGE_BUILD_TEST_HOOKS: "1"
+        run: vp run build
+
+      - name: Run universal-engine fixture-based integration tests
+        env:
+          BUILDCAGE_LOCAL_IMAGE_REF: ${{ steps.local_image.outputs.ref }}
+        run: make test_integration_sandbox_universal
+
+      - name: Verify no leftover fixture/proxy containers or networks
+        if: always()
+        run: |
+          docker compose -f compose.test-universal.yaml down -v || true
+          LEFTOVER_N=$(docker network ls --filter "name=buildcage-test-universal-net" -q)
+          if [ -n "$LEFTOVER_N" ]; then
+            echo "::error::leftover buildcage-test-universal-net network found"
+            exit 1
+          fi
+
+  # Separate job from test_sandbox: this one needs an inspect-engine image and fixtures.
   test_sandbox_inspect:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox_inspect == 'true'
@@ -131,11 +187,30 @@ jobs:
             exit 1
           fi
 
+  # Separate job from the others: it builds both engines' images and attaches no sandbox.
+  test_listener_scope:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    name: "integration: test (listener scope, both engines)"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run listener-scope integration tests
+        run: make test_integration_listener_scope
+
   # Single, stably-named required status check for branch protection.
   integration-tests-passed:
     name: Integration tests passed
     runs-on: ubuntu-latest
-    needs: [changes, test_sandbox, test_sandbox_inspect]
+    needs:
+      [changes, test_sandbox, test_sandbox_universal, test_sandbox_inspect, test_listener_scope]
     if: always()
     permissions: {}
     steps:

@@ -1,11 +1,9 @@
 import { defineConfig } from "rolldown";
 import { replacePlugin } from "rolldown/plugins";
 
-// Plugin required to substitute BUILDCAGE_BUILD_TEST_HOOKS at build time.
-//
 // replacePlugin() substitutes BUILDCAGE_BUILD_TEST_HOOKS with the value from
-// this build's own env, not the resulting action's runtime env — see
-// LOCAL_IMAGE_OVERRIDE_ENABLED in src/main.ts.
+// this build's own env, not the resulting action's runtime env; see
+// readLocalImageOverride in src/lib/compose-file.ts.
 const mainPlugins = [
   replacePlugin({
     "process.env.BUILDCAGE_BUILD_TEST_HOOKS": JSON.stringify(
@@ -24,11 +22,11 @@ const configs = [
     codeSplitting: false,
   },
   // Also gated: post.ts's own crash-fallback cleanup reads the same
-  // BUILDCAGE_TEST_COMPOSE_FILE override as main.ts (see
-  // LOCAL_IMAGE_OVERRIDE_ENABLED in src/post.ts), so it needs the same
-  // build-time substitution to keep that reachable only in a test build.
+  // BUILDCAGE_TEST_COMPOSE_FILE override as main.ts, through that same
+  // function, so it needs the same build-time substitution to keep that
+  // reachable only in a test build.
   // In a BUILDCAGE_BUILD_TEST_HOOKS=1 build, that gate is reachable, so its
-  // dynamic import needs the same codeSplitting: false as main.ts — without
+  // dynamic import needs the same codeSplitting: false as main.ts; without
   // it, rolldown wants a second chunk for the dynamic import, which
   // conflicts with output.file (single-file mode).
   { input: "src/post.ts", file: "dist/post.cjs", plugins: mainPlugins, codeSplitting: false },
@@ -47,10 +45,11 @@ export default defineConfig(
       file,
       format: "cjs",
       codeSplitting,
+      comments: false,
       minify: {
         compress: true,
         mangle: false,
-        codegen: { removeWhitespace: false, legalComments: "none" },
+        codegen: { removeWhitespace: false },
       },
     },
   })),

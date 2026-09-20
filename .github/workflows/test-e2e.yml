@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
@@ -43,12 +47,12 @@ jobs:
               - 'test/**'
 
   # Exercises the real action end-to-end (uses: ./) on the actual runner
-  # host — can't be validated inside a nested container (see dev/ and
-  # docs/development.md).
+  # host; none of this can be validated inside a nested container (see dev/
+  # and docs/development.md).
   #
   # Split into one job per case (test_sandbox_*) so each gets its own Job
   # Summary section and status check. run-isolated.sh's own mechanics
-  # (privilege drop, filesystem defaults, writable: variations, concurrent
+  # (privilege drop, filesystem defaults, write_through: variations, concurrent
   # lifecycles) are covered more cheaply in test-integration.yml instead.
   #
   # Verifies audit mode's Job Summary includes the auto-generated
@@ -56,10 +60,14 @@ jobs:
   test_sandbox_audit_mode:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    name: "e2e: test (sandbox, audit mode)"
+    name: "e2e: test (sandbox, audit mode, ${{ matrix.runner }})"
 
     steps:
       - name: Checkout
@@ -100,6 +108,13 @@ jobs:
       # No cleanup step: the action stops its own proxy container in its
       # finally block.
 
+  # One representative case through the real action wrapper, against real
+  # internet hosts (no fixture network), proves proxy_engine: universal
+  # wiring end-to-end: an allowed host reaches its origin, a blocked one does
+  # not, write_through: opens a path, and both verdicts reach the report.
+  # Which names, ports and protocols are judged which way, and the log-line
+  # sanitizing behind that, live in test/universal-restrict-scenarios.sh,
+  # which needs a fixture network this job deliberately does not set up.
   test_sandbox_enforcement:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.test_sandbox == 'true'
@@ -140,9 +155,9 @@ jobs:
           allowed_http_rules: example.com:80
           # Blocked connections below are expected, not a failure.
           fail_on_blocked: false
-          # One representative writable: pattern through the real action;
-          # other writable: values are cheaper to check in test-integration.yml.
-          writable: /opt
+          # One representative write_through: pattern through the real action;
+          # other write_through: values are cheaper to check in test-integration.yml.
+          write_through: /opt
           run: |
             echo "=== allowlisted HTTP host must be reachable ==="
             wget -q -T 5 -O /dev/null http://example.com/
@@ -164,7 +179,7 @@ jobs:
             fi
             echo "OK: example.org (HTTPS) correctly blocked"
 
-            echo "=== /opt must be writable when listed under writable: ==="
+            echo "=== /opt must be writable when listed under write_through: ==="
             touch /opt/.buildcage-writable-test
             rm -f /opt/.buildcage-writable-test
 
@@ -176,7 +191,7 @@ jobs:
         run: ./test/assert-sandbox.sh
 
       # `transparent` is universal's old name, kept working permanently as an
-      # alias (see resolveProxyEngine's ENGINE_ALIASES) -- this proves it
+      # alias (see resolveProxyEngine's ENGINE_ALIASES): this proves it
       # actually still works end-to-end, not just that it validates. Reuses
       # the same already-built local image: the alias only affects the
       # action's own input resolution, not which image BUILDCAGE_LOCAL_IMAGE_REF
@@ -200,13 +215,10 @@ jobs:
             fi
             echo "OK: example.org correctly blocked"
 
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
-
   # One representative case through the real action wrapper, against real
-  # internet hosts (no fixture network) -- proves proxy_engine: inspect wiring
+  # internet hosts (no fixture network), proves proxy_engine: inspect wiring
   # end-to-end: engine selection, method/path enforcement via
-  # allowed_url_rules, TLS passthrough via allow_tls_rules, and CA trust (a
+  # allowed_url_rules, TLS passthrough via allowed_tls_rules, and CA trust (a
   # plain https GET succeeding with no --insecure, despite the proxy
   # terminating TLS). Deeper scenario coverage (SSRF/forged-Host/DNS
   # non-leak/wildcard host+path/CA residue) lives in
@@ -253,7 +265,7 @@ jobs:
         with:
           proxy_engine: inspect
           allowed_url_rules: "GET|HEAD https://example.com/**"
-          allow_tls_rules: "github.com:443"
+          allowed_tls_rules: "github.com:443"
           # Blocked connections below are expected, not a failure.
           fail_on_blocked: false
           # Short retention: this e2e run's own artifacts shouldn't linger.
@@ -277,7 +289,7 @@ jobs:
               exit 1
             fi
 
-            echo "=== allow_tls_rules host: passed through undecrypted, real cert visible ==="
+            echo "=== allowed_tls_rules host: passed through undecrypted, real cert visible ==="
             curl -fsS --max-time 10 https://github.com/ > /dev/null
 
       - name: Verify the sandbox report contains the expected allowed/blocked entries
@@ -333,12 +345,9 @@ jobs:
             console.log("Traffic artifact verified.");
           '
 
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
-
   # fail_on_blocked defaults to true and should fail on a blocked
   # connection; known_blocked_rules should exempt a matching one. Both are
-  # unit-tested at the logic level — this proves the wiring end-to-end,
+  # unit-tested at the logic level: this proves the wiring end-to-end,
   # reusing the same built image for both cases.
   test_sandbox_fail_on_blocked:
     needs: changes
@@ -409,9 +418,6 @@ jobs:
             exit 1
           fi
           echo "OK: known_blocked_rules correctly kept the step from failing"
-
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
 
   # Proves container/network/Compose-project namespacing holds under
   # Actions' own `parallel:` keyword; the direct-script counterpart is
@@ -489,9 +495,6 @@ jobs:
             echo "::error::leftover buildcage-proxy containers/networks found after parallel sandbox steps"
             exit 1
           fi
-
-      # No cleanup step: the action stops its own proxy container in its
-      # finally block.
 
   # Single, stably-named required status check for branch protection: the
   # jobs above vary their own names by matrix entry, so branch protection

@@ -1,5 +1,10 @@
-import { describe, it, expect, reportResults } from "../test/test-shim.ts";
-import { buildDockerCpArgs, buildComposeUpArgs, buildComposeDownArgs } from "./args.ts";
+import { describe, it, expect } from "vitest";
+import {
+  buildDockerCpArgs,
+  buildComposeUpArgs,
+  buildComposeDownArgs,
+  buildComposeLogsArgs,
+} from "./args.ts";
 
 describe("buildDockerCpArgs", () => {
   it("builds a `docker cp <container>:<containerPath> <hostPath>` argv", () => {
@@ -12,11 +17,6 @@ describe("buildDockerCpArgs", () => {
     ).toStrictEqual(["cp", "buildcage-proxy-abcd1234:/opt/buildcage/bin/runc", "/tmp/x/runc"]);
   });
 });
-
-// Regression guard for the concurrent-step container/network collision:
-// both must always include "-p" + the project name, or Compose falls back
-// to an implicit, directory-derived project name shared by every
-// concurrent step in the job.
 
 describe("buildComposeUpArgs", () => {
   it("always includes -p <projectName> alongside -f <composeFile>", () => {
@@ -37,7 +37,31 @@ describe("buildComposeUpArgs", () => {
       "always",
       "--no-build",
       "--wait",
+      "--wait-timeout",
+      "180",
       "--quiet-pull",
+    ]);
+  });
+});
+
+describe("buildComposeLogsArgs", () => {
+  it("builds a tailed, uncolored `docker compose ... logs` argv", () => {
+    expect(
+      buildComposeLogsArgs({
+        composeFile: "/path/to/compose.yaml",
+        projectName: "buildcage-proxy-abcd1234",
+        tail: 100,
+      }),
+    ).toStrictEqual([
+      "compose",
+      "-f",
+      "/path/to/compose.yaml",
+      "-p",
+      "buildcage-proxy-abcd1234",
+      "logs",
+      "--no-color",
+      "--tail",
+      "100",
     ]);
   });
 });
@@ -58,5 +82,3 @@ describe("buildComposeDownArgs", () => {
     ]);
   });
 });
-
-reportResults();
