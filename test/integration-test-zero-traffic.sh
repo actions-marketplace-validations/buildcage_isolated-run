@@ -39,8 +39,10 @@ else
 fi
 
 # Both annotations the head check can produce: the blocked-connection one and
-# the incomplete-log one it is replaced by when the marker is missing.
-if ! grep -Eq "blocked connection\(s\) detected|logs are incomplete" "$WORKDIR/out.log"; then
+# the incomplete-log one it is replaced by when the marker is missing. Matched
+# on the part that outlives a rewording of what is counted: the check fires on
+# absence, where a pattern that quietly stops matching would pass.
+if ! grep -Eq "detected by buildcage|logs are incomplete" "$WORKDIR/out.log"; then
   pass "no false-positive blocked or incomplete-log annotation from the head check"
 else
   fail "the head check misfired despite the guaranteed startup marker -- see out.log"

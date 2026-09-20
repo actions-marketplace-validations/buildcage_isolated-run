@@ -115,6 +115,7 @@ export function computeReportOutcome(
     blockedRows: report.blocked,
     logLooksPlausible: report.logLooksPlausible,
     engineLabel: "sandbox",
+    engine: report.engine,
   });
   const markdown = renderReportMarkdown(report, actionRepo, actionRef, {
     title: stepLabel ? `Outbound Traffic Report — ${stepLabel}` : undefined,
