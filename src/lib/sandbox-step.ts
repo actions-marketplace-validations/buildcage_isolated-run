@@ -113,10 +113,6 @@ const realDeps: SandboxStepDeps = {
   warn: annotate.warning,
 };
 
-/**
- * Verifies image provenance and resolves the digest-pinned image ref for
- * isolated-run's (buildkitd-less) proxy image.
- */
 async function resolveVerifiedImage(
   { actionRef, actionRepo, proxyEngine }: VerifyImageIdentity & { proxyEngine: ProxyEngine },
   { verifyImageDigestOrThrow, log }: Pick<SandboxStepDeps, "verifyImageDigestOrThrow" | "log">,
@@ -197,8 +193,8 @@ export async function runSandboxStep(
 
   const runInput = readRunCommand();
 
-  // Both read a renamed input, whose migration notice is printed whether or
-  // not this is a real action run, unlike `annotation` below.
+  // `notice`, not `annotation`: both of these read a renamed input (see
+  // SandboxStepDeps).
   const { proxyEngine } = readEngineInputs(notice);
   log(`Proxy engine: ${proxyEngine}`);
 

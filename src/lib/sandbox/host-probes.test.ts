@@ -9,8 +9,6 @@ import {
 } from "./host-probes.ts";
 
 describe("resolveSetprivPath", () => {
-  // runc resolves args[0] against the sandbox's own PATH, which the step can
-  // override, so the absolute path is what makes this reach the real binary.
   it("returns the candidate that exists", () => {
     expect(resolveSetprivPath((p) => p === "/usr/bin/setpriv")).toBe("/usr/bin/setpriv");
   });
@@ -21,8 +19,6 @@ describe("resolveSetprivPath", () => {
     );
   });
 
-  // run-isolated.sh has already confirmed setpriv is on root's PATH by this
-  // point, so a PATH lookup is a safe last resort.
   it("falls back to a bare PATH lookup when no candidate exists", () => {
     expect(resolveSetprivPath(() => false)).toBe("setpriv");
   });
@@ -42,9 +38,6 @@ describe("shmSizeFromStatfs", () => {
     expect(shmSizeFromStatfs({ type: TMPFS_MAGIC, bsize: 4096, blocks: 1024 })).toBe(4096 * 1024);
   });
 
-  // Where /dev/shm is a plain directory rather than a mount of its own, statfs
-  // answers for the containing filesystem, and sizing a tmpfs to a whole disk
-  // would let a step exhaust the host's memory.
   it("returns undefined for a filesystem that is not tmpfs", () => {
     expect(shmSizeFromStatfs({ type: 0xef53, bsize: 4096, blocks: 1e9 })).toBeUndefined();
   });
@@ -68,8 +61,6 @@ describe("parseNofileLimit", () => {
     expect(parseNofileLimit(limits)).toStrictEqual({ soft: 1024, hard: 65536 });
   });
 
-  // RLIM_INFINITY cannot round-trip through JSON's number type, so
-  // /proc/sys/fs/nr_open stands in as the ceiling the kernel enforces anyway.
   it("substitutes nr_open for an unlimited column", () => {
     const limits = [
       header,

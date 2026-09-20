@@ -121,8 +121,6 @@ describe("readActionVersion", () => {
     expect(readActionVersion(containerName, "universal", docker)).toBe("v3.1.4");
   });
 
-  // A non-universal engine publishes as `<version>-<engine>`, which is a Docker
-  // tag rather than anything that was ever released under that name.
   it("strips the engine suffix a non-universal image carries", () => {
     readLabels.mockReturnValueOnce({
       "org.opencontainers.image.version": "3.1.4-inspect",
@@ -142,8 +140,6 @@ describe("readActionVersion", () => {
     expect(readActionVersion(containerName, "universal", docker)).toBeUndefined();
   });
 
-  // The version only decorates one comment in the report, so a docker failure
-  // here must not take the whole report down with it.
   it("returns undefined rather than throwing when docker inspect fails", () => {
     readLabels.mockImplementationOnce(() => {
       throw new Error("No such container");
@@ -219,9 +215,6 @@ describe("writeReportSummary", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  // GITHUB_STEP_SUMMARY is unique per step, so a later step has no way to read
-  // this step's copy back: the mirror is what this repo's own integration
-  // assertions read (test/assert-sandbox.sh).
   it("mirrors the summary to BUILDCAGE_RUN_DEBUG_SUMMARY_FILE when it is set", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const appendFile = vi.fn();

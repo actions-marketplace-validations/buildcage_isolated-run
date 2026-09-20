@@ -1,8 +1,3 @@
-/**
- * Unit tests for filesystem-mode.ts
- *
- * Run with: vp test run src/lib/filesystem-mode.test.ts
- */
 import { describe, it, expect } from "vitest";
 
 import { resolveFilesystemMode } from "./filesystem-mode.ts";

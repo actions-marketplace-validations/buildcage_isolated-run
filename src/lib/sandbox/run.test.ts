@@ -80,7 +80,6 @@ describe("runIsolated", () => {
     });
   });
 
-  // The environment travels on stdin so it never reaches the runner's disk.
   it("hands the environment over on stdin rather than in argv", () => {
     const { calls, execFile } = recorder();
     const envBlob = Buffer.from("SECRET=value\0");
@@ -104,8 +103,6 @@ describe("runIsolated", () => {
     expect(runIsolated(options(), { execFile })).toBe(42);
   });
 
-  // A child that exits before draining envBlob shows up here with a spurious
-  // EPIPE alongside its real status, so the status is what must be read.
   it("still reports the exit code when an EPIPE rides along with it", () => {
     const { execFile } = recorder(() => {
       throw execFailure(3, { code: "EPIPE", errno: -32 });

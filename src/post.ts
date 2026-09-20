@@ -9,7 +9,7 @@ import { planPostCleanup } from "./lib/post-cleanup.ts";
 import type { PostCleanupTargets } from "./lib/post-state.ts";
 
 // Untested by design, down to the end of the file: planPostCleanup decides
-// what may be torn down, and tearing it down is docker.ts's job.
+// what may be torn down, and tearing it down is one `docker compose down`.
 /* v8 ignore start */
 // The override is read here too, not just in main.ts: if main.ts started the
 // proxy via BUILDCAGE_TEST_COMPOSE_FILE (this repo's own inspect-engine fixture
@@ -30,7 +30,7 @@ async function stopProxyContainer({ containerName, projectName }: PostCleanupTar
 // process was killed outright before reaching that finally (e.g. the
 // runner cancels the step). State saved by main.ts's core.saveState surfaces
 // here via core.getState; see
-// https://docs.github.com/en/actions/creating-actions/dockerfile-support-for-github-actions#saving-state.
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#sending-values-to-the-pre-and-post-actions.
 function main(): void {
   const targets = planPostCleanup(
     {

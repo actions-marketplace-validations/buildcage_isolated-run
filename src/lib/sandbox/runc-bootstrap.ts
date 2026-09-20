@@ -28,9 +28,7 @@ export interface ExtractRuncBootstrapOptions {
 }
 
 export interface RuncBootstrapDeps {
-  /** Runs a command, returning its stdout. */
   exec?: (command: string, args: string[]) => string;
-  /** Runs a command in `cwd`, discarding its stdout. */
   execIn?: (command: string, args: string[], cwd: string) => void;
   readFile?: (path: string) => string;
   chmod?: (path: string, mode: number) => void;

@@ -79,8 +79,6 @@ describe("extractRuncBootstrap", () => {
     ]);
   });
 
-  // The seccomp profile depends on the real host kernel and arch, so the
-  // generator runs on the host rather than through `docker exec`.
   it("returns the generator's profile and runc's own default spec", () => {
     const { deps } = recorder();
     const result = extractRuncBootstrap({ containerName: CONTAINER, destDir: DEST }, deps);
@@ -90,8 +88,6 @@ describe("extractRuncBootstrap", () => {
     expect(result.baseSpec).toStrictEqual(BASE_SPEC);
   });
 
-  // It is only needed to resolve the profile, and the scratch dir it sits in
-  // is bind-mounted into the sandbox.
   it("removes gen-seccomp-profile once its output has been read", () => {
     const { calls, deps } = recorder();
     extractRuncBootstrap({ containerName: CONTAINER, destDir: DEST }, deps);

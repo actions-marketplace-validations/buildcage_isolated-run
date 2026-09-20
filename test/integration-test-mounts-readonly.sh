@@ -17,10 +17,10 @@
 # The second is a pseudo-filesystem that is not among runc's own default
 # base-spec mounts (see freshMountDestinationsFrom in sandbox/oci-mounts.ts),
 # so it must not be tolerated merely for looking like one. securityfs is the
-# realistic example: the Actions Ubuntu images have AppArmor enabled, so they
-# mount it at /sys/kernel/security, and runc's default spec never declares
-# it. Remounting the real one from a test would not be safe, so this mounts an
-# equivalent at a throwaway location outside every writable exception.
+# realistic case: the Actions Ubuntu images mount it at /sys/kernel/security
+# for AppArmor, and runc's default spec never declares it. Remounting the real
+# one from a test is not safe, so this mounts an equivalent at a throwaway
+# location outside every writable exception.
 set -uo pipefail
 
 : "${BUILDCAGE_LOCAL_IMAGE_REF:?BUILDCAGE_LOCAL_IMAGE_REF must be set to the locally built proxy image}"

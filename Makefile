@@ -102,8 +102,8 @@ clean_sandbox_dev: ## Stop and remove the sandbox dev-loop containers
 # through, unlike the unit tests: each group wants a different proxy image
 # under BUILDCAGE_LOCAL_IMAGE_REF: universal for the first two, an inspect
 # image built with BUILDCAGE_TEST_HOOKS=1 for the third, and none at all for
-# the fourth, which builds both images itself and wants the variable unset. Build the image a
-# group needs, then run that group, the way each CI job does.
+# the fourth, which builds both images itself and wants the variable unset.
+# Build the image a group needs, then run that group, the way each CI job does.
 .PHONY: test_integration
 test_integration: test_integration_sandbox_linux test_integration_sandbox_universal test_integration_sandbox_inspect test_integration_listener_scope ## Every integration test CI runs; the four groups need different proxy images, so build each one's image first
 
@@ -126,11 +126,10 @@ test_integration_sandbox_linux: ## Run the action's integration tests (needs BUI
 
 # Separate from test_integration_sandbox_linux: these use the fixture origin
 # network in compose.test-universal.yaml (fake DNS + an origin this repo
-# controls) instead of the real internet, which is what lets them cover cases
-# real hosts can't: an allowlisted name resolving to an internal address,
-# NXDOMAIN, direct-IP blocking with no allowed_ip_rules, etc. The rest are here
-# for the other half of that: whatever they assert, a third-party site being up
-# is not something this suite should depend on.
+# controls) instead of the real internet. That covers cases real hosts can't
+# (an allowlisted name resolving to an internal address, NXDOMAIN, direct-IP
+# blocking with no allowed_ip_rules), and keeps the rest from depending on a
+# third-party site being up.
 .PHONY: test_integration_sandbox_universal
 test_integration_sandbox_universal: ## Run the universal-engine fixture-based integration tests (needs BUILDCAGE_LOCAL_IMAGE_REF built with test hooks)
 	@./test/integration-test-universal-restrict.sh

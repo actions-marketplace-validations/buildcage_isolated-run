@@ -53,8 +53,8 @@ export function buildComposeEnv(
     // write $GITHUB_ENV, so a resolver left to the step environment would be a
     // previous step's choice, not the action's.
     EXTERNAL_RESOLVER: "",
-    // Completed engine-side with the compose network's gateway, which does
-    // not exist yet here. See lib/host-addresses.ts.
+    // The compose network's gateway is added engine-side; see
+    // lib/host-addresses.ts.
     HOST_ADDRESSES: hostAddresses().join(" "),
   };
 }

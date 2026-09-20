@@ -1,7 +1,8 @@
 #!/bin/bash
 # Verifies filesystem_mode: ephemeral / write_through: end-to-end by driving
-# dist/main.cjs directly, without the real action wrapper; see
-# test-e2e.yml for the one case that does exercise the real action.
+# dist/main.cjs directly, without the real action wrapper; test-e2e.yml's
+# test_sandbox_enforcement covers write_through: through the real action, and
+# nothing there sets filesystem_mode: at all.
 # The mount-composition/path-resolution rules themselves are already
 # unit-tested (ephemeral-fs.test.ts, oci-config.test.ts); this proves runc
 # actually honors them.
@@ -11,7 +12,7 @@
 # overlayfs itself doesn't work, which contradicts everything else in this file
 # running successfully. Covered instead by the mac-only dev loop
 # (`make test_sandbox_dev`), where overlayfs-on-overlayfs is known to fail
-# (see overlayfs-preflight.ts's own doc comment).
+# (see overlayfs-preflight.ts's REQUIREMENT message).
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 

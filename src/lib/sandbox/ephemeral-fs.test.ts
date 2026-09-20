@@ -35,7 +35,7 @@ describe("determineOverlayRoots", () => {
     ).toStrictEqual(["/tmp"]);
   });
 
-  it("keeps a candidate that is only an ancestor of a narrower write_through entry (the entry's own rw bind persists just that subtree on top -- see buildOciConfig's mount ordering)", () => {
+  it("keeps a candidate that is only an ancestor of a narrower write_through entry", () => {
     const candidates = [ENV.HOME, "/tmp"];
     expect(
       determineOverlayRoots(candidates, [`${ENV.HOME}/.npmrc`], { exists, deviceOf: sameDevice }),
@@ -66,10 +66,9 @@ describe("determineOverlayRoots", () => {
   });
 
   it("does not let a non-existent outer candidate drop an existing inner one's coverage", () => {
-    // HOME doesn't exist; RUNNER_TEMP (nested under it) does. The exists()
-    // filter has to run before the nesting fold: the other order drops
-    // RUNNER_TEMP as "covered by" HOME regardless, and then drops HOME for
-    // not existing, leaving RUNNER_TEMP with no overlay at all.
+    // HOME doesn't exist; RUNNER_TEMP (nested under it) does. Pins the order of
+    // the exists() filter and the nesting fold: the other order leaves
+    // RUNNER_TEMP with no overlay at all.
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     expect(
       determineOverlayRoots(candidates, [], {
@@ -82,9 +81,8 @@ describe("determineOverlayRoots", () => {
   it("keeps a nested candidate that is actually a distinct mount instead of folding it into the outer one", () => {
     // RUNNER_TEMP is nested under HOME by path, but reports a different
     // device: a real (if unusual) self-hosted layout where RUNNER_TEMP is
-    // its own separate filesystem mounted inside $HOME. Folding it away
-    // would leave it uncovered by any overlay (see computeReadonlyHostMounts,
-    // which matches by exact mount point).
+    // its own separate filesystem mounted inside $HOME. Folding it into
+    // HOME's overlay would leave it invisible rather than covered.
     const candidates = [ENV.HOME, ENV.RUNNER_TEMP];
     const deviceOf = (p: string) => (p === ENV.RUNNER_TEMP ? 2 : 1);
     expect(determineOverlayRoots(candidates, [], { exists, deviceOf })).toStrictEqual([

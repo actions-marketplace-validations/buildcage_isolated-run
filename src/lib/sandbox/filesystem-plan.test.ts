@@ -1,8 +1,3 @@
-/**
- * Unit tests for filesystem-plan.ts
- *
- * Run with: vp test run src/lib/sandbox/filesystem-plan.test.ts
- */
 import { describe, it, expect, vi } from "vitest";
 
 import { resolveFilesystemPlan, validateFilesystemInputs } from "./filesystem-plan.ts";
@@ -129,13 +124,9 @@ describe("resolveFilesystemPlan", () => {
   });
 
   it("resolves and pre-creates write_through targets, then excludes only what's actually covered by them", () => {
-    // Self-hosted-style ENV: GITHUB_WORKSPACE isn't nested under HOME here,
-    // so its own overlay survives folding, letting this test show, through
-    // resolveFilesystemPlan end-to-end, that a candidate merely containing a
-    // narrower write_through entry (./dist under the workspace) keeps its own
-    // overlay rather than being dropped (see determineOverlayRoots' "covered
-    // by" rule and buildOciConfig's mount ordering, which layers ./dist's
-    // own rw bind on top of that overlay).
+    // Self-hosted-style ENV: GITHUB_WORKSPACE isn't nested under HOME here, so
+    // its own overlay survives folding. That is what lets this exercise, end to
+    // end, a candidate that merely contains a narrower write_through entry.
     const selfHostedEnv = { ...ENV, GITHUB_WORKSPACE: "/workspace" };
     const execFileCalls: string[][] = [];
     const plan = resolveFilesystemPlan("ephemeral", "./dist", selfHostedEnv, {

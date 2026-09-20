@@ -95,8 +95,7 @@ export interface ReportOutcome {
 
 /**
  * Pure decision + rendering step, kept free of process.env/file I/O so it's
- * testable without touching the filesystem. writeReportSummary below is the
- * side-effecting half (actual summary/annotation output).
+ * testable without touching the filesystem.
  */
 export function computeReportOutcome(
   report: Report,
@@ -133,14 +132,14 @@ export interface WriteReportSummaryDeps {
 }
 
 /**
- * Side-effecting half of the report step: computeReportOutcome() decides
- * what to say, this writes it to the Job Summary/annotations/exit code.
+ * Side-effecting half of the report step: computeReportOutcome() decides what
+ * to say; this writes it to the Job Summary, the annotations and the exit code.
  * `artifactAvailable` only affects the wording of a truncation notice if the
  * report turns out to be too large for GitHub's own per-step limit: it
  * does not gate whether truncation happens.
  *
- * Both destinations come from `env` rather than being read here, so a test
- * decides where the summary goes the same way the runner does.
+ * The summary's two destinations come from `env` rather than being read here,
+ * so a test decides where it goes the same way the runner does.
  */
 export async function writeReportSummary(
   report: Report,

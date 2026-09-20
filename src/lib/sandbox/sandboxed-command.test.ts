@@ -97,8 +97,6 @@ describe("runSandboxedCommand", () => {
     );
   });
 
-  // The proxy is both the default gateway and the only nameserver on the veth
-  // link, and the sandbox is the other end of it.
   it("wires the sandbox to the proxy's fixed addresses", () => {
     runSandboxedCommand(options(), deps);
 
@@ -125,8 +123,6 @@ describe("runSandboxedCommand", () => {
     );
   });
 
-  // inspect terminates TLS, so the sandboxed process has to be made to trust
-  // the proxy's CA; no other engine has one to trust.
   it("trusts the proxy's CA under the inspect engine", () => {
     runSandboxedCommand(options({ proxyEngine: "inspect" }), deps);
 
@@ -226,9 +222,6 @@ describe("runSandboxedCommand", () => {
     expect(error!.message).toContain("boom");
   });
 
-  // A step that already wrote for the user (here resolveSandboxGid's
-  // UNSAFE_PRIMARY_GID) keeps its code and its words instead of being
-  // restated as a generic failure of the step that called it.
   it.each([
     ["extractRuncBootstrap", () => mocks.extractRuncBootstrap, {}],
     ["extractCaCert", () => mocks.extractCaCert, { proxyEngine: "inspect" }],
@@ -271,8 +264,7 @@ describe("assembleBundle", () => {
     expect(mocks.runIsolated).not.toHaveBeenCalled();
   });
 
-  // buildOciConfig only records the paths; every one of them has to be on
-  // disk before runc is handed the bundle; see writeBundleFiles.
+  // Why the order matters: see writeBundleFiles.
   it("writes the files the config points at before building it", () => {
     assembleBundle(SCRATCH, options({ filesystemMode: "ephemeral", overlayRoots: ["/tmp"] }), deps);
 

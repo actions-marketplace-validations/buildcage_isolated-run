@@ -6,10 +6,9 @@
 # a unit that runs entirely outside every namespace the sandbox creates).
 # See identity.ts (GID substitution) and runtime-sockets.ts with
 # oci-protected-paths.ts (the per-path and per-user-runtime-dir masking) for
-# the two independent
-# layers that close this. Drives dist/main.cjs directly, without the real
-# action wrapper; see test-e2e.yml's test_sandbox_enforcement for the
-# one case that does exercise the real action.
+# the two independent layers that close this. Drives dist/main.cjs directly,
+# without the real action wrapper; see test-e2e.yml's test_sandbox_enforcement
+# for the one case that does exercise the real action.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 

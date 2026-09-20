@@ -96,10 +96,8 @@ export interface RunSandboxedCommandOptions {
   warn: Warn;
 }
 
-/** What the bundle is built from; `proxyNetns` is only needed to run it. */
 export type AssembleBundleOptions = Omit<RunSandboxedCommandOptions, "proxyNetns">;
 
-/** An assembled bundle: the config to write, and what running it needs. */
 export interface AssembledBundle {
   config: BuiltOciSpec;
   runcPath: string;

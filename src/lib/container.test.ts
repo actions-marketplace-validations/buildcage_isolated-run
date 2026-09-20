@@ -55,9 +55,7 @@ describe("the names derived from a container's own", () => {
     expect(scratchDirNameFor("buildcage-proxy-deadbeef")).toBe("sandbox-deadbeef");
   });
 
-  // Each is a name in its own namespace: runc container ids and `ip netns`
-  // names are not Docker's, and the scratch dir is a directory under
-  // SANDBOX_SCRATCH_BASE. Sharing a spelling would make `docker ps` output
+  // Sharing a spelling between the three would make `docker ps` output
   // ambiguous.
   it("gives a generated name three distinct spellings", () => {
     const containerName = generateContainerName();

@@ -126,10 +126,8 @@ COPY --from=deps /opt/buildcage/bin/runc /opt/buildcage/bin/runc
 # in runc's config.json; see the build stage comment above for why.
 COPY --from=gen-seccomp-profile-build /out/gen-seccomp-profile /opt/buildcage/bin/gen-seccomp-profile
 
-# License
 COPY docker/inspect/files/THIRD_PARTY_LICENSES /opt/buildcage/THIRD_PARTY_LICENSES
 
-# s6 service definitions and init scripts
 COPY docker/inspect/files/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY docker/inspect/files/s6-scripts/ /etc/s6-overlay/scripts/
 

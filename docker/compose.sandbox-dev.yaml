@@ -7,8 +7,7 @@
 # docker/compose.sandbox-dev.yaml`, and Compose resolves every file's
 # relative paths against the first -f file's directory (the repo root),
 # not against this file's own directory, so paths below are written
-# root-relative, not docker/-relative. Verified with `docker compose -f
-# compose.yaml -f docker/compose.sandbox-dev.yaml config`.
+# root-relative, not docker/-relative.
 services:
   sandbox-dev-runner:
     container_name: buildcage-sandbox-dev-runner
@@ -25,9 +24,8 @@ services:
       - apparmor=unconfined
     # runc needs to create/manage a cgroup for the sandboxed process, which
     # needs a writable /sys/fs/cgroup, read-only by default in a
-    # non-privileged container, same reasoning as the "proxy" service in
-    # ../compose.yaml. Not needed on the real GitHub Actions runner host
-    # this dev loop stands in for (root already has full cgroup access
+    # non-privileged container. Not needed on the real GitHub Actions runner
+    # host this dev loop stands in for (root already has full cgroup access
     # there without this).
     cgroup: host
     volumes:

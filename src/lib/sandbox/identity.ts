@@ -25,12 +25,11 @@ const FALLBACK_GID = 65534;
  * What this module needs to know about the host: its group database and who
  * owns a path. Injected as one collaborator rather than as loose callbacks:
  * both answers come from the same place, and a test that supplies one without
- * the other would be describing a host that cannot exist.
+ * the other would be describing a host that cannot exist. Either one throws
+ * when it cannot read what it was asked for.
  */
 export interface HostGroups {
-  /** Contents of a /etc/group-formatted file. Throws if unreadable. */
   readGroupFile(path: string): string;
-  /** Owning GID of a path. Throws if it does not exist. */
   gidOf(path: string): number;
 }
 
