@@ -2,8 +2,8 @@
  * Parsers for the `inspect` engine's two logs, whose formats are emitted by
  * haproxy-config.ts and coredns-config.ts. Seven kinds of line:
  *
- *   buildcage <ms> https <method> <status> <bytes> ts=<st> reason=<r> dst=<addr>:<port> sni=<name|-> <url>
- *   buildcage <ms> http <method> <status> <bytes> ts=<st> reason=<r> dst=<addr>:<port> <url>
+ *   buildcage <ms> https <method> <status> <bytes> ts=<st> reason=<r> tlserr=<n|-> dst=<addr>:<port> sni=<name|-> host=<authority|-> <target|->
+ *   buildcage <ms> http <method> <status> <bytes> ts=<st> reason=<r> tlserr=<n|-> dst=<addr>:<port> host=<authority|-> <target|->
  *   buildcage <ms> pass <tls|tcp> <bytes> ts=<st> reason=<r> dst=<addr>:<port> sni=<name|->
  *   <timestamp>  [INFO] buildcage dns <allowed|denied> name=<name>.
  *   <timestamp>  [INFO] buildcage dns discovery name=<name>. type=<qtype>
@@ -20,12 +20,12 @@
  */
 
 import type { TrafficAction, TrafficEvent } from "./traffic-event.ts";
-import { parseObservedUrl } from "./authority.ts";
+import { splitHostPort } from "./authority.ts";
 import { PROXY_START_MARKER } from "./start-marker.ts";
 
 export type { TrafficAction, TrafficEvent, TrafficProtocol } from "./traffic-event.ts";
 
-// The URL and the SNI come last because the build chooses their length: a
+// The target and the SNI come last because the build chooses their length: a
 // cut line costs their tail, not the decision. Nothing should cut one, since
 // both the configured line length and s6-log's split are above the longest
 // request haproxy accepts, so `unparsed` counts what arrives unreadable
@@ -34,11 +34,11 @@ export type { TrafficAction, TrafficEvent, TrafficProtocol } from "./traffic-eve
 // half-written write would otherwise parse as one event instead of counting
 // as unparsed.
 // sni= is optional: the plain stage terminates no TLS and logs no such field.
-// The URL keeps its scheme for that reason, or a line cut right after the SNI
-// would parse with `sni=<name>` read as the URL instead of counting as
+// `host=` is a named field for that reason, or a line cut right after the SNI
+// would parse with `sni=<name>` read as the authority instead of counting as
 // unreadable.
 const REQUEST =
-  /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?(https?:\/\/\S+)$/;
+  /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) tlserr=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?host=(\S+) (\S+)$/;
 const PASSTHROUGH =
   /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/;
 const DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/;
@@ -93,74 +93,157 @@ function isRefusal(terminationState: string): boolean {
  * The config names the refusals only it can tell apart: 502 is both our DNS
  * deny and an origin that gave up, and a passthrough reject has no status at
  * all. Everything else the phase already names, so the field stays `-`.
+ *
+ * Only the server's own causes name the origin. `P` is this proxy refusing,
+ * whatever phase it happened in: `PH` is a response it judged invalid and `PC`
+ * its own connection limit, neither of which the origin chose. In phase `R` it
+ * is haproxy's own answer to bytes that parsed as no request at all, which the
+ * method tells from a refusal the rules made.
+ *
+ * Phase `C` is a connection that never completed, and both of its reasons are
+ * this proxy's own refusal. `tlserr` says which: the backend connects with
+ * `ssl verify required` (see haproxy-sections.ts), and a handshake that failed
+ * leaves haproxy's own error there, so `origin-untrusted` names a certificate
+ * this proxy would not accept. Any error counts, whether it was forged or the
+ * origin speaks no TLS at all: neither is an origin this proxy could
+ * authenticate, and reading only the verify error would let the second pass as
+ * an outage.
+ *
+ * `origin-connect-failed` is the rest of that phase, and is a refusal too
+ * because it cannot be shown not to be one. `tlserr` belongs to the last
+ * connection attempt alone and a failed handshake is retried, so a certificate
+ * refused on one attempt leaves no trace once a later attempt fails at TCP:
+ * measured on haproxy 3.4, an impostor logs `rc=3 ts=SC` with the verify error,
+ * and the same impostor going silent partway through those retries logs
+ * `ts=SC tlserr=-`, which is what an origin that is merely down logs too. The
+ * report cannot tell them apart, so it does not claim to: a connection this
+ * proxy never completed is one whose origin it never authenticated. A host that
+ * is flaky rather than hostile is cleared the way any expected refusal is, with
+ * known_blocked_rules.
+ *
+ * `tlsError` is undefined where this proxy checked no certificate at all, and
+ * a connection it could not make there hid nothing: the plain stage carries
+ * plaintext to `origin_plain`, which verifies nothing, and the passthrough
+ * relays the handshake for the build to judge. Both stay `origin-unreachable`.
+ * Only where a certificate was going to be checked is a connection that never
+ * completed a refusal.
  */
-function reasonFor(logged: string, terminationState: string): string {
+function reasonFor(
+  logged: string,
+  terminationState: string,
+  tlsError: string | undefined,
+  method: string,
+): string {
   if (logged !== "-") return logged;
+  const cause = terminationState[0];
+  if (cause !== "S" && cause !== "s") {
+    return method === BAD_REQUEST_METHOD ? "bad-request" : "not-allowed";
+  }
   switch (terminationState[1]) {
-    case "R":
-      return "not-allowed";
-    case "C":
-      return "origin-unreachable";
     case "H":
       return "origin-no-response";
     case "D":
     case "L":
       return "origin-aborted";
     default:
-      return "not-allowed";
+      if (tlsError === undefined) return "origin-unreachable";
+      return cause === "S" && tlsError !== "-" && tlsError !== "0"
+        ? "origin-untrusted"
+        : "origin-connect-failed";
   }
 }
 
 /**
- * The whole authority a request line can leave behind, matched exactly rather
- * than by its leading `-`.
- *
- * The URL is built from the captured `Host` header and the path, for each of
- * which haproxy prints `-` when the request never carried one: `-` is a missing
- * `Host` with a path behind it, `--` bytes that parsed as neither. A `Host` the
- * build did send is logged as sent, and only the whitespace, quotes and control
- * characters the capture rewrites are gone, so a host of its own choosing could
- * otherwise pass this test: `Host: -evil.example.com` reads as an authority
- * beginning with a hyphen, and a refusal the rules did make would leave both
- * tables and `fail_on_blocked` at the sender's discretion.
+ * What haproxy logs where the method would be when the bytes it read parsed as
+ * no request at all. A client cannot send it: a method is an HTTP token, and
+ * `<` and `>` are not token characters, so this is the proxy's own word rather
+ * than anything the build chose.
  */
-const NO_AUTHORITY = new Set(["-", "--"]);
+const BAD_REQUEST_METHOD = "<BADREQ>";
 
 /**
- * What kept a whole request from reaching the rules, or undefined when one did
- * reach them.
+ * The refusals this proxy made over a request that named no host. The host
+ * field is the `Host` the log prints as `-`, so the connection is named by its
+ * handshake instead; see hostBeforeRequest.
+ */
+const REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
+
+/**
+ * What ended a connection before a whole request had arrived, or undefined when
+ * one arrived or this proxy is the one that ended it.
  *
  * Phase `R` is the proxy still reading the request line and headers, and the
  * inspected stage resolves the Host and connects only once one has parsed, so
- * nothing left this proxy. `C` is the client closing, `c` its own timeout
- * expiring, and `P` this proxy answering: haproxy's own 400 for bytes it could
- * not read as a request, or a rule denying one whose `Host` never arrived. A
- * later phase (`CD` and the like) means the rules had already decided on a
- * request, so those stay ordinary exchanges.
+ * nothing left this proxy. `C` is the client closing and `c` its own timeout
+ * expiring, neither of which a rule had a say in. `P` is this proxy answering,
+ * which is a decision however little of the request it had, so reasonFor names
+ * it instead. Anything else in that phase is haproxy's own doing, an internal
+ * error or a resource it ran out of, and no request arrived then either.
  *
- * `P` in phase `R` is every ordinary refusal too, and the authority is what
- * tells them apart: NO_AUTHORITY holds the two the log prints when there was
- * none to print.
+ * A later phase (`CD` and the like) means the rules had already decided on a
+ * request, so those stay ordinary exchanges, unless the method says otherwise:
+ * a queue, a connection or a transfer cannot be reached without a request, and
+ * `<BADREQ>` says none parsed. Nothing in the log makes the two agree, so a
+ * line whose own fields contradict each other is counted here rather than
+ * believed, or `--` would reach a host table as something allowed.
  */
-function incompleteReason(terminationState: string, url: string): string | undefined {
-  if (terminationState[1] !== "R") return undefined;
+function incompleteReason(terminationState: string, method: string): string | undefined {
   const cause = terminationState[0];
+  // This proxy answering is a decision however little of the request it had.
+  if (cause === "P") return undefined;
+  if (terminationState[1] !== "R") {
+    return method === BAD_REQUEST_METHOD ? "no-request" : undefined;
+  }
   if (cause === "C") return "client-aborted";
   if (cause === "c") return "client-timeout";
-  if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
-  return undefined;
+  return "no-request";
 }
 
-function actionFor(refused: boolean, isAudit: boolean): TrafficAction {
-  if (refused) return "block";
+/**
+ * The failures that are not this proxy's own: an origin that answered nothing
+ * usable or broke off mid-transfer, one no passthrough could reach, and a name
+ * the upstream resolver could not answer for a host the rules had already
+ * allowed. See TrafficAction for what the report does with them.
+ *
+ * What the first two share is a connection that completed, which is where the
+ * origin's certificate was checked: whatever went wrong afterwards, it went
+ * wrong with an origin this proxy had authenticated. An inspected connection
+ * that never completed is absent on purpose, `origin-connect-failed` as much as
+ * `origin-untrusted`: the check guards nothing if failing it does not fail a
+ * build, and the log cannot say which of the two it was. See reasonFor.
+ */
+const FAILURE_REASONS = new Set([
+  "origin-unreachable",
+  "origin-no-response",
+  "origin-aborted",
+  "dns-failed",
+]);
+
+/** Decided from the reason rather than from the termination state, which says
+ *  that something was refused but not by whom. */
+function actionFor(reason: string | undefined, isAudit: boolean): TrafficAction {
+  if (reason !== undefined) return FAILURE_REASONS.has(reason) ? "failed" : "block";
   // audit enforces nothing, so nothing here was allowed by a rule. Calling it
   // "allow" would claim a decision that was never made.
   return isAudit ? "audit" : "allow";
 }
 
-/** The host half of an absolute URL's authority, without its port. */
-function hostOf(url: string): string {
-  return parseObservedUrl(url)?.host ?? url;
+/**
+ * The absolute URL a request named, joined from the two fields that carry it,
+ * or undefined where its target was no path for one to be built around.
+ *
+ * haproxy's `pathq` is empty, printed as `-`, for every request-target that is
+ * not origin-form: the asterisk-form `OPTIONS *` of RFC 9112 §3.2.4 and a
+ * CONNECT's authority. Both are legal requests that reach the rules and are
+ * refused by them, since every path matcher wants a leading slash, so the
+ * report still has an event to show; it just has no URL to show for it.
+ *
+ * An authority of `-` still builds one. That request did name a path, and the
+ * path is what the report has to show; the host it is joined to is a refusal
+ * this proxy names for itself (see REQUESTLESS_REASONS).
+ */
+function urlOf(scheme: string, authority: string, target: string): string | undefined {
+  return target.startsWith("/") ? `${scheme}://${authority}${target}` : undefined;
 }
 
 /** Stands in for a host the log has no way to name; see hostBeforeRequest. */
@@ -189,33 +272,44 @@ function parseProxyLine(line: string, isAudit: boolean): TrafficEvent | null {
 
   const request = REQUEST.exec(trimmed);
   if (request) {
-    const incomplete = incompleteReason(request[6], request[11]);
-    if (incomplete) {
-      // Method and URL stay unset: `<BADREQ>` and an authority-less URL are
-      // what the log-format prints for fields that never existed.
-      return {
-        time: Number(request[1]) / 1000,
-        action: "incomplete",
-        protocol: request[2] as "http" | "https",
-        host: hostBeforeRequest(request[10], request[8]),
-        port: Number(request[9]),
-        reason: incomplete,
-        destination: `${request[8]}:${request[9]}`,
-      };
-    }
-    const refused = isRefusal(request[6]);
+    const incomplete = incompleteReason(request[6], request[3]);
+    // Only the https stage connects with `ssl verify required`; the plain one
+    // logs the field all the same and has no certificate behind it. See
+    // reasonFor for what that changes.
+    const tlsError = request[2] === "https" ? request[8] : undefined;
+    const reason =
+      incomplete ??
+      (isRefusal(request[6]) ? reasonFor(request[7], request[6], tlsError, request[3]) : undefined);
+    // The host field holds the `Host` that never came, so the handshake is the
+    // only thing left that names the connection.
+    const namedByHandshake =
+      reason !== undefined && (incomplete !== undefined || REQUESTLESS_REASONS.has(reason));
+    // A request line that did parse is kept whole even so. The path is where a
+    // payload sits, and the report is the only place a reader looks; `-` for
+    // the authority is the log's own word for one that never arrived, and no
+    // longer decides anything here.
+    const parsedRequest = request[3] !== BAD_REQUEST_METHOD;
+    const scheme = request[2] as "http" | "https";
+    const authority = request[12];
     const event: TrafficEvent = {
       // <ms> is milliseconds; TrafficEvent.time is seconds.
       time: Number(request[1]) / 1000,
-      action: actionFor(refused, isAudit),
-      protocol: request[2] as "http" | "https",
-      host: hostOf(request[11]),
-      port: Number(request[9]),
-      method: request[3],
-      url: request[11],
-      destination: `${request[8]}:${request[9]}`,
+      action: incomplete !== undefined ? "incomplete" : actionFor(reason, isAudit),
+      protocol: scheme,
+      // The `Host` header names the host; the port comes from dst=, where the
+      // request was actually sent.
+      host: namedByHandshake
+        ? hostBeforeRequest(request[11], request[9])
+        : splitHostPort(authority).host,
+      port: Number(request[10]),
+      destination: `${request[9]}:${request[10]}`,
     };
-    if (refused) event.reason = reasonFor(request[7], request[6]);
+    if (parsedRequest) {
+      event.method = request[3];
+      const url = urlOf(scheme, authority, request[13]);
+      if (url !== undefined) event.url = url;
+    }
+    if (reason !== undefined) event.reason = reason;
     else {
       event.status = Number(request[4]);
       event.bytes = Number(request[5]);
@@ -225,20 +319,23 @@ function parseProxyLine(line: string, isAudit: boolean): TrafficEvent | null {
 
   const pass = PASSTHROUGH.exec(trimmed);
   if (pass) {
-    const refused = isRefusal(pass[4]);
+    // This stage relays TLS rather than terminating it, so it has no backend
+    // handshake to fail and phase `C` is only a connection that was not made.
+    // It reads no request either, hence the method it could never log.
+    const reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], undefined, "-") : undefined;
     // An ip rule names an address and carries no SNI, so the address is the
     // only identity such a connection has.
     const sni = pass[8];
     const event: TrafficEvent = {
       time: Number(pass[1]) / 1000,
-      action: actionFor(refused, isAudit),
+      action: actionFor(reason, isAudit),
       protocol: pass[2] as "tls" | "tcp",
       host: sni === "-" ? pass[6] : sni,
       port: Number(pass[7]),
       destination: `${pass[6]}:${pass[7]}`,
     };
     // Never decrypted, so there is no status to report either way.
-    if (refused) event.reason = reasonFor(pass[5], pass[4]);
+    if (reason !== undefined) event.reason = reason;
     else event.bytes = Number(pass[3]);
     return event;
   }
@@ -377,13 +474,14 @@ export async function scanInspectDnsLog(
     }
   }
   const events = [...seen.entries()].map(([host, { time, allowed }]) => {
+    const reason = allowed ? undefined : "dns-not-allowed";
     const event: TrafficEvent = {
       time,
-      action: actionFor(!allowed, isAudit),
+      action: actionFor(reason, isAudit),
       protocol: "dns",
       host,
     };
-    if (!allowed) event.reason = "dns-not-allowed";
+    if (reason !== undefined) event.reason = reason;
     return event;
   });
   for (const { time, host, queryType } of discovery.values()) {
@@ -392,7 +490,7 @@ export async function scanInspectDnsLog(
   for (const { time, host, queryType } of service.values()) {
     events.push({
       time,
-      action: actionFor(true, isAudit),
+      action: actionFor("dns-service-not-allowed", isAudit),
       protocol: "dns",
       host,
       queryType,

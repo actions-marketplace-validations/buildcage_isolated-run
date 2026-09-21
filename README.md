@@ -80,7 +80,7 @@ examples below use the `inspect` engine; [Engines](#engines) covers the choice b
 
 The step writes every destination the command contacted to the Job Summary:
 
-<img src="assets/report-inspect-audit-mode.png" alt="Outbound Traffic Report - audit mode" width="556">
+<img src="assets/report-inspect-audit-mode.png" alt="Outbound Traffic Report (audit mode)" width="568">
 
 Its **Switch to restrict mode** section holds the allowlist, already written out from what the
 command actually did.
@@ -106,7 +106,7 @@ Paste that allowlist into the step and switch the mode:
 Each rule names the methods it permits, so these let npm install packages without letting it publish
 any: `npm publish` is a `PUT` to the same host, which no rule here covers.
 
-<img src="assets/report-inspect-restrict-mode.png" alt="Outbound Traffic Report - restrict mode" width="556">
+<img src="assets/report-inspect-restrict-mode.png" alt="Outbound Traffic Report (restrict mode)" width="568">
 
 A blocked connection fails the step, so a command that starts reaching somewhere new doesn't pass
 unnoticed.
@@ -375,8 +375,7 @@ the proxy container, network, and Compose project are namespaced per step, and e
 records which step started it, so concurrent steps never tear down each other's containers.
 
 [Security Details](./docs/security.md) has the architecture of each engine and the isolation
-mechanisms, with a diagram of what runs where. [Development Guide](./docs/development.md) has the
-implementation.
+mechanisms, with a diagram of what runs where.
 
 ## CA trust and compatibility
 
@@ -430,7 +429,7 @@ data, or source you do not publish. For the full threat model, see
 - `universal` never sees the method or the path. They travel inside TLS, so neither is enforced and
   neither reaches the report or the traffic artifact. A request fronted behind an allowed SNI is
   invisible to it as well, while `inspect` matches on the real `Host` and refuses it. See
-  [What it can't see](./docs/security.md#what-it-cant-see).
+  [Domain fronting](./docs/security.md#domain-fronting).
 - The generated allowlist covers only what the engine classified. `allowed_tls_rules` and
   `allowed_ip_rules` come back exactly as the audit run was configured with them, since nothing
   behind a passthrough was ever decrypted.
@@ -547,7 +546,7 @@ firewall-enabled runner image.
 | ------------------------------------------ | ----------------------------------------------------------------- |
 | [Reference](./docs/reference.md)           | Every input, the rule syntax in full, the report's own output     |
 | [Security Details](./docs/security.md)     | Architecture and threat model for every engine, attack resistance |
-| [Development Guide](./docs/development.md) | Local usage, testing, logs, and implementation internals          |
+| [Development Guide](./docs/development.md) | Local usage, testing, logs, and the repository layout             |
 
 ## Contributing
 

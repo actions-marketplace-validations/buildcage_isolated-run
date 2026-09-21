@@ -1,247 +1,315 @@
 # Security Details
 
-isolated-run applies network isolation (an iptables redirect, a DNS redirect, and an allowlist
-proxy) to an arbitrary `run:` command, on the runner host itself rather than inside a build
-container. Its threat model differs from a Docker-build tool in one important way: the process being
-isolated is a full shell command chosen by the workflow author, running with the same privileges as
-the Actions runner. Restricting its network alone is not enough, so the command also has to be
-structurally unable to leave its sandbox by other means, whether by escalating privileges, reaching
-the Docker socket, or reading another process's memory.
-
-The design goal is to bolt egress control onto an existing workflow step without changing how the
-rest of the job works. A step that configures AWS credentials, an npm cache directory, or anything
-else keeps running exactly as it did; this action wraps only the command whose network access you
-want restricted, rather than asking the surrounding job to move into a differently-configured
-environment. That is why UID/GID and `$HOME` are preserved rather than switched to a dedicated
-sandbox account (see UID/GID preserved below): tools and caches that assume the runner's own
-identity keep working unmodified.
-
-For how to configure the action, see the [README](../README.md). For implementation internals, see
-the [Development Guide](./development.md).
+This document is the threat model behind Buildcage for `run:` steps: what the sandbox confines, how
+a command is kept to its allowlist, and where it stops short. For how to configure the action, see
+the [README](../README.md); for implementation internals, see the
+[Development Guide](./development.md).
 
 ## Contents
 
+- [Threat model](#threat-model)
 - [Isolation Mechanisms](#isolation-mechanisms)
-- [Inspect Proxy Engine](#inspect-proxy-engine)
-- [Universal Proxy Engine](#universal-proxy-engine)
+- [The network boundary](#the-network-boundary)
+- [Engines](#engines)
+- [Attempts to get around it](#attempts-to-get-around-it)
+- [What the engines cannot see](#what-the-engines-cannot-see)
+- [Credentials in a URL](#credentials-in-a-url)
 - [Hardening](#hardening)
 - [Known Limitations](#known-limitations)
 - [Image Provenance Verification](#image-provenance-verification)
+
+## Threat model
+
+This action governs the command it wraps: a `run:` step's shell command and everything it pulls in,
+a dependency's `postinstall` script included. It decides which destinations that command can reach,
+and records what it tried.
+
+The difference from a Docker-build tool is that the command is not already inside a container. It is
+a full shell command chosen by the workflow author, running with the same privileges as the Actions
+runner, so restricting its network alone would not be enough: the command also has to be unable to
+leave by other means, whether by escalating privileges, reaching the Docker socket, or reading
+another process's memory. See [Isolation Mechanisms](#isolation-mechanisms).
+
+The design goal is to bolt egress control onto an existing step without changing how the rest of the
+job works. A step that configures AWS credentials, an npm cache directory, or anything else keeps
+running exactly as it did. That is why UID/GID and `$HOME` are preserved rather than switched to a
+dedicated sandbox account: tools and caches that assume the runner's own identity keep working
+unmodified.
+
+Four things sit outside the model by design.
+
+- **Whoever writes the workflow.** The allowlist is configured alongside the command, by the same
+  people, so Buildcage is not a control against them.
+- **Another step in the same job.** A compromised or untrustworthy action running as another step
+  can use `docker exec` or `docker cp`, or the host root a passwordless-sudo runner grants by
+  default, to tamper with the proxy container's state, most notably its traffic log. Sigstore proves
+  the image was genuine at startup, not afterwards. The report refuses a log that doesn't start
+  where a real proxy run would, which catches wholesale erasure, but not a format-aware forgery.
+  The defense here is procedural: don't place an untrusted step immediately around this action.
+- **What the command reads.** It restricts where the command can send data, not what it can open, so
+  a compromised dependency can still read `~/.aws/credentials` or `~/.docker/config.json`; it just
+  cannot send them anywhere outside the allowlist. See
+  [What the sandbox does not stop](#what-the-sandbox-does-not-stop).
+- **How much of the machine it uses.** No CPU, memory or pids ceiling is set, and an unwrapped
+  `run:` step has none either. See [What the sandbox does not stop](#what-the-sandbox-does-not-stop).
+
+There is also a structural limit no rule set fixes. An allowlist decides destinations, so it cannot
+tell a legitimate use of an allowed destination from an abusive one, and anything leaving through a
+service you had to allow anyway still leaves. What it does stop is traffic to a destination that is
+not on the list, and infrastructure an attacker set up is normally not on it, because the command
+has no reason to reach it. That is also the hardest kind of leak to find afterwards, which is why
+closing it is worth doing even though the rest stays open. [Hardening](#hardening) is about making
+the set of destinations a step needs smaller.
 
 ## Isolation Mechanisms
 
 <img src="../assets/diagram-architecture-universal.png" alt="isolated-run sandbox architecture" width="620" height="544">
 
-This is the sandbox both engines run the command in. What differs between them is only how the proxy
-on the other end of the veth pair inspects what arrives.
-
 The isolated command runs as an [OCI](https://github.com/opencontainers/runtime-spec) container
 under [runc](https://github.com/opencontainers/runc) rather than being wrapped directly by
 `unshare`/`setpriv` on the runner host. `run-isolated.sh` only sets up what runc cannot: wiring a
-veth pair directly into the proxy container's own netns, and bind-mounting the host's own `/` for
-runc's rootfs (`pivot_root` can't target `/` itself). Everything else below is declared in an OCI
-`config.json` and enforced by runc natively.
+veth pair into the proxy container's own netns, and bind-mounting the host's own `/` for runc's
+rootfs, since `pivot_root` cannot target `/` itself. It re-execs into a fresh, private mount
+namespace before touching either, so that work is invisible to every other `run:` step running
+concurrently. Everything below is declared in an OCI `config.json` and enforced by runc natively.
 
-- **Network namespace**: the isolated command runs in its own network namespace, connected to the
-  proxy container's netns by a dedicated veth pair. There is no bridge, since it is always a 1:1
-  connection, one sandbox to one proxy. iptables `REDIRECT`/`DROP`, the DNS redirect, and the
-  allowlist proxy are what enforce the rules. IPv6 is closed off the same way: `ip6tables` drops all
-  forwarded IPv6 traffic from the isolated network, and the internal DNS server returns the IPv6
-  unspecified address (`::`) for all queries, so even an allowed domain is never reached over IPv6.
-  runc joins this namespace itself, driven by the OCI spec's `linux.namespaces` path, with no
-  wrapper needed.
-- **Seccomp filter**: derived from Docker's own default seccomp profile (allowlist-based;
-  `moby/profiles`), resolved against an empty capability set to match the capability drop below, so
-  any syscall Docker's default profile only conditionally allows for a _held_ capability is excluded
-  outright. This directly closes the gap historical `io_uring` and unprivileged
-  user-namespace-creation CVEs relied on: `unshare(2)`/`clone(2)` with `CLONE_NEWUSER` and the
-  `io_uring_*` syscall family are not in the resulting allowlist at all. Generated at action
-  startup rather than baked into the image at build time, since a handful of the profile's rules are
-  gated on the actual kernel version; see `docker/gen-seccomp-profile/main.go`.
-- **Capability bounding set**: fully cleared (all five capability sets emptied in `config.json`)
-  before the command executes. This is what actually makes privilege escalation impossible: even if
-  the command invokes `sudo` or a setuid binary, there is no `CAP_NET_ADMIN`/`CAP_SYS_ADMIN`/etc.
-  left for it to acquire, regardless of the resulting effective UID.
-- **`no_new_privileges`**: set as defense-in-depth alongside the capability drop, so setuid/setgid
-  binaries and file capabilities can't grant anything even in edge cases the capability drop
-  doesn't cover on its own.
-- **Supplementary groups cleared, primary group checked too**: any supplementary group membership is
-  dropped (the OCI spec's `process.user` carries no `additionalGids`). That alone doesn't cover the
-  primary group, though, and a runner's own user could have `docker` (or another container/VM
-  runtime group) configured as its primary group rather than a supplementary one -- equivalent to
-  root, since the daemon will happily mount `/` into a new privileged container for anyone who can
-  reach its socket, regardless of capabilities. So the primary GID is checked against a list of
-  group names known to grant this kind of access (`docker`, `containerd`, `podman`, `lxd`, `libvirt`,
-  `kvm`, `sudo`, `wheel`, and a few more) and against the owning GID of any container/VM runtime
-  socket actually present on the host; if it matches, the sandboxed process runs under
-  `nogroup`/`nobody`/GID 65534 instead. If none of those turn out to be safe either, the sandbox
-  refuses to start rather than run under a privileged primary GID. As a second, independent layer,
-  the sockets themselves (`/var/run/docker.sock`, containerd's, podman's, buildkit's, crio's, and
-  their rootless `$XDG_RUNTIME_DIR` equivalents) are masked with `/dev/null` inside the sandbox's own
-  mount namespace, so even an unenumerated privileged group wouldn't find a live socket to connect to
-  at that path.
-- **D-Bus system bus and per-user runtime directory masked**: a read-only mount doesn't stop
-  `connect(2)` on a still-live Unix domain socket, since the kernel's permission check for a socket
-  connection only looks at write permission bits, which `mount -o ro` doesn't touch. Two more paths
-  matter here beyond the container/VM runtime sockets above: `/run/dbus/system_bus_socket`, and the
-  whole `/run/user/<uid>` directory, which is where a `systemd --user` instance (if one happens to
-  be running for the runner's UID) keeps its own session bus. Reaching that bus lets a compromised
-  command start a unit that runs entirely outside every namespace this action creates, bypassing the
-  network, filesystem, capability, and seccomp restrictions in this list. Both are masked the same
-  way as the runtime sockets above (`linux.maskedPaths`); the per-user directory is masked whole
-  rather than by individual socket, so a future tool dropping a new socket there is covered without a
-  code change, and a path that doesn't exist on a given runner (there might be no active login
-  session) is silently skipped by runc rather than an error. Masking covers a known list of paths
-  rather than applying a general rule, so a socket outside that list stays reachable. An `ssh-agent`
-  a workflow started for itself is one, left alone deliberately, since a `run:` step legitimately
-  uses one and masking it would break more than it closes. See
-  [Credential retrieval is intentionally not blocked](#known-limitations) below.
-- **PID namespace**: the isolated command runs in its own PID namespace. This isn't just about
-  hiding other processes from `ps`. The Linux kernel structurally forbids a process from tracing
-  (`ptrace`) or reading `/proc/<pid>/mem` for any process outside its own PID namespace's lineage,
-  independent of capabilities, which closes off memory-dump-based attacks against the Actions runner
-  process itself.
-- **UID/GID preserved**: unlike the mechanisms above, the isolated command keeps the same UID/GID
-  as the runner user rather than switching to a dedicated unprivileged account. This is a deliberate
-  choice: `actions/setup-node`-installed toolchains, `$GITHUB_WORKSPACE` file ownership, and
-  `$HOME`-based caches (`~/.npm`, `~/.cache`, etc.) all assume the runner's own UID, and switching
-  UID would break them. Isolation here comes entirely from the capability/group/namespace
-  mechanisms above, not from UID separation. No user namespace is created for this either, since
-  that would let the isolated command re-acquire a (namespace-local) root identity via the very
-  unprivileged-`CLONE_NEWUSER` primitive the seccomp filter above is specifically closing off.
-- **Process environment matched to the runner**: `runc spec`'s defaults are written for containers,
-  not for a step running on the runner's own machine, so a few of them are overridden. The OCI spec
-  carries the runner's own `RLIMIT_NOFILE`, read from the process that started the action, which is
-  also the one that would have started the step unwrapped. Both runc's default spec and the `sudo`
-  on the way to it pin the soft limit at 1024 against the 65536 a GitHub-hosted runner gives a step,
-  which surfaces as `EMFILE` in webpack and jest. `/dev/shm` is sized from the host's own instead of
-  runc's 64MB cap, which Chromium and everything built on it crashes under. The hostname is the
-  runner's rather than the literal `runc`, matching the `/etc/hostname` the rootfs bind-mount
-  already carries in. None of this is a boundary anything rests on: the sandbox restricts where the
-  command can connect and what it can write, not how much of the machine it can use. `/dev` itself
-  stays a fresh minimal device set, so host device nodes such as `/dev/kvm`, `/dev/fuse`,
-  `/dev/net/tun` and `/dev/dri` are absent. Each needs either a capability the sandbox has dropped
-  or a group the GID substitution above replaces, so nothing usable is lost, and bind-mounting the
-  host's `/dev` would expose raw block devices and undo the read-only root below.
-- **Runner-only credentials withheld**: this action is a JavaScript action, and the runner hands a
-  JavaScript action's handler variables it does not hand a `run:` step: `ACTIONS_RUNTIME_TOKEN`,
-  which reaches the run's artifacts and cache, plus `ACTIONS_RUNTIME_URL`, `ACTIONS_CACHE_URL`,
-  `ACTIONS_RESULTS_URL`, `ACTIONS_CACHE_SERVICE_V2` and `ACTIONS_CACHE_MODE`, which name the
-  endpoints it is spent against. Those are dropped before the environment is written, as are this
-  action's own `INPUT_*` inputs, so that wrapping a step only ever narrows what it can reach.
-  `ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN` and anything else the runner sets still arrive: this is a
-  named list rather than a sweep over `ACTIONS_*`, which would rest on guessing which of them a
-  `run:` step legitimately sees. A token the runner introduces later needs adding to the list.
-- **Sensitive `/proc` paths masked**: `/proc/kcore`, `/proc/kallsyms`, `/proc/kmsg`,
-  `/proc/sysrq-trigger`, `/proc/timer_list`, and `/proc/keys` are bind-mounted over with `/dev/null`
-  (the OCI spec's `linux.maskedPaths`, extending runc's own sensible defaults), closing off
-  kernel-memory-adjacent information disclosure paths that aren't already covered by the capability
-  drop.
-- **The named-network-namespace directory masked**: `ip netns add` leaves the namespace's name as a
-  real file under the host's own `/run/netns`, which the rootfs bind-mount carries into every
-  sandbox, so a step could otherwise list the names of the sandboxes running beside it. Nothing
-  inside the sandbox has a reason to read them, so the directory is masked like the ones above.
-  Defense in depth: it removes an easy way to enumerate the other steps on the host, not a boundary
-  anything else rests on.
-- **Filesystem read-only outside the workspace/home/tmp**: `$GITHUB_WORKSPACE`, `$HOME`, `/tmp`, and
-  `$RUNNER_TEMP` are bind-mounted as writable exceptions on top of a read-only root (`root.readonly`
-  in `config.json`, applied by runc itself). This closes off tampering with anything outside those
-  paths, such as rewriting a binary earlier on `$PATH` to plant a payload for a later, non-sandboxed
-  step in the same job. The rest of the host filesystem, including nested mounts, stays fully
-  _visible_ (read-only) so existing tools keep working; only writes are restricted. The writable
-  exceptions are recursive bind-mounts (preserving any legitimately nested mounts under them); the
-  sandbox's own `mount --rbind /` rootfs is staged under `/var/tmp/buildcage-<uid>`, which is never one of
-  those writable exceptions, so that recursion doesn't re-expose it as a second, writable copy of
-  the whole host `/`. A `write_through:` input naming that directory (or an ancestor of it) is
-  rejected outright, see [Known Limitations](#known-limitations) below. The `write_through` input
-  adds further paths to the writable set for tools that need to write elsewhere, such as a build
-  output or a cache directory; setting it to `/` disables this restriction entirely. This is all
-  `filesystem_mode: persistent` (the default and the stable mode). `filesystem_mode: ephemeral`
-  (**experimental**) replaces it with an overlay that discards every write not explicitly named in
-  `write_through:`, closing off using a
-  writable exception itself (not just the read-only area around it) to plant a payload for a later
-  step. See [Filesystem access](../README.md#filesystem-access) in the README.
-- **The sandbox's own mounts outrank `write_through:`**: `/etc/resolv.conf` and, for the `inspect`
-  engine, the two CA files are mounted after every writable exception, so a `write_through:` entry
-  naming a directory that contains them (`write_through: /etc`) cannot take the sandbox's DNS or CA
-  trust with it. Naming one of those three paths directly, or a filesystem runc mounts fresh such as
-  `/proc`, fails the step instead of being silently overridden; without that, `write_through: /proc`
-  would shadow the sandbox's own procfs with the host's and undo the PID-namespace separation below.
-- **Die-with-parent**: the isolated command's life is tied to `run-isolated.sh`'s own via a two-hop
-  `setpriv --pdeathsig=KILL` chain (`run-isolated.sh` to `runc run` to the isolated command, since
-  `runc run`'s own process sits between the two and a single-hop guard wouldn't be enough). If
-  `run-isolated.sh` is killed outright, say an out-of-memory kill lands on it specifically, the
-  whole sandboxed process tree is killed with it rather than surviving as an orphan.
+Each step gets a proxy container of its own, named explicitly on every `docker compose` invocation
+rather than through a directory-derived Compose project, so concurrent steps never recreate or tear
+down each other's. Everything the sandbox needs on the host, `runc` and the seccomp generator
+included, is extracted from the proxy image into that step's own scratch directory on each
+invocation, so no step inherits anything another one left behind.
 
-## Inspect Proxy Engine
+### Privileges dropped
 
-### How it intercepts traffic
+- **Capability bounding set fully cleared**, all five capability sets emptied before the command
+  executes. This is what makes privilege escalation impossible: even if the command invokes `sudo`
+  or a setuid binary, there is no `CAP_NET_ADMIN` or `CAP_SYS_ADMIN` left to acquire, whatever the
+  resulting effective UID. `no_new_privileges` is set alongside it, so setuid binaries and file
+  capabilities cannot grant anything in an edge case the capability drop misses.
+- **Seccomp filter** derived from Docker's own default profile, resolved against an empty capability
+  set to match that drop, so any syscall the profile allows only for a _held_ capability is excluded
+  outright. This closes the gap historical `io_uring` and unprivileged user-namespace CVEs relied
+  on: `unshare(2)`/`clone(2)` with `CLONE_NEWUSER` and the `io_uring_*` family are not in the
+  resulting allowlist at all. It is generated at action startup rather than baked into the image,
+  since a handful of the profile's rules are gated on the running kernel version.
+- **Groups cleared, and the primary group checked too.** Supplementary group membership is dropped,
+  but a runner's own user could have `docker` (or another container or VM runtime group) as its
+  _primary_ group, which is equivalent to root: the daemon will mount `/` into a privileged
+  container for anyone who can reach its socket, capabilities or not. The primary GID is therefore
+  checked against the group names known to grant that (`docker`, `containerd`, `podman`, `lxd`,
+  `libvirt`, `kvm`, `sudo`, `wheel` and a few more) and against the owning GID of any runtime socket
+  actually present, and the command runs under `nogroup`/`nobody`/65534 instead when it matches. If
+  none of those is safe either, the sandbox refuses to start.
+- **The runtime sockets are masked**, as an independent second layer: `/var/run/docker.sock`,
+  containerd's, podman's, buildkit's, crio's and their rootless `$XDG_RUNTIME_DIR` equivalents are
+  covered with `/dev/null`, so even an unenumerated privileged group finds no live socket. A
+  read-only mount would not do: the kernel's permission check for `connect(2)` on a Unix socket
+  looks at write permission bits, which `mount -o ro` does not touch.
+- **The D-Bus system bus and the per-user runtime directory are masked** the same way.
+  `/run/user/<uid>` is where a `systemd --user` instance keeps its session bus, and reaching either
+  bus lets a compromised command start a unit that runs outside every namespace this action creates.
+  The per-user directory is masked whole rather than socket by socket, so a future tool dropping a
+  new socket there is covered without a code change. Masking covers a known list of paths rather
+  than a general rule, so a socket outside it stays reachable: an `ssh-agent` a workflow started for
+  itself is one, left alone deliberately, see
+  [What the sandbox does not stop](#what-the-sandbox-does-not-stop).
+
+### What it can see
+
+- **Its own PID namespace.** This is not about hiding processes from `ps`: the kernel structurally
+  forbids tracing or reading `/proc/<pid>/mem` for a process outside the tracer's own PID
+  namespace lineage, whatever its capabilities, which closes off memory-dump attacks against the
+  Actions runner process itself.
+- **Sensitive `/proc` paths masked**, extending runc's own defaults with `/proc/kcore`,
+  `/proc/kallsyms`, `/proc/kmsg`, `/proc/sysrq-trigger`, `/proc/timer_list` and `/proc/keys`.
+- **No other step's sandbox bundle.** `/var/tmp/buildcage-<uid>`, where every run's bundle is
+  staged, is covered with an empty tmpfs inside the sandbox, with only this run's own `exec/`
+  revealed back on top, read-only. Without it the host `/` below would hand every step a readable
+  copy of every concurrent step's bundle, and their 0700 modes would not help, since every sandbox
+  on a runner shares one real UID. The reveal is a non-recursive `bind`, which keeps the
+  `mount --rbind /` rootfs staged beside it from coming back in as a second, writable host root.
+- **No list of the sandboxes beside it.** `ip netns add` leaves each namespace's name under the
+  host's `/run/netns`, which the rootfs bind-mount would otherwise carry in, so that directory is
+  masked as well. Defense in depth rather than a boundary anything rests on.
+
+### What it can write
+
+`$GITHUB_WORKSPACE`, `$HOME`, `/tmp` and `$RUNNER_TEMP` are bind-mounted as writable exceptions on
+top of a read-only root, applied by runc itself. This closes off tampering with anything outside
+those paths, such as rewriting a binary earlier on `$PATH` to plant a payload for a later,
+un-sandboxed step. The rest of the host filesystem stays fully _visible_ so existing tools keep
+working; only writes are restricted. The writable exceptions are recursive bind-mounts, and the
+sandbox's own rootfs staging directory is never one of them, so that recursion cannot re-expose the
+host `/` as a writable copy.
+
+`write_through:` adds further paths for tools that need to write elsewhere, and `/` disables the
+restriction entirely. The sandbox's own mounts outrank it: `/etc/resolv.conf` and, under `inspect`,
+the two CA files are mounted after every writable exception, so `write_through: /etc` cannot take
+the sandbox's DNS or CA trust with it. Naming one of those three paths directly, or a filesystem
+runc mounts fresh such as `/proc`, fails the step rather than being silently overridden; without
+that, `write_through: /proc` would shadow the sandbox's procfs with the host's and undo the
+PID-namespace separation above.
+
+All of this is `filesystem_mode: persistent`, the default and the stable mode.
+`filesystem_mode: ephemeral` (**experimental**) replaces it with an overlay that discards every
+write not named in `write_through:`, closing off using a writable exception itself to plant a
+payload for a later step. See [Filesystem access](../README.md#filesystem-access).
+
+### What it keeps from the runner
+
+- **UID and GID**, rather than a dedicated unprivileged account: `actions/setup-node` toolchains,
+  `$GITHUB_WORKSPACE` file ownership and `$HOME`-based caches all assume the runner's own UID.
+  Isolation comes from the capability, group and namespace mechanisms above, not from UID
+  separation. No user namespace is created for this either, since that would hand the command back a
+  namespace-local root identity through the very unprivileged `CLONE_NEWUSER` primitive the seccomp
+  filter closes off.
+- **The process environment a step would have had.** `runc spec`'s defaults are written for
+  containers, not for a step on the runner's own machine, so the OCI spec carries the runner's own
+  `RLIMIT_NOFILE` (read from the process that started the action, since Node raises its own soft
+  limit before any JavaScript runs), a `/dev/shm` sized from the host's rather than runc's 64MB cap,
+  and the runner's hostname. Both runc's default spec and the `sudo` on the way to it would
+  otherwise pin `RLIMIT_NOFILE` at 1024 against a runner's 65536, which surfaces as `EMFILE` in
+  webpack and jest, and Chromium crashes under a 64MB `/dev/shm`. None of this is a boundary
+  anything rests on. `/dev` itself stays a fresh minimal device set, so host device nodes such as
+  `/dev/kvm`, `/dev/fuse` and `/dev/dri` are absent; each needs a capability the sandbox has dropped
+  or a group the GID substitution replaces, and bind-mounting the host's `/dev` would expose raw
+  block devices.
+- **Not the runner-only credentials.** This is a JavaScript action, and the runner hands one
+  variables it does not hand a `run:` step: `ACTIONS_RUNTIME_TOKEN`, which reaches the run's
+  artifacts and cache, plus the `ACTIONS_*` endpoint variables it is spent against. Those are
+  dropped before the environment is assembled, as are this action's own `INPUT_*` inputs, so
+  wrapping a step only ever narrows what it can reach. `ACTIONS_ID_TOKEN_REQUEST_URL` and anything
+  else the runner sets still arrives: this is a named list rather than a sweep over `ACTIONS_*`,
+  which would rest on guessing which of them a `run:` step legitimately sees.
+
+What is left is piped to the sandboxed process over stdin as NUL-delimited `KEY=VALUE` records and
+applied by a small loader that execs the run script, rather than written into `config.json`, so an
+`env:` secret never reaches the runner's disk.
+
+### When the step ends
+
+An exit trap tears down the container, the rootfs bind-mount, the veth and the network namespace,
+and force-detaches anything still mounted under the run's scratch directory before deleting it. If
+the action is killed first, a fallback step reads the container's identity back from job state and
+does the same. The command's own life is tied to `run-isolated.sh`'s by a two-hop
+`setpriv --pdeathsig=KILL` chain, so an out-of-memory kill on the script takes the whole sandboxed
+process tree with it rather than leaving orphans.
+
+## The network boundary
+
+The isolated command runs in its own network namespace, connected to the proxy container's netns by
+a dedicated veth pair. There is no bridge: it is always a 1:1 connection, one sandbox to one proxy.
+The proxy's netns is referenced by Docker's own `NetworkSettings.SandboxKey` path rather than by
+PID, which Docker holds for the container's whole lifetime, so it cannot be silently reused if the
+proxy dies before the sandbox starts. iptables sends all TCP to a single listener and drops
+everything else, and that veth is the sandbox's only route to any network at all.
+
+Nothing in the command has to be told about a proxy: interception is at the network level, so the
+`HTTP_PROXY` family of variables is not what puts a request in front of the rules, and ignoring them
+changes nothing.
+
+### The proxy chooses the destination, not the command
+
+A rule matches on the name the request carried, the SNI or the `Host` header. Once it has passed,
+HAProxy resolves that name itself and rewrites the destination to the result (`do-resolve` and
+`set-dst`), so the address the command chose is discarded. A forged `Host`, a doctored `/etc/hosts`,
+or an SNI naming one host while the connection aims at another all reach the server the name belongs
+to: destination spoofing is removed rather than detected.
+
+That order is an invariant, not an optimisation. Reversed, resolution would become the exfiltration
+channel the resolver below exists to prevent, so a name a request would be refused for never
+triggers a real DNS query.
+
+Where the proxy resolves is the proxy container's own `/etc/resolv.conf`. On a runner that is
+Docker's embedded DNS forwarding to the runner's own resolvers, so a name only an internal resolver
+knows still resolves, and the query follows the runner's own DNS policy. There is no search-domain
+expansion, so a rule has to name a host in full.
+
+### DNS never leaves the job
+
+The resolver inside the sandbox's network has no upstream at all, and answers every query, on the
+allowlist or not, with the proxy's own address. A lookup by itself therefore cannot carry anything
+out: `SECRET-DATA.attacker.example` would otherwise reach an attacker's own nameserver the moment it
+was forwarded. Answering a name outside the allowlist the same way as one inside is deliberate too,
+so that the request which follows is recorded with its URL before it is refused.
+
+No discovery record is returned either. Having no upstream, the resolver has nothing to answer an
+`SRV`, `TXT`, `TLSA` or `URI` query with, which is load-bearing rather than incidental:
+`_http._tcp.deb.debian.org` really does carry an `SRV` record pointing at `debian.map.fastlydns.net`,
+and a command that followed it would connect to a name no allowlist mentions. A client that cannot
+fall back, such as a `mongodb+srv://` connection string, does not work inside the cage; see
+[Service discovery](../README.md#service-discovery).
+
+### A name may not resolve inward
+
+An allowlisted name that resolves to loopback, link-local (AWS/GCP/Azure IMDS), CGNAT (Alibaba
+IMDS), the IETF protocol block (Oracle IMDS), the proxy's own address, or **an address the runner
+itself holds** is refused, reported as `internal-address`, in `audit` too. A name under an
+attacker's control, or DNS for an allowlisted domain that has been compromised, therefore cannot
+turn the proxy into a route to cloud metadata or back into the runner. The rest of RFC1918 is
+deliberately exempt: a name pointing at an internal mirror is a real, intended setup.
+
+The runner's addresses come from two places, because neither sees all of them: the action reads the
+runner's interfaces before starting the proxy, and the engine adds the gateway of the network Docker
+then put it on, which did not exist when the action looked. A published container port is DNAT'd, so
+it answers on every one of them.
+
+Two consequences worth knowing:
+
+- **An internal mirror running on the runner itself is no longer reachable by name.** Name it with
+  `allowed_ip_rules` instead, which never goes through this guard. The same applies to a public name
+  that resolves to the runner's own public address, which a self-hosted runner may well have.
+- The list is read once at startup, and on a containerised runner it holds that container's
+  addresses rather than the real host's.
+
+This guard is about a _name_ landing somewhere it never should, and it never restricts a rule whose
+host is itself a literal address: reaching that connection already required a rule to match the
+address as sent, so nothing was arrived at that wasn't first asked for. Reaching a cloud metadata
+endpoint directly, the way any AWS or GCP SDK does, is not what this is meant to stop, and
+`allowed_ip_rules` is the intended path for it.
+
+### Only TCP gets out
+
+Everything that is not TCP is dropped before it reaches the proxy, so ICMP, raw UDP and QUIC have no
+exit path at all; port 53 to the gateway, which is the resolver, is the one exception. IPv6 is
+dropped by equivalent `ip6tables` rules, lookups are answered with the unspecified address (`::`),
+and the proxy reaches allowed names over IPv4 only. The cost of that last part is in
+[Known Limitations](#known-limitations) below.
+
+## Engines
+
+The engines differ in how much of a connection a rule gets to see. `universal` reads the name at the
+front of it; `inspect` terminates TLS and reads the request. For choosing between them, see
+[Engines](../README.md#engines).
+
+### Universal proxy engine
+
+The default engine, and the one to fall back to when something in the command cannot accept the
+`inspect` engine's CA. It decrypts nothing: HAProxy classifies each connection by what it can read
+at the front of it, then checks that against the allowlist.
+
+- **HTTPS**: the SNI from the TLS ClientHello, read without terminating the connection, so the
+  command validates the origin's own certificate itself. Checked against `allowed_https_rules`.
+- **HTTP**: the `Host` header, checked against `allowed_http_rules`. A request carrying none is
+  refused with 400, since there is nothing to check it against.
+- **A connection to a bare address**: nothing at all. It skipped DNS, so there is no name to read.
+  It is matched against `allowed_ip_rules` as `ip:port` and, when nothing matches, refused.
+
+Because nothing in the command has to trust an injected CA or be told about a proxy, this engine
+covers any language or package manager, a pinned certificate included.
+
+A connection to a bare address never reaches the
+[inward-resolution guard](#a-name-may-not-resolve-inward): it skips DNS and `do-resolve` entirely,
+on a separate code path, and `allowed_ip_rules` is what decides it.
+
+### Inspect proxy engine
 
 <img src="../assets/diagram-architecture-inspect.png" alt="Inspect proxy engine architecture" width="620" height="832">
 
-`inspect` uses the same sandbox and the same network boundary as `universal` (see
-[Isolation Mechanisms](#isolation-mechanisms) above), but terminates TLS instead of only reading the
-SNI, so a rule can check the method and the full URL rather than only the destination.
-
-Two components, plus a CA-trust mount:
-
-- **HAProxy** does the inspecting. One listener takes both TLS and plaintext, told apart by the
-  first bytes of the connection (`req.ssl_hello_type`), so an audit run records everything without
-  being configured for it first. It resolves the requested name itself and connects there
-  (`do-resolve` then `set-dst`), only once a request has already passed the rules, so where a
-  connection ends up is never the command's choice, and a name a request would be refused for never
-  triggers a real DNS query. It also resolves `..` in the path before the rules see it
-  (`normalize-uri`), so a rule cannot be walked out of.
-- **CoreDNS** never resolves a name for real, allowed or not (see
-  [What it actually stops](#what-it-actually-stops) below). It only decides what gets logged as
-  allowed or denied, on a regex rather than a domain suffix, which is what lets a rule like
-  `abc*.amazonaws.com` be logged accurately instead of collapsing to everything under
-  `amazonaws.com`.
-- **The CA trust mount** is where this engine differs most from `buildcage/docker`'s. There, a
-  wrapper around `runc` writes the CA into the BuildKit worker's own disposable rootfs layer and
-  deletes it again before the layer is committed, which is safe because that rootfs is thrown away
-  regardless. This action's sandbox rootfs is a `mount --rbind /` of the **real host root**, so
-  writing the CA the same way would mean writing it onto the runner's own filesystem. Instead the
-  CA, and where relevant an augmented copy of the system CA store, is written into this run's own
-  scratch directory and mounted _over_ the sandbox's view of the relevant paths in its OCI
-  `config.json`: a mount-namespace-scoped overlay, not a host write. Nothing needs to be undone
-  afterwards, since `run-isolated.sh`'s teardown removes it with the rest of the sandbox's mount
-  namespace, and the real host files those paths would otherwise resolve to are never touched. See
-  [CA trust variables](./reference.md#ca-trust-variables) for which variables are set
-  and what that does not cover.
-
-### How a request is handled
-
-```
-                        ┌─────────────────────────────────────────┐
-   run: ──redirect──▶   │ detect (mode tcp)                       │
-                        │   first bytes: handshake or plain?      │
-                        └───┬──────────────┬──────────────┬───────┘
-                            │              │              │
-              ip/tls rule   │      TLS     │    plaintext │
-                            ▼              ▼              ▼
-                     ┌────────────┐  ┌──────────┐  ┌──────────┐
-                     │ passthrough│  │ https_in │  │ http_in  │
-                     │  mode tcp  │  │ TLS ter- │  │          │
-                     │  undecryp- │  │ minated, │  │          │
-                     │  ted       │  │ cert per │  │          │
-                     └─────┬──────┘  │ SNI      │  └────┬─────┘
-                           │         └────┬─────┘       │
-                           │              │             │
-                           │      normalize the path    │
-                           │      resolve the name here │
-                           │      match host/path/method│
-                           │              │             │
-                           ▼              ▼             ▼
-                        origin      origin (TLS,   origin
-                                    cert checked)
-```
-
-A certificate is generated from the SNI alone, so a refused destination is never contacted: the only
-path that reaches an origin is the backend, after a request has already passed the rules. The
-origin's own certificate is checked on that same connection.
-
-What each kind of rule decides, and what stays undecrypted:
+The same sandbox and the same network boundary, but the proxy terminates TLS instead of only reading
+the SNI, so a rule can check the method and the full URL rather than only the destination. One
+listener takes both TLS and plaintext, told apart by the first bytes of the connection, so an audit
+run records everything without being configured for it first.
 
 | Rule                  | What it permits                            | Decided by           | Decrypted |
 | --------------------- | ------------------------------------------ | -------------------- | --------- |
@@ -251,132 +319,108 @@ What each kind of rule decides, and what stays undecrypted:
 | `allowed_tls_rules`   | TLS to the named host and port             | SNI and port         | **no**    |
 | `allowed_ip_rules`    | TCP to the address and port, any protocol  | address and port     | **no**    |
 
-### What it actually stops
+Three mechanisms make that enforceable:
 
-- **The destination is resolved by the proxy, never chosen by the command, and only after a request
-  has already passed the rules.** A forged `Host`, a doctored `/etc/hosts`, or a `Host` naming one
-  host while the connection aims at another all reach the address the proxy itself resolved, not
-  the one the command chose. Destination spoofing is removed rather than merely detected.
-- **A resolved name may not land on an internal address.** An allowlisted name that resolves to
-  loopback, link-local (AWS/GCP/Azure IMDS), CGNAT (Alibaba IMDS), the IETF protocol block (Oracle
-  IMDS), the proxy's own address, or **an address the runner itself holds** is refused with 403, so
-  a name under an attacker's control (or DNS for an allowlisted domain that has been compromised)
-  cannot turn the proxy into a route to cloud metadata or back to the runner. The rest of RFC1918 is
-  deliberately exempt: a name pointing at an internal mirror is a real, intended setup. An address
-  named directly in a rule is exempt too, having been asked for rather than arrived at.
-
-  The list comes from two places, because neither sees all of it: the action reads the runner's
-  interfaces before starting the proxy, and the engine adds the gateway of the network Docker then
-  put it on, which did not exist when the action looked. Both halves are needed. A published
-  container port is DNAT'd, so it answers on every address the runner holds; guarding only the
-  gateway would leave `docker0` as an equivalent way in, and guarding only what the action saw
-  would leave the gateway itself open.
-
-  This is the sandbox's only route to the runner's network at all: the step's own namespace is
-  wired to nothing else.
-
-  Three consequences worth knowing:
-
-  - If the runner is itself a container (Docker-in-Docker), only that container's addresses are
-    visible, not the real host's.
-  - **An internal mirror running on the runner itself is no longer reachable by name.** Name it with
-    `allowed_ip_rules` instead, which never goes through this guard. The same applies to a public
-    name that resolves to the runner's own public address, which a self-hosted runner may well have:
-    it is refused as `internal-address` like any other, and `allowed_ip_rules` is the way through.
-  - An address the runner gains _after_ the sandbox starts is not covered, the list being read once
-    at startup.
-
-  This guard is about a _name_ landing somewhere it never should. It has nothing to do with, and
-  never restricts, a rule whose host is itself a literal address (an `https`/`http` rule that names
-  one directly, or a `Host` header the request sent as a bare IP): reaching that connection already
-  required a rule to match the address as sent, so nothing was arrived at that wasn't first asked
-  for. Direct access to a cloud metadata endpoint this way, the normal way any AWS/GCP/Azure CLI or
-  SDK reaches it, is not something this guard is meant to stop; `allowed_ip_rules` is the intended,
-  always-uninspected path for it (see below).
-
-- **The resolver never forwards a query, allowed or not.** Every name is answered locally with the
-  proxy's own address, so a lookup alone, even one the command never connects on, cannot be used as an
-  exfiltration channel (`SECRET-DATA.attacker.example` would otherwise reach an attacker's own
-  nameserver the moment it was forwarded). A name outside the allowlist is answered the same way
-  rather than with NXDOMAIN, so the request that follows is recorded with its URL, query string
-  included, before it is refused. Reverse lookups are the one exception: nothing inside the cage has
-  a name to give back, and no rule can name an address backwards, so `PTR` is answered `NXDOMAIN`
-  and the lookup is recorded in the resolver log without being reported as allowed or blocked. That
-  covers a name that really is an address backwards and nothing else: `SECRET-DATA.in-addr.arpa` is
-  answered, refused and reported exactly like any other name.
-- **No discovery record is ever returned, so a step reaches the name a rule allowed.** Having no
-  upstream, the resolver has nothing to answer an `SRV`, `TXT`, `TLSA` or `URI` query with, and an
-  empty answer is what the great majority of names return for these anyway. This is load-bearing
-  rather than incidental: `_http._tcp.deb.debian.org` really does carry an `SRV` record pointing
-  at `debian.map.fastlydns.net`, and a step that followed it would connect to a name no allowlist
-  mentions. A lookup for `_service._proto.<name>` is recorded under a verb of its own and reported
-  in the timeline rather than as blocked, since no rule can permit one. That covers names really
-  shaped like a service name, under a host the rules allow, asked for as one of the four types
-  defined at such a name. Everything else is answered, refused and reported exactly like any other
-  name, an unrecognised type included. A client that cannot fall back, such as a `mongodb+srv://`
-  connection string, does not work inside the cage;
-  see [Service discovery](../README.md#service-discovery).
-- **A wide host rule paired with a narrow path or method does not narrow the DNS side.** DNS has no
-  notion of a path, so a name under an allowed `*.example.com` is logged as allowed the moment it is
-  looked up, before any path is known. The request that follows is still refused and still never
-  reaches an origin; only the log line, not the outcome, reflects the host-only nature of that
-  decision. Real resolution happens exactly once, in HAProxy, strictly after a request has passed
-  the full rule check, which is an invariant rather than an optimisation: reversed, `do-resolve`
-  would itself become the live exfiltration channel CoreDNS is built to avoid being. See
-  [Rule syntax](./reference.md#rule-syntax) for how to write a host pattern that doesn't widen this
-  more than intended.
-- **The path is normalized, and traversal encodings are rejected outright.** `..`, `%2e%2e`,
-  `..%2f`, a raw backslash, and `..%5c` are all refused rather than resolved, so a rule cannot be
+- **The certificate the command sees is generated from the SNI alone**, so a refused destination is
+  never contacted. The only path that reaches an origin is the backend, after a request has already
+  passed the rules, and the origin's own certificate is checked on that connection.
+- **The path is normalized before the rules see it**, and traversal encodings that no normaliser can
+  strip (`%2e%2e`, `..%2f`, a raw backslash, `..%5c`) are refused outright, so a rule cannot be
   walked out of.
+- **The CA is mounted, never written to the host.** This is where the engine differs most from
+  `buildcage/docker`'s, whose runc wrapper can write the CA into a disposable rootfs layer. Here the
+  sandbox rootfs is a bind-mount of the real host root, so the CA, and where relevant an augmented
+  copy of the system CA store, is written into this run's own scratch directory and mounted _over_
+  the sandbox's view of the relevant paths: a mount-namespace-scoped overlay, not a host write.
+  Teardown removes it with the rest of the mount namespace, and the real host files those paths
+  would resolve to are never touched. See [CA trust variables](./reference.md#ca-trust-variables)
+  for which variables are set and what that does not cover.
 
-### Attempts to get around it
+A wide host rule paired with a narrow path or method does not narrow the DNS side. DNS has no notion
+of a path, so a name under an allowed `*.example.com` is logged as allowed the moment it is looked
+up, before any path is known. The request that follows is still refused and still never reaches an
+origin; only the log line reflects the host-only nature of that decision. See
+[Rule syntax](./reference.md#rule-syntax) for how to write a host pattern that doesn't widen this
+more than intended.
 
-| What the isolated command does                          | What happens                                                                                                                                                                                    |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Asks for any name, on or off the allowlist              | Answered locally with the proxy's own address; the query is never forwarded, allowed or not                                                                                                     |
-| Requests a host no rule covers                          | **403**, recorded with its URL, origin never contacted                                                                                                                                          |
-| Requests a path or method no rule covers                | **403**, recorded with its URL                                                                                                                                                                  |
-| Walks out of an allowed path with `..`                  | **403**: the path is normalised before the rules see it                                                                                                                                         |
-| Encodes the traversal as `%2e%2e` or `..%2f`            | **403**: decoding happens first, and what no normaliser can strip is refused outright                                                                                                           |
-| Uses a backslash, raw or `%5c`, to climb                | **403**: the URL standard treats `\` as `/` for http(s), so a raw backslash is refused outright and `..%5c` like `..%2f`                                                                        |
-| Sends an allowed name while aiming elsewhere            | Reaches the address the proxy resolved, not the one the command chose                                                                                                                           |
-| Puts an address in the Host header                      | Taken as the destination only if a rule names it; the rules decide either way                                                                                                                   |
-| Points `/etc/hosts` at an address of its choosing       | Same: the command's own address is discarded                                                                                                                                                    |
-| Allowlists a name that resolves to an internal address  | **403**: the resolved address is refused if it is loopback, link-local, the proxy itself, an address the runner holds, or another never-public range                                            |
-| Reaches an allowed host presenting a wrong certificate  | **503**: the origin's certificate is checked when the proxy connects                                                                                                                            |
-| Speaks a protocol that is not TLS on any port           | Classified by its first bytes, so it is parsed as HTTP if it is HTTP                                                                                                                            |
-| Ignores the proxy variables entirely                    | No effect: interception is at the network level, not opt-in                                                                                                                                     |
-| Floods the proxy logs until earlier entries rotate away | A log that no longer starts where a real run does is not accepted as a complete record: the step fails under `restrict` with `fail_on_blocked` (the default), and is annotated otherwise        |
-| Sends a URL longer than a log line                      | The line is sized for the longest request the proxy accepts, so the whole URL is recorded; a line that arrives unreadable anyway is counted and the report is not accepted as a complete record |
+## Attempts to get around it
 
-### What it can't do
+| What the isolated command does                                                                     | What happens                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Asks for any name, on or off the allowlist                                                         | Answered locally with the proxy's own address; the query is never forwarded, allowed or not                                                                  |
+| Requests a host no rule covers                                                                     | Refused, origin never contacted; `inspect` records the URL it asked for                                                                                      |
+| Requests a path or method no rule covers                                                           | **403** under `inspect`, recorded with its URL; `universal` reads neither and enforces on the host                                                           |
+| Walks out of an allowed path with `..` or `%2e%2e`                                                 | **403**: the path is normalised before the rules see it, and an encoding no normaliser can strip is refused outright, a raw or escaped backslash included    |
+| Sends an allowed name while aiming elsewhere, or points `/etc/hosts` at an address of its choosing | Reaches the address the proxy resolved; the command's own choice of address is discarded                                                                     |
+| Puts an address in the `Host` header                                                               | Taken as the destination only if a rule names it; the rules decide either way                                                                                |
+| Allowlists a name that resolves to an internal address                                             | Refused if it lands on loopback, link-local, the proxy itself, an address the runner holds, or another never-public range, in `audit` too                    |
+| Reaches an allowed host presenting a wrong certificate                                             | **503** under `inspect`, which checks the origin's certificate when it connects and fails the step; under `universal` the command validates it itself        |
+| Presents a wrong certificate and then stops answering, to look like an outage                      | Still fails the step: a connection `inspect` never completed is one whose origin it never authenticated, so it is refused whether or not the error survived  |
+| Uses ECH to conceal the real SNI                                                                   | Reaches whatever the outer SNI resolved to, and that outer name still has to be allowed; the type 65 record carrying ECHConfig is never returned either      |
+| Encodes data into DNS queries                                                                      | Answered locally and never forwarded; an outside resolver is unreachable                                                                                     |
+| Uses DNS over TLS or DNS over HTTPS                                                                | Redirected to the proxy like any other TCP and checked on its SNI, so an outside resolver is reachable only if its own host and port are allowlisted         |
+| Tunnels over ICMP, raw UDP or QUIC, or falls back to IPv6                                          | Dropped before the proxy; only TCP is redirected to it, and the proxy reaches allowed names over IPv4                                                        |
+| Connects to a raw address                                                                          | Checked against `allowed_ip_rules`, and refused when nothing matches                                                                                         |
+| Speaks something that is not HTTP to a port no rule covers                                         | Read as a request by the stage it is handed to and refused, on both engines, and the refusal is counted like any other                                       |
+| Escalates privileges, or reaches a container runtime socket                                        | Nothing to escalate to: every capability set is empty, and the sockets are masked with `/dev/null`                                                           |
+| Reads another process's memory                                                                     | Structurally refused by the kernel across a PID namespace boundary, capabilities or not                                                                      |
+| Ignores the proxy variables entirely                                                               | No effect: interception is at the network level, not opt-in                                                                                                  |
+| Floods the proxy log until earlier entries rotate away                                             | A log that no longer starts where a real run does is not accepted as a complete record: the step fails under `restrict` with `fail_on_blocked` (the default) |
 
-- **TLS is terminated**, so a tool that pins a certificate, or ships its own trust store instead of
-  reading the common CA-trust environment variables, will not work. The JVM (Java, Kotlin, Scala)
-  is the common case. Use `universal` for those, and see
-  [Limitations](../README.md#limitations) for the rest of the
-  compatibility picture.
-- **`audit` is not a passive observer here.** TLS is terminated in both modes, so a tool that cannot
-  accept the CA fails under `audit` exactly as it would under `restrict`. What `audit` drops is the
-  rule ACLs, not the interception: `set-dst` and the origin certificate check stay, because neither
-  can be dropped honestly.
+## What the engines cannot see
 
-  The internal-address guard above stays active in `audit` too, unconditionally: a name resolving
-  to cloud metadata isn't traffic `audit` needs to observe, since nothing legitimate depends on that
-  specific resolved address. A literal-IP request, such as a command calling a metadata endpoint
-  directly, is unaffected by this guard in either mode: blocking it would only hide real
-  information about what the command needs, without closing anything DNS could have redirected.
+### Domain fronting
 
-- **`allowed_tls_rules` and `allowed_ip_rules` stay uninspected by design.** Each is recorded with a
-  byte count and nothing more, since neither carries a name the proxy can re-terminate TLS for.
-- **Query strings are kept in the log**, since that is also where an exfiltration payload would go.
-  The report is the exception, see [Credentials in a URL](#credentials-in-a-url) below.
-- **UDP is dropped**, so QUIC and HTTP/3 fall back to TCP or fail. Port 53 to the gateway is the one
-  exception, which is the resolver. ICMP is dropped too.
-- **No content digests, and no SLSA-style materials.** Nothing here attests to what a request
-  returned, only that it was made and to what.
+`universal` reads the SNI but cannot decrypt what follows, and the `Host` header that would reveal
+the real target is inside the tunnel:
 
-### Credentials in a URL
+```
+1. ClientHello SNI: allowed.example.com     ← all Buildcage sees → allowed
+2. HTTP Host header: malicious.example.com  ← encrypted, not inspectable
+3. The CDN routes on the Host header        → reaches the attacker's server
+```
+
+For this to work, the allowed domain and the target domain have to sit on the same CDN or hosting
+infrastructure. Closing the gap needs the proxy to terminate TLS and read that header, which is what
+[`inspect`](#inspect-proxy-engine) does: `allowed_url_rules` matches on the real `Host`, so a
+fronted request lands outside any host rule it was written for.
+
+Staying on `universal`, allow as few domains as you can, and prefer a service's own domain
+(`registry.npmjs.org`) to a broad CDN wildcard. Check what your CDN provider does about fronting
+today, and re-run [audit mode](../README.md#operation-modes) periodically to notice a connection
+pattern that has changed.
+
+### Passthrough rules are an uninspected pipe
+
+`allowed_tls_rules` and `allowed_ip_rules` are passed through as raw TCP and recorded with a byte
+count and nothing more, since neither carries a name the proxy could re-terminate TLS for. Once an
+`ip:port` pair is allowlisted, any TCP-based protocol can use that path, and its protocol is never
+checked. Prefer domain rules, and keep `allowed_ip_rules` for destinations that genuinely have no
+stable hostname.
+
+`universal` sees nothing inside any tunnel, not only these: a rule reaches as far as a host and a
+port, so the method and the path are neither enforced nor reported.
+
+### `inspect` cannot work with everything, in either mode
+
+TLS is terminated, so a tool that pins a certificate, or ships its own trust store instead of
+reading the common CA-trust environment variables, will not work. The JVM (Java, Kotlin, Scala) is
+the common case. Use `universal` for those, and see [Limitations](../README.md#limitations) for the
+rest of the compatibility picture.
+
+`audit` is not a passive observer here either. TLS is terminated in both modes, so a tool that
+cannot accept the CA fails under `audit` exactly as it would under `restrict`. What `audit` drops is
+the rule ACLs, not the interception: `set-dst`, the origin certificate check and the
+[inward-resolution guard](#a-name-may-not-resolve-inward) all stay, because none of them can be
+dropped honestly.
+
+### No content digests
+
+Nothing here attests to what a request returned, only that it was made and to what. Query strings
+are kept in the log, since that is also where an exfiltration payload would go; the report is the
+exception, see below.
+
+## Credentials in a URL
 
 **Communication details** prints the URL of every request, so a credential written into a query
 string reaches everyone who can read the run. GitHub masks the values it knows as workflow secrets,
@@ -404,134 +448,12 @@ out of the summary.
 An `allowed_url_rules` block suggested by an audit run never carries a query at all: rules match on
 the path, and a recorded query is as likely to hold a one-off token as anything reusable.
 
-## Universal Proxy Engine
-
-### How it sees traffic
-
-The default engine, and the one to fall back to when something in the command cannot accept the
-`inspect` engine's CA. It decrypts nothing: HAProxy classifies each connection by what it can read
-at the front of it, then checks that against the allowlist.
-
-It sits at the same network boundary as `inspect` (see
-[Isolation Mechanisms](#isolation-mechanisms) above): one veth pair into the proxy container's
-netns, all TCP redirected to a single listener, and everything else dropped.
-
-- **HTTPS**: the SNI from the TLS ClientHello, read without terminating the connection, so the
-  command validates the origin's own certificate itself. Checked against `allowed_https_rules`.
-- **HTTP**: the `Host` header, checked against `allowed_http_rules`. A request carrying none is
-  refused with 400, since there is nothing to check it against.
-- **A connection to a bare address**: nothing at all. It skipped DNS, so there is no name to read.
-  It is matched against `allowed_ip_rules` as `ip:port` and, when nothing matches, refused.
-
-dnsmasq answers every query with the proxy's own address (`address=/#/172.20.0.1`) and has no
-upstream at all (`no-resolv`), which is both what puts a name-based connection in front of the proxy
-and what keeps a DNS query from becoming an exfiltration channel. Once a request has passed the
-rules, HAProxy resolves the name itself and rewrites the destination to the result (`set-dst`), so
-the command's own choice of address is discarded here as well.
-
-Nothing in the command has to trust an injected CA or be told about a proxy, which is what lets this
-engine cover any language or package manager, a pinned certificate included.
-
-### What it stops
-
-- **Where a connection ends up is not the command's choice.** The proxy resolves the name it read from
-  the SNI or the `Host` header and connects to that address, so a request that was allowed for a
-  name always reaches the server that name belongs to.
-- **A resolved name may not land on an internal address.** The same guard as
-  [`inspect`](#inspect-proxy-engine)'s (see [What it actually stops](#what-it-actually-stops)):
-  loopback, link-local, CGNAT, the IETF protocol block, the proxy's own address, and the runner's
-  own addresses are all refused (`internal-address` in the report). Unlike `inspect`, there's no literal-address exemption to carve
-  out here, since a connection to a bare address never reaches this guard at all: it skips DNS and
-  `do-resolve` entirely on a separate code path; `allowed_ip_rules` is the always-uninspected path for
-  a destination named directly.
-- **DNS never leaves the job.** The internal resolver has no upstream and answers every query
-  locally, so a name carrying data in its labels reaches nobody. The iptables rules leave no path to
-  an outside resolver either.
-- **Encrypted Client Hello does not change which name is matched.** ECH conceals the inner name,
-  but the outer SNI is what a rule matches and what the proxy resolves and connects to, so an ECH
-  handshake reaches the outer name's server or nothing at all. Hiding a target behind an allowed
-  outer name is the [domain fronting](#what-it-cant-see) case below, not a way past the allowlist.
-  The isolated command also has to bring its own ECHConfig keys: the resolver has no upstream, so
-  the DNS HTTPS (type 65) record that normally carries them is never returned.
-- **Nothing but TCP gets out.** Everything else is dropped before it reaches the proxy, so ICMP, raw
-  UDP and QUIC have no exit path at all.
-- **IPv6 is not a way around any of this.** Equivalent ip6tables rules drop forwarded IPv6, the
-  resolver answers with the unspecified address (`::`) for every query, and the proxy reaches
-  allowed names over IPv4 only. That last part is stated in the config (`dns-accept-family ipv4`)
-  rather than left to HAProxy's default, which decides from the runner's own IPv6 default route and
-  would make what a name resolves to differ between runners. See [Known
-  Limitations](#known-limitations) for what that costs.
-
-### Attempts to bypass it
-
-| What the isolated command does                         | What happens                                                                                                                                                                             |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sets an allowed name in the SNI while aiming elsewhere | Reaches the server the proxy resolved that name to, not the one the command chose                                                                                                        |
-| Allowlists a name that resolves to an internal address | Refused: the resolved address is checked and rejected if it is loopback, link-local, the proxy itself, an address the runner holds, or another never-public range, in `audit` too        |
-| Uses ECH to conceal the real SNI                       | Reaches whatever the outer SNI resolved to, and that outer name still has to be allowed; the type 65 record carrying ECHConfig is never returned either                                  |
-| Encodes data into DNS queries                          | Answered locally and never forwarded; an outside resolver is unreachable                                                                                                                 |
-| Tunnels over ICMP, raw UDP, or QUIC                    | Dropped before the proxy; only TCP is redirected to it                                                                                                                                   |
-| Falls back to IPv6                                     | Forwarded IPv6 is dropped, lookups answer `::`, and the proxy connects over IPv4                                                                                                         |
-| Uses DNS over TLS or DNS over HTTPS                    | Redirected to the proxy like any other TCP and checked on its SNI, so an outside resolver is reachable only if its own host and port are allowlisted                                     |
-| Connects to a raw address                              | Checked against `allowed_ip_rules`, and refused when nothing matches                                                                                                                     |
-| Ignores the proxy variables entirely                   | No effect; interception is at the network level, not opt-in                                                                                                                              |
-| Floods the proxy log until earlier entries rotate away | A log that no longer starts where a real run does is not accepted as a complete record: the step fails under `restrict` with `fail_on_blocked` (the default), and is annotated otherwise |
-| Sends a name longer than a log line                    | The line is sized well past the longest name DNS allows; a line that arrives unreadable anyway is counted and the report is not accepted as a complete record                            |
-
-### What it can't see
-
-**Nothing inside the tunnel is visible.** A rule reaches as far as a host and a port. The method and
-the path travel inside TLS, so neither can be enforced, and neither appears in the report.
-[`inspect`](#inspect-proxy-engine) is what reads them.
-
-**An allowlisted address is an uninspected pipe.** Unlike the HTTPS and HTTP paths, a matched
-direct-IP connection is passed through as a raw TCP stream and its protocol is never checked. Once
-an `ip:port` pair is allowlisted, any TCP-based protocol can use that path. Prefer domain rules
-(`allowed_https_rules` / `allowed_http_rules`), and keep `allowed_ip_rules` for destinations that
-genuinely have no stable hostname.
-
-**Domain fronting.** This engine reads the SNI but cannot decrypt what follows, and the `Host`
-header that would reveal the real target is inside the tunnel:
-
-```
-1. ClientHello SNI: allowed.example.com     ← all Buildcage sees → allowed
-2. HTTP Host header: malicious.example.com  ← encrypted, not inspectable
-3. The CDN routes on the Host header        → reaches the attacker's server
-```
-
-For this to work, the allowed domain and the target domain have to sit on the same CDN or hosting
-infrastructure. Closing the gap needs the proxy to terminate TLS and read that header, which is what
-[`inspect`](#inspect-proxy-engine) does: `allowed_url_rules` matches on the real `Host`, so a
-fronted request lands outside any host rule it was written for.
-
-Staying on `universal`, what narrows it:
-
-- **Allow as few domains as possible.** Every extra host is another place a fronted request could
-  hide.
-- **Avoid broad CDN wildcards** such as `*.cdn.example.com`, and prefer a service's own domain:
-  `registry.npmjs.org` over a shared CDN host.
-- **Check your CDN's position.** Major providers including CloudFront and Cloudflare have
-  introduced measures restricting domain fronting; consult your provider's documentation for what
-  applies today.
-- **Re-run [audit mode](../README.md#operation-modes) periodically** to notice a connection pattern
-  that has changed.
-
 ## Hardening
 
-An allowlist decides which destinations a step can reach. It works on domain names, so it cannot
-tell a legitimate use of an allowed destination from an abusive one. Anything leaving through a
-service you had to allow anyway still leaves. That is a structural limit, not something a better
-rule set fixes.
-
-What it does stop is narrower. Traffic to a destination that is not on the list does not go out, and
-infrastructure an attacker set up is normally not on it, because the command has no reason to reach
-it. That is also the hardest kind of leak to find afterwards, which is why closing it is worth doing
-even though the rest stays open.
-
-An attacker who sends the same data through a service the command already uses stays inside the
-limit above. The rest of this section is about making that set of services smaller. Buildcage runs
-against the command you already have, and an allowlist generated from an audit run already blocks
-every destination the audit did not record. Weigh what follows against what the step has access to.
+Buildcage runs against the command you already have, and an allowlist generated from an audit run
+already blocks every destination the audit did not record. Going further is about shrinking the set
+of services that stay reachable, which is the [structural limit](#threat-model) above. Weigh what
+follows against what the step has access to.
 
 ### Keep each rule as narrow as it can be
 
@@ -570,9 +492,9 @@ the step running third-party code separate. Where fetching does run third-party 
 `pip install` that builds an sdist or a Cargo build script, the split moves nothing, because the
 code still runs where the network is.
 
-A mirror configured as a read-only pull-through cache serves upstream packages on demand and
-accepts no publishes, so nothing can be uploaded to the destination on your allowlist. Running one
-is a bigger commitment than anything else in this section.
+A mirror configured as a read-only pull-through cache serves upstream packages on demand and accepts
+no publishes, so nothing can be uploaded to the destination on your allowlist. Running one is a
+bigger commitment than anything else in this section.
 
 ### Keep the rest of your supply chain practice
 
@@ -581,187 +503,113 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
 
 ## Known Limitations
 
-- **A name with no IPv4 address never resolves**: the proxy resolves and connects over IPv4 only, so
-  an allowed name that has AAAA records and no A record is refused on every attempt, in `audit` too,
-  reported as `dns-failed` in the same words a lookup that merely timed out gets. No rule clears it, since
-  nothing about it is a rule decision. Where the host offers an IPv4 address under a different name,
-  allow that one instead.
-- **`write_through:` cannot name the sandbox's own scratch directory**: a `run:` step's
-  `write_through:` input listing `/var/tmp/buildcage-<uid>` (or an ancestor of it, `/var/tmp` for
-  instance) is rejected outright. That directory holds the run's own `mount --rbind /` rootfs,
-  and the writable exceptions are recursive bind-mounts, so allowing it would recursively re-expose
-  the whole host `/` inside the sandbox as a second, writable copy. Entries are normalized to
-  absolute paths first, so a spelling like `/var/tmp/./buildcage-<uid>` is caught by the same check.
-  This is a misconfiguration guard against an operator-supplied `write_through:` value, not a
-  defense against the isolated command itself (see
-  [`write_through` paths](./reference.md#write_through-paths)). The literal `/` is the exception: it
-  is the documented opt-out from the read-only restriction as a whole, so it skips this guard by
-  design. An entry that only _resolves_ to `/` is rejected rather than read as that opt-out.
-- **A created `write_through:` directory outlives a killed step**: a listed path that doesn't exist
-  is created before the step runs (owner and permissions copied from its nearest existing parent, so
-  a restricted tree stays restricted) and removed afterwards with `rmdir`, which only succeeds while
-  it is still empty. That cleanup runs in the action's own process, not its post step: the only way
-  to hand the list of created directories to the post step is `GITHUB_STATE`, which the sandboxed
-  command can rewrite, and that would turn the cleanup into a way to `rmdir` any empty directory as
-  root. A step killed outright therefore leaves an empty directory behind.
-- **Scratch directory on a multi-user host**: `/var/tmp` is world-writable (sticky bit set), so on a
-  host shared with other, unprivileged local users, one of them could pre-create
-  `/var/tmp/buildcage-<uid>` themselves before the action ever runs, as a symlink, or as a
-  world-writable directory, and redirect the OCI bundle (secrets included), the root-run
-  `mount --rbind /`, and cleanup's `sudo umount`/`rm -rf` wherever they chose. This is technically outside
-  this action's threat model (isolating a malicious `run:` command, not defending against a separate
-  actor already on the host, see [Co-located workflow step tampering](#known-limitations) below for
-  the same principle applied to another step in the same job), but the bar here is only an ordinary
-  local account, not root or the `docker` group, so the action verifies the base directory's owner,
-  type, and mode at startup and refuses to proceed rather than silently reusing an unexpected one. If
-  a host is genuinely shared with other local users, prefer a dedicated, single-tenant runner (one
-  host, one user) over relying on this check alone.
-- **Docker cannot be used inside the isolated command**: the primary GID substitution and the masked
-  runtime sockets (see [Supplementary groups cleared, primary group checked
-  too](#isolation-mechanisms) above) together mean the isolated command can neither reach a runtime
-  socket through group membership nor find one still present at its usual path. A `run:` step that
-  itself needs to invoke `docker` (build an image, run a container, etc.) cannot be wrapped by this
-  action.
-- **`$XDG_RUNTIME_DIR` is an empty directory inside the sandbox**: `/run/user/<uid>` (and any other
-  path `$XDG_RUNTIME_DIR` points at) is masked whole, see [D-Bus system bus and per-user runtime
-  directory masked](#isolation-mechanisms) above, so a tool that expects to read or write something
-  there, a session keyring, a PipeWire/Wayland socket, its own scratch state, finds nothing and, if
-  it writes, fails outright rather than silently landing on the host's real directory. There's no
-  opt-out input for this; it's considered part of the same hardening as the container-runtime-socket
-  masking above, not a separate, disableable feature.
-- **The post step validates `$GITHUB_STATE` before acting on it, not just reads it back**:
-  `$GITHUB_STATE` is how this action passes its proxy container's identity from the main step to
-  its own post (cleanup) step. That file lives under `$RUNNER_TEMP`, which stays writable in
-  `filesystem_mode: persistent` (the default), so the isolated command can overwrite what this action
-  wrote there before the post step reads it. The post step checks that the container name it reads
-  back is actually shaped like one this action generates, and computes the Compose project name for
-  its own proxy stack itself rather than trusting a stored value. A well-formed name is still only a
-  name, though, so before tearing anything down it reads back which step started that container —
-  recorded as a label when the container is created, from environment the runner sets per step and
-  the isolated command therefore cannot forge — and acts only on its own. Another Buildcage step's
-  container, correctly named, is left alone. A value that fails either check is treated as absent:
-  the post step skips cleanup for that run and logs `::error::` instead of guessing, leaving the
-  proxy container and its scratch directory in place. That leftover state
-  disappears with the job's own disposable VM on GitHub-hosted runners, but needs manual removal on
-  a self-hosted one.
-- **Credential retrieval is intentionally not blocked**: this action restricts _where_ the isolated
-  command can send network traffic, but not what it reads. A compromised dependency can still read
-  `~/.aws/credentials`, `~/.docker/config.json`, or similar local credential files anywhere on the
-  filesystem; it just cannot exfiltrate them anywhere outside the allowlist. That's unaffected by
-  `filesystem_mode`. The same reach extends to an agent socket the workflow started for itself, an
-  `ssh-agent` holding a deploy key or a `gpg-agent` holding an imported signing key: a read-only
-  mount doesn't stop `connect(2)` on a live Unix domain socket, and a network namespace has nothing
-  to do with a pathname `AF_UNIX` one. The isolated command never gets the private key, which is the
-  point of an agent, but it can have the agent sign whatever it likes for as long as the step runs.
-  Where the agent is there for some other step, don't hand it to this one: nothing is filtered out
-  of the environment beyond what [Runner-only credentials withheld](#isolation-mechanisms) above
-  covers, so `SSH_AUTH_SOCK: ""` in the step's own `env:` passes an empty value through, which
-  `ssh` treats as no agent at all. Where the isolated command is itself
-  what needs the agent, a `npm ci` pulling private git dependencies for instance, there is nothing
-  to scope away. An agent whose socket sits under `$XDG_RUNTIME_DIR` is already out of reach for an
-  unrelated reason, see [`$XDG_RUNTIME_DIR` is an empty directory inside the
-  sandbox](#known-limitations) above.
-- **`filesystem_mode: persistent` (the default) lets the command plant a payload for a later step, not
-  just read one**: since the filesystem is read-only outside
-  `$GITHUB_WORKSPACE`/`$HOME`/`/tmp`/`$RUNNER_TEMP`, that's also _where_ it can persist one.
-  `GITHUB_OUTPUT`, `GITHUB_ENV`, and `GITHUB_PATH` live under `$RUNNER_TEMP`, a writable exception,
-  so the isolated command can set an output, an env var, or `$PATH` for later steps exactly as an
-  un-sandboxed one could, and the same goes for `~/.bashrc`, `~/.npmrc`, `~/.docker/config.json`,
-  and anything else under `$HOME`, `/tmp`, or `$GITHUB_WORKSPACE`. `filesystem_mode: ephemeral`
-  (**experimental**; see [Filesystem access](../README.md#filesystem-access) in the README) closes
-  this off for everything except what's explicitly named in `write_through:`, which in practice has to
-  include `$GITHUB_WORKSPACE` for the job to do anything useful, so that specific path (and whatever
-  else you list) remains exactly as exposed to this as `persistent` mode always is. `$RUNNER_TEMP` and `/tmp`
-  are also the same real directory across every invocation of this action in a job, not scoped per
-  sandbox, in `persistent` mode: two concurrent invocations are isolated at the container/network
-  level (see [How it works](../README.md#how-it-works)), not the filesystem, so one can reach another's in-flight
-  scratch files there. `filesystem_mode: ephemeral` resolves this too, since each invocation gets its own
-  overlay.
+### What the sandbox does not stop
 
-  What follows from that is where the step goes in the job. The network restriction covers the
-  command this action runs, for as long as it runs; it says nothing about what a step after it does,
-  and in `persistent` mode a later step is something the command can reach. Wrapping every untrusted
-  step in this action is not the way out: a payload left in `$GITHUB_PATH` or `$HOME` runs in the
-  next step before its sandbox does, and this action resolves `sudo` and `docker` through the
-  `$PATH` the runner hands it. Two arrangements hold: make the isolated step the last one in the job
-  that runs anything untrusted, leaving only fixed steps such as an artifact upload after it, or use
+- **Reading credentials.** A compromised dependency can read `~/.aws/credentials`,
+  `~/.docker/config.json` or any other local credential file; it just cannot send them outside the
+  allowlist, in either `filesystem_mode`. The same reach extends to an agent socket the workflow
+  started for itself, an `ssh-agent` holding a deploy key or a `gpg-agent` holding a signing key: a
+  read-only mount does not stop `connect(2)` on a live Unix socket, and a network namespace has
+  nothing to do with a pathname `AF_UNIX` one. The command never gets the private key, which is the
+  point of an agent, but it can have the agent sign whatever it likes while the step runs. Where the
+  agent is there for another step, don't hand it to this one: `SSH_AUTH_SOCK: ""` in the step's own
+  `env:` passes an empty value through, which `ssh` treats as no agent at all.
+- **Planting something for a later step.** The filesystem is read-only outside
+  `$GITHUB_WORKSPACE`/`$HOME`/`/tmp`/`$RUNNER_TEMP`, which is also where it can persist.
+  `GITHUB_OUTPUT`, `GITHUB_ENV` and `GITHUB_PATH` live under `$RUNNER_TEMP`, so the command can set
+  an output, an env var or `$PATH` for later steps exactly as an un-sandboxed one could, and the
+  same goes for `~/.bashrc`, `~/.npmrc` and anything else under a writable exception.
+  `filesystem_mode: ephemeral` closes this off for everything except what `write_through:` names,
+  which in practice has to include `$GITHUB_WORKSPACE`, so that path stays as exposed as it is in
+  `persistent` mode.
+
+  That decides where the step goes in the job. Wrapping every untrusted step is not the way out:
+  a payload left in `$GITHUB_PATH` or `$HOME` runs in the next step before its sandbox does, and
+  this action resolves `sudo` and `docker` through the `$PATH` the runner hands it. Two arrangements
+  hold: make the isolated step the last one in the job that runs anything untrusted, or use
   `filesystem_mode: ephemeral` with `write_through:` narrowed to `$GITHUB_WORKSPACE` and the output
-  files the step really has to produce. Adopting this action for the network restriction alone, with
-  untrusted steps still to come, gets less than it looks like.
+  files the step really has to produce.
 
-- **The report is written outside the sandbox, but the Job Summary it lands in is not**: this
-  action renders its section from the runner host after the sandboxed command has exited, so the
-  command cannot edit its own report, and a name or URL is escaped before it is written into one of
-  its tables. What it can do in `filesystem_mode: persistent` (the default) is append to
-  `$GITHUB_STEP_SUMMARY` beforehand, that file living under `$RUNNER_TEMP`, and leave markdown of
-  its own beside the real report; so can any later step it has taken over by the bullet above.
-  Where the report is meant to be an audit trail rather than something to read, take it from
-  `upload_traffic_artifact: true` instead: the JSON is uploaded when the step ends, and is not a
-  file a later step can append a line to.
-- **A step's own scratch directory is hidden from every sandbox, including its own**: each
-  `run:` step stages its OCI bundle and its run script under `/var/tmp/buildcage-<uid>/`, and the
-  sandbox's root filesystem is a bind-mount of the host's own `/`, so without further work every
-  concurrently running (or crashed and not yet cleaned up) step's staging directory would be
-  plainly readable from inside every other one. Those directories are 0700/0600, which does not
-  help: there is no user namespace, so every sandbox on a runner shares one real UID. The whole
-  base directory is therefore covered with an empty tmpfs inside each sandbox, with only that
-  run's own run script bound back on top of it. The step environment is no longer written into the
-  OCI config at all either: it is piped to the sandboxed process over stdin, so `env:` secrets
-  never reach the runner's disk. What this does _not_ cover is a process running as the same user
-  outside any sandbox: it can still read `/var/tmp/buildcage-<uid>/` directly, which is the same
-  accepted limitation as credential retrieval above.
-- **`filesystem_mode: ephemeral` (experimental) requires overlayfs support on the runner's own
-  filesystem**: checked with a preflight probe before the sandbox starts, so an unsupported runner fails the step with a clear
-  error rather than a cryptic one partway through. This is known to fail when the runner process
-  itself runs inside a container whose own root filesystem is overlayfs (common for container-based
-  self-hosted runners), since the kernel doesn't allow an overlay mount's `upperdir`/`workdir` to
-  themselves sit on overlayfs. The probe's own leftovers are removed with `sudo rm -rf`, since the
-  kernel writes root-owned bookkeeping into `workdir` while the mount is live, so a runner whose
-  sudoers is scoped too narrowly to allow that fails the preflight too — it is what this mode's own
-  cleanup needs later anyway. `filesystem_mode: persistent` remains available on any runner this action
-  otherwise supports.
-- **Linux only**: requires a Linux runner with passwordless `sudo` for the isolation setup itself
-  (network namespace, veth, iptables) and a working Docker installation (client and daemon) for the
-  sandbox proxy container, on Docker Engine 25.0 or later with Compose v2.20.2 or later. All are
-  the default on GitHub-hosted `ubuntu-*` runners, but not on lightweight images such as
-  `ubuntu-slim`, which ships a Docker client with no daemon. Not supported on Windows or macOS
-  runners.
-- **Rootful Docker assumed**: the isolation joins the proxy container's network namespace via
-  Docker's own `NetworkSettings.SandboxKey` (a path Docker itself bind-mounts on the host for the
-  container's lifetime, entered with `nsenter --net=`). This assumes that path is directly reachable
-  from the runner host's own filesystem, as it is on the default GitHub-hosted runner setup. Under
-  rootless Docker or `userns-remap`, that path may live inside a mount namespace of its own and not
-  be directly reachable, so this action is not currently supported on those setups.
-- **Per-step overhead**: each step starts and stops its own proxy container, rather than sharing
-  one across steps in the same job. This keeps allowlists independently configurable per step and
-  keeps the traffic report's step-to-container mapping unambiguous, at the cost of container
-  startup overhead on jobs with many isolated steps.
-- **No CPU/memory/process-count limits (out of scope by design)**: the OCI `config.json` runc builds
-  for the isolated command never sets `linux.resources`, so the cgroup it runs under carries no
-  memory, pids, or CPU ceiling. Capability bounding and the seccomp profile don't close this either,
-  since a legitimate build has to call `fork(2)` and `mmap(2)` freely. A fork bomb or a runaway
-  allocation inside the isolated command isn't refused, it consumes host memory or the host process
-  table until something else gives out. This isn't a containment gap: the threat model here is
-  confining where the command's network traffic goes, not bounding what it consumes, and wrapping a
-  step with this action doesn't change that step's exposure, since an un-sandboxed `run:` step has
-  exactly the same absence of cgroup limits on the same host. On GitHub-hosted runners that stays
-  contained to the job's own disposable VM; on a shared self-hosted runner it can starve other jobs
-  running alongside it. Bounding that is a runner-service concern, not a per-step one, for instance a
-  systemd slice's `MemoryMax=`/`TasksMax=` around the runner service itself, not something this
-  action's OCI spec attempts.
-- **Co-located workflow step tampering (out of scope by design)**: the threat model here is
-  preventing network exfiltration by malicious code inside the wrapped command, the contents of the
-  command itself. **A malicious workflow environment, a compromised or untrustworthy third-party
-  action running as another step in the same job, is out of scope by design.** Such a step could use
-  `docker exec`/`docker cp` (or, with the host root a passwordless-sudo runner grants by default,
-  direct filesystem access) to tamper with the proxy container's state, most notably its traffic
-  log, since the Sigstore verification below only proves the image was genuine at startup, not
-  afterward. This is mitigated a little, in that a log that doesn't start where a real proxy run
-  would is treated as suspicious rather than an automatic pass, which also covers a step flooding
-  the proxy's logs until their earliest entries rotate out. A step large enough to genuinely outgrow
-  the log's 100 MB rotation budget trips the same check, for the same reason: its earliest traffic
-  really is gone. Against tampering the effective defense is procedural, not technical: don't place
-  an untrusted workflow step immediately around this action.
+- **Appending to the Job Summary.** The report is rendered from the runner host after the command
+  has exited, and a name or URL is escaped before it is written into a table, so the command cannot
+  edit its own report. What it can do in `persistent` mode is append to `$GITHUB_STEP_SUMMARY`
+  beforehand and leave markdown of its own beside the real report. Where the report is meant to be
+  an audit trail, take it from `upload_traffic_artifact: true` instead: the JSON is uploaded when
+  the step ends, and is not a file a later step can append a line to.
+- **Exhausting the host.** The OCI spec sets no `linux.resources`, so there is no memory, pids or
+  CPU ceiling, and capability bounding and seccomp cannot close this either, since a legitimate
+  build calls `fork(2)` and `mmap(2)` freely. A fork bomb consumes host memory or the process table
+  until something gives out. Wrapping a step does not change its exposure here, since an un-sandboxed
+  `run:` step has the same absence of limits on the same host. On GitHub-hosted runners that stays
+  inside the job's disposable VM; bounding it on a shared self-hosted runner is a runner-service
+  concern, such as a systemd slice's `MemoryMax=` around the runner service itself.
+- **Reading a step's staging directory from outside any sandbox.** `/var/tmp/buildcage-<uid>` is
+  hidden from every sandbox, including its own, but a process running as the same user outside one
+  can still read it. That is the same accepted limitation as credential retrieval above.
+
+### Where it will not run
+
+- **Linux only**, with passwordless `sudo` for the isolation setup (network namespace, veth,
+  iptables) and a working Docker installation for the proxy container, on Docker Engine 25.0 or
+  later with Compose v2.20.2 or later. All are the default on GitHub-hosted `ubuntu-*` runners, but
+  not on lightweight images such as `ubuntu-slim`, which ships a client with no daemon.
+- **Rootful Docker.** The isolation joins the proxy container's netns through Docker's own
+  `NetworkSettings.SandboxKey` path, which under rootless Docker or `userns-remap` may live inside a
+  mount namespace of its own and not be reachable from the host. Those setups are not supported.
+- **Not from inside the isolated command.** The primary GID substitution and the masked runtime
+  sockets together mean the command can neither reach a runtime socket through group membership nor
+  find one at its usual path, so a step that itself needs to invoke `docker` cannot be wrapped.
+- **`filesystem_mode: ephemeral` needs overlayfs support on the runner's own filesystem**, checked
+  by a preflight probe so an unsupported runner fails with a clear error. It is known to fail where
+  the runner process itself runs inside a container whose root filesystem is overlayfs, since an
+  overlay mount's `upperdir` cannot sit on overlayfs. The probe's leftovers are removed with
+  `sudo rm -rf`, which the mode's own cleanup needs later anyway, so a too-narrow sudoers scope
+  fails the preflight as well. `persistent` remains available on any supported runner.
+- **Not on a host shared with other local users**, ideally. `/var/tmp` is world-writable, so another
+  unprivileged local account could pre-create `/var/tmp/buildcage-<uid>` as a symlink or a
+  world-writable directory and redirect the OCI bundle, the root-run `mount --rbind /` and cleanup's
+  `sudo umount`/`rm -rf`. A separate actor already on the host is outside this action's threat model,
+  but the bar here is only an ordinary local account, so the base directory's owner, type and mode
+  are checked at startup and the action refuses to proceed rather than reuse an unexpected one.
+  Prefer a dedicated, single-tenant runner over relying on that check alone.
+
+### Rough edges
+
+- **A name with no IPv4 address never resolves.** The proxy resolves and connects over IPv4 only, so
+  an allowed name with AAAA records and no A record is refused on every attempt, in `audit` too, and
+  reported as `dns-failed` in the same words a lookup that merely timed out gets. No rule clears it,
+  since nothing about it is a rule decision. Where the host offers an IPv4 address under a different
+  name, allow that one instead.
+- **`write_through:` cannot name the sandbox's own scratch directory.** An entry naming
+  `/var/tmp/buildcage-<uid>` or an ancestor of it is rejected outright, since the writable
+  exceptions are recursive bind-mounts and that directory holds the run's `mount --rbind /` rootfs,
+  so allowing it would re-expose the whole host `/` as a writable copy. Entries are normalized
+  first, so `/var/tmp/./buildcage-<uid>` is caught by the same check. This guards against an
+  operator's `write_through:` value, not against the command itself. The literal `/` is the
+  documented opt-out from the read-only restriction and skips the guard by design; an entry that
+  only _resolves_ to `/` is rejected rather than read as that opt-out.
+- **A created `write_through:` directory outlives a killed step.** A listed path that doesn't exist
+  is created before the step runs, with owner and permissions copied from its nearest existing
+  parent, and removed afterwards with `rmdir`. That cleanup runs in the action's own process rather
+  than its post step, because handing the list to the post step would mean `GITHUB_STATE`, which the
+  command can rewrite, and that would turn cleanup into a way to `rmdir` any empty directory as
+  root. A step killed outright therefore leaves an empty directory behind.
+- **`$XDG_RUNTIME_DIR` is an empty directory inside the sandbox**, since `/run/user/<uid>` is masked
+  whole. A tool expecting a session keyring or its own scratch state there finds nothing and fails
+  outright rather than silently landing on the host's real directory. There is no opt-out input.
+- **The post step validates `$GITHUB_STATE` rather than trusting it.** That file lives under
+  `$RUNNER_TEMP`, writable in `persistent` mode, so the command can overwrite what this action wrote
+  there. The post step checks that the container name it reads back is shaped like one this action
+  generates, computes its own Compose project name rather than trusting a stored value, and reads
+  back which step started that container, recorded as a label from environment the runner sets per
+  step and the command cannot forge. Another Buildcage step's container is left alone. A value that
+  fails either check is treated as absent: cleanup is skipped with an `::error::` rather than
+  guessed at, which leaves the proxy container and its scratch directory behind on a self-hosted
+  runner.
+- **Per-step overhead.** Each step starts and stops its own proxy container rather than sharing one
+  across the job, which keeps allowlists independently configurable and the report's
+  step-to-container mapping unambiguous, at the cost of startup time on jobs with many isolated
+  steps.
 
 ## Image Provenance Verification
 
@@ -770,63 +618,33 @@ the one this repository published.
 
 Each release's image is bound to the CI workflow that built it by [Sigstore](https://sigstore.dev)
 keyless signing, and the action verifies that binding at startup. The signature covers the exact
-source commit SHA, so a tampered or substituted image fails verification before it is used. Pin to a
-commit SHA (or a version tag) and update on your own schedule: verification is what confirms you are
-running exactly what was built from that commit.
+source commit SHA, so a tampered or substituted image fails verification before it is used.
 
 ### How it works
 
-**Signing (at release time):** when a release tag is pushed, the `docker-publish.yml` workflow
-builds and signs the Docker image using a short-lived OIDC identity issued by GitHub Actions. The
-signature is stored as a **Sigstore Bundle v0.3** attached to the image via the OCI 1.1 Referrers
-API in GHCR. The bundle holds the signature, a Fulcio leaf certificate embedding the workflow
-identity, and a Rekor transparency log entry.
+**At release time**, the `docker-publish.yml` workflow builds and signs the image using a short-lived
+OIDC identity issued by GitHub Actions. The signature is stored as a **Sigstore Bundle v0.3**
+attached to the image through the OCI 1.1 Referrers API in GHCR. The bundle holds the signature, a
+Fulcio leaf certificate carrying the workflow identity, and a Rekor transparency log entry. Signing
+waits on a run of the image just pushed, so an image that does not enforce is never signed, and an
+unsigned image is one the action refuses.
 
-Between building and signing, the workflow runs the image it just pushed: on both architectures and
-for each engine, the action starts that exact digest and checks that an allowed host is reachable,
-that one outside the rules is not, and that the report names both. An image that fails there is
-never signed, and an unsigned image is one the action refuses.
+**At action startup** (the `main` phase, so `docker/login-action` has already stored registry
+credentials), the action verifies the image entirely in-process using `@sigstore/verify`,
+`@sigstore/tuf` and `@sigstore/bundle`. No external binary such as cosign is downloaded or required.
+It resolves the tag to a manifest digest and fetches the bundle for that digest from the Referrers
+API. A single `verifyBundle()` call then enforces every identity check at once: the OIDC issuer, the
+signing workflow and its ref or version, and the source commit SHA carried in Fulcio OID
+`1.3.6.1.4.1.57264.1.13`. That is the equivalent of cosign's `--certificate-oidc-issuer`,
+`--certificate-identity-regexp` and `--certificate-github-workflow-sha`.
 
-**Verification (at action startup, `main` phase):** the action verifies the image entirely
-in-process using `@sigstore/verify`, `@sigstore/tuf` and `@sigstore/bundle`. No external binary
-(cosign, for instance) is downloaded or required. The flow:
+Two assertions then run against the verified bundle, both fail-closed:
 
-```
-1. Fetch manifest-list digest
-       docker buildx imagetools inspect <image>:<tag>
-       (uses docker login credentials, so private packages work)
-            ↓
-2. Fetch registry pull token
-       GET https://ghcr.io/token?scope=repository:<repo>:pull
-         → logged in (docker/login-action): Basic auth with Docker config credentials
-         → not logged in: anonymous request (public packages only)
-            ↓
-3. Pull Sigstore Bundle from OCI Referrers API
-       GET /v2/<repo>/referrers/<digest>  → locate bundle manifest
-       GET /v2/<repo>/blobs/<bundleDigest> → fetch bundle JSON
-            ↓
-4. Cryptographic + identity verification (@sigstore/verify, TUF-backed trust root)
-       verifyBundle(bundleJson, {
-         certificateIssuer,       ← OIDC issuer enforced cryptographically
-         certificateIdentityURI,  ← SAN regexp: workflow URL + ref/version
-         certificateOIDs,         ← OID 1.13: Source Repository Digest (SHA pin)
-       }, expectedDigest)
-            ↓
-5. Signed digest assertion (fail-closed)
-       Parse DSSE payload → subject[].digest.sha256 (in-toto v1, --new-bundle-format)
-       Must equal the digest fetched in step 1 (strict string equality)
-       Mismatch → VERIFY_FAILED (closes the Referrers API attribution gap)
-            ↓
-6. Proxy engine assertion (fail-closed)
-       GET the verified image's config blob → org.opencontainers.image.version
-       Its engine suffix must name the engine this run asked for
-       Mismatch → VERIFY_FAILED (the signature covers the digest, not the tag)
-```
-
-Every identity check (OIDC issuer, signing workflow, ref/SHA claim, manifest digest) is enforced
-inside the single `verifyBundle()` call, equivalent to cosign's `--certificate-oidc-issuer`,
-`--certificate-identity-regexp` and `--certificate-github-workflow-sha`, plus the implicit
-digest-match cosign performs against its target image argument.
+- **The signed digest must equal the digest the tag resolved to.** This closes the attribution gap
+  the Referrers API leaves open.
+- **The image's `org.opencontainers.image.version` must name the engine this run asked for.** The
+  signature covers a digest, not a tag, so without this an `-inspect` tag repointed at the same
+  release's `universal` image would run without URL and TLS enforcement.
 
 ### Identity matching by reference type
 
@@ -843,23 +661,11 @@ For the strongest guarantee, pin to a **commit SHA**:
 uses: buildcage/isolated-run@<40-char-sha> # vX.Y.Z
 ```
 
-The SHA check is the core of tamper detection: it confirms the Docker image was built from exactly
-the same source tree as the pinned action commit. An image built from a different commit fails
-verification even if it is signed.
-
-### What this prevents
-
-An attacker who can push a malicious image to `ghcr.io/buildcage/isolated-run` without compromising
-the repository cannot produce a valid Sigstore bundle. The bundle's Fulcio certificate requires a
-GitHub Actions OIDC token that is only issued during an actual workflow run on the real repository.
-
-This is **one layer of a defense-in-depth strategy**, not a complete guarantee. It reduces the
-attack surface to the registry layer and forces an attacker to compromise the GitHub account or the
-repository itself, which raises the cost and leaves an audit trail in the Rekor transparency log.
-
-Binding the image digest to the exact source commit SHA also serves as an alternative to
-reproducible builds: it establishes that the published artifact was produced from a specific source
-commit without requiring an independent rebuild.
+The SHA check is the core of tamper detection: it confirms the image was built from exactly the same
+source tree as the pinned action commit. An image built from a different commit fails verification
+even if it is signed. An attacker who can push to `ghcr.io/buildcage/isolated-run` without
+compromising the repository cannot produce a valid bundle, since the Fulcio certificate requires an
+OIDC token issued during a real workflow run on the real repository.
 
 ### Verification Limitations
 
@@ -868,41 +674,30 @@ Verification establishes where the image came from. Here is what it leaves uncov
 - **The run before signing is a smoke test, not the test suite.** It proves the released image
   starts and enforces on a single allowed and a single refused host, per engine and per
   architecture. The scenario coverage in `test/` runs against an image built from the branch, and
-  the parts of it that need the fixture origin cannot run against a released image at all: trusting
-  that origin's self-signed certificate takes a `BUILDCAGE_TEST_HOOKS` build, which a released image
-  is not.
-
-- **A signature says who built the image, not what the code does.** It attests that this
-  repository's release workflow built it from the pinned commit, and a release published by someone
+  the parts of it that need the fixture origin cannot run against a released image at all.
+- **A signature says who built the image, not what the code does.** A release published by someone
   who has taken over that identity verifies just as cleanly as a legitimate one. Two things limit
-  the damage: with a commit-SHA pin, a newly published release cannot reach your workflow until you
-  change the pin yourself, and every signature is recorded in the Rekor transparency log, so an
-  unintended release is discoverable after the fact.
-
+  the damage: with a commit-SHA pin, a new release cannot reach your workflow until you change the
+  pin yourself, and every signature is recorded in the Rekor transparency log, so an unintended
+  release is discoverable after the fact.
+- **A floating tag is a pointer someone else moves.** Under `@v1` or `@v1.2` the signing identity
+  accepts any release in that series, so the tag can also be moved back to an older one. Both the
+  registry tag and the git tag are writable by whoever publishes releases, which is the reason to
+  prefer a commit SHA: it puts you in charge of when you move.
+- **The registry decides which signed image gets verified.** Everything after the tag lookup is
+  bound to the digest it returned, so content substituted later makes verification **fail** rather
+  than falsely pass, leaving no time-of-check/time-of-use gap. What remains is the tag lookup
+  itself: an attacker with write access to the registry could repoint the tag, but only at an image
+  this repository's release workflow genuinely signed.
 - **Sigstore has to be reachable.** Verification depends on the Rekor transparency log and the
   Fulcio CA, and fetches the TUF trust root at verification time. An outage there fails the action
   rather than skipping the check.
-
-- **The registry decides which signed image gets verified.** Resolving the tag yields a manifest
-  digest, and everything after that is bound to it: the bundle is fetched by digest, the verified
-  signature must cover that same digest, and the `docker pull` is digest-pinned. Content substituted
-  at any point after the tag lookup therefore makes verification **fail** rather than falsely pass,
-  leaving no time-of-check/time-of-use gap. What remains is the tag lookup itself: an attacker with
-  write access to the registry could repoint the tag, but only at an image this repository's release
-  workflow genuinely signed.
-
-  That leaves one engine's image substitutable for another's from the same release, which the
-  identity cannot tell apart. Step 6 above is what does: an `-inspect` tag pointed at the same
-  release's `universal` image fails, instead of quietly running without URL and TLS enforcement.
-
-- **A floating tag is a pointer someone else moves.** Under `@v1` or `@v1.2` the signing identity
-  accepts any release in that series, so the tag can also be moved back to an older one. Pinning a
-  commit SHA is what puts you in charge of when you move, and it is the reason to prefer it: the
-  registry tag and the git tag behind `@v1` are both writable by whoever publishes releases.
-
 - **A build-time test hook exists, but not in what you run.**
   `BUILDCAGE_BUILD_TEST_HOOKS=1 vp run build` produces a `dist/` where a `BUILDCAGE_LOCAL_IMAGE_REF`
   override can point the action at an unpublished image, used only by this repo's own CI and local
   development. Tree-shaking drops that module out of every normal build, and a CI check inspects the
   published `dist/` to confirm it never reads the flag, so no `env:` a consumer sets can reach it.
   See [development.md](./development.md#local-development).
+
+Tampering with the proxy container after startup is a separate question, and is covered under
+[Threat model](#threat-model) above.

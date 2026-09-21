@@ -13,6 +13,14 @@
 | --- | --- | --- | ---: |
 | bad.example.com:443 | HTTPS | https-not-allowed | 2 |
 
+### ⚠️ Failed Connections
+
+| Host | Rule | Reason | Count |
+| --- | --- | --- | ---: |
+| c.example.com:443 | HTTPS | dns-failed | 1 |
+
+<sub>*Note: no rule refused these; the connection itself did not complete, so no rule can change the outcome and none of them fails the step.*</sub>
+
 <details>
 <summary>💬 Communication details</summary>
 
@@ -26,3 +34,5 @@
 </details>
 
 *Reported by [buildcage/isolated-run](https://github.com/buildcage/isolated-run)*
+
+<hr>

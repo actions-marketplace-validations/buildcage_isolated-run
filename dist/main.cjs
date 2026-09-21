@@ -18261,7 +18261,7 @@ const SYSTEM_CA_CANDIDATES = [
 	"/etc/ssl/ca-bundle.pem",
 	"/etc/pki/tls/cacert.pem",
 	"/etc/ssl/cert.pem"
-], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem", SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
+], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem";
 function defaultExec$1(command, args) {
 	(0, node_child_process.execFileSync)(command, args);
 }
@@ -18282,14 +18282,17 @@ function extractCaCert(containerName, destDir, { exec = defaultExec$1, chmod = n
 function writeCaTrustFiles(caCertPath, dir, { readFile = defaultReadFile$1, writeFile = defaultWriteFile, exists = node_fs.existsSync } = {}) {
 	let ca = readFile(caCertPath).trimEnd(), ownCaPath = (0, node_path.join)(dir, "buildcage-ca.pem");
 	writeFile(ownCaPath, `${ca}\n`, 420);
-	let systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCaPath;
-	if (systemStoreSource) {
-		let existing = readFile(systemStoreSource).trimEnd();
-		systemCaPath = (0, node_path.join)(dir, "system-ca-bundle.pem"), writeFile(systemCaPath, `${existing}\n${ca}\n`, 420);
+	let destination = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCa;
+	if (destination) {
+		let existing = readFile(destination).trimEnd(), path = (0, node_path.join)(dir, "system-ca-bundle.pem");
+		writeFile(path, `${existing}\n${ca}\n`, 420), systemCa = {
+			path,
+			destination
+		};
 	}
 	return {
 		ownCaPath,
-		systemCaPath
+		systemCa
 	};
 }
 const POINT_AT_OWN_CA = ["NODE_EXTRA_CA_CERTS", "DENO_CERT"], POINT_AT_SYSTEM_STORE = [
@@ -18305,14 +18308,14 @@ function caTrustAdditions(files, env) {
 		options: ["rbind", "ro"]
 	}], extraEnv = {};
 	for (let name of POINT_AT_OWN_CA) env[name] || (extraEnv[name] = OWN_CA_DESTINATION);
-	if (files.systemCaPath) {
+	if (files.systemCa) {
 		mounts.push({
-			destination: SYSTEM_CA_DESTINATION,
+			destination: files.systemCa.destination,
 			type: "none",
-			source: files.systemCaPath,
+			source: files.systemCa.path,
 			options: ["rbind", "ro"]
 		});
-		for (let name of POINT_AT_SYSTEM_STORE) env[name] || (extraEnv[name] = SYSTEM_CA_DESTINATION);
+		for (let name of POINT_AT_SYSTEM_STORE) env[name] || (extraEnv[name] = files.systemCa.destination);
 	}
 	return {
 		mounts,
@@ -18337,7 +18340,7 @@ function withHostShmSize(mounts, hostShmBytes) {
 const RESOLV_CONF_DESTINATION = "/etc/resolv.conf", RESERVED_INTERNAL_DESTINATIONS = [
 	RESOLV_CONF_DESTINATION,
 	OWN_CA_DESTINATION,
-	SYSTEM_CA_DESTINATION
+	...SYSTEM_CA_CANDIDATES
 ];
 function assertNoFreshMountDestinations(writableDirs, freshMountDestinations) {
 	for (let dir of writableDirs) {
@@ -18418,7 +18421,7 @@ function validateFilesystemInputs(filesystemMode, writeThroughPaths) {
 	if (filesystemMode === "ephemeral" && writeThroughPaths.includes("/")) throw new SandboxError("write_through: / drops the read-only restriction wholesale, which has no meaning in filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists to prevent. List the paths that must survive instead.", "FILESYSTEM_INPUT_CONFLICT");
 	for (let path of writeThroughPaths) {
 		let reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
-		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
+		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts the proxy's DNS and CA trust over ${JSON.stringify(reserved)}, last of all. Which path the CA store goes to depends on the runner, so every one it could be is refused rather than working on one machine and not the next. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
 	}
 }
 function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}) {
@@ -19257,7 +19260,9 @@ function describeReportOutcomes(report, { failOnBlocked, engineLabel }) {
 		engineLabel,
 		engine: report.engine
 	})], undecided = describeUndecidedRequests(report, engineLabel);
-	return undecided && emissions.push(undecided), emissions;
+	undecided && emissions.push(undecided);
+	let failed = describeFailedConnections(report, engineLabel);
+	return failed && emissions.push(failed), emissions;
 }
 function describeUndecidedRequests(report, engineLabel) {
 	if (report.engine !== "inspect") return;
@@ -19265,7 +19270,15 @@ function describeUndecidedRequests(report, engineLabel) {
 	if (count !== 0) return {
 		level: "warning",
 		shouldFail: !1,
-		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, timed out, or sent something that could not be read as HTTP. None of them fails the step.`
+		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, its own timeout expired, or this proxy ran into an error while still reading. None of them fails the step. Bytes this proxy would not read as a request are not among them: that is a refusal, and it is in Blocked Hosts.`
+	};
+}
+function describeFailedConnections(report, engineLabel) {
+	let count = report.failed.reduce((total, row) => total + row.count, 0);
+	if (count !== 0) return {
+		level: "notice",
+		shouldFail: !1,
+		message: `${report.parameters.mode === "audit" ? `${count} connection(s) buildcage ${engineLabel} recorded did not complete` : `${count} connection(s) failed after buildcage ${engineLabel} allowed them`}, listed under Failed Connections. The origin broke off, answered nothing usable, or its name resolved nowhere upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
 	};
 }
 //#endregion
@@ -19441,7 +19454,8 @@ function renderInspectDetails(timeline, startedAt) {
 const MARK = {
 	block: "🚫",
 	discovery: "ℹ️",
-	incomplete: "⚠️"
+	incomplete: "⚠️",
+	failed: "⚠️"
 };
 function renderEvent(event, startedAt) {
 	return `${MARK[event.action] ?? "✅"} ${formatTime(event.time, startedAt)}: ${subject(event)} -> ${outcome(event)}`;
@@ -19478,11 +19492,18 @@ function redactCredentialQuery(url) {
 	return url.slice(0, start + 1) + query + url.slice(end);
 }
 function subject(event) {
-	return event.queryType === void 0 ? event.protocol === "dns" ? `DNS ${event.host}` : event.url === void 0 ? `${event.protocol.toUpperCase()} ${event.host}:${event.port}` : `${event.method} ${redactCredentialQuery(event.url)}` : `DNS ${event.queryType} ${event.host}`;
+	if (event.queryType !== void 0) return `DNS ${event.queryType} ${event.host}`;
+	if (event.protocol === "dns") return `DNS ${event.host}`;
+	if (event.url === void 0) {
+		let nameAndPort = `${event.protocol.toUpperCase()} ${event.host}:${event.port}`;
+		return event.method === void 0 ? nameAndPort : `${event.method} ${nameAndPort}`;
+	}
+	return `${event.method} ${redactCredentialQuery(event.url)}`;
 }
 function outcome(event) {
 	if (event.action === "block") return event.reason ?? "blocked";
 	if (event.action === "incomplete") return event.reason ?? "no request";
+	if (event.action === "failed") return event.reason ?? "failed";
 	if (event.action === "discovery") return `no data (${event.queryType} is never served)`;
 	let parts = [];
 	return event.status !== void 0 && parts.push(String(event.status)), event.bytes !== void 0 && parts.push(`(${formatBytes(event.bytes)})`), parts.length > 0 ? parts.join(" ") : "resolved";
@@ -19632,7 +19653,7 @@ function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound
 			showExpected
 		}) + "\n";
 	}
-	return report.passed.length === 0 && report.blocked.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown;
+	return report.failed.length > 0 && ((report.passed.length > 0 || report.blocked.length > 0) && (markdown += "\n"), markdown += "### ⚠️ Failed Connections\n\n" + renderHostTable(report.failed, { showReason: !0 }) + "\n\n<sub>*Note: no rule refused these; the connection itself did not complete, so no rule can change the outcome and none of them fails the step.*</sub>\n"), report.passed.length === 0 && report.blocked.length === 0 && report.failed.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown += "\n<hr>\n", markdown;
 }
 //#endregion
 //#region src/core/lib/report/render/truncate-communication-details.ts
@@ -19693,9 +19714,9 @@ function createIncrementalAggregator() {
 }
 //#endregion
 //#region src/core/lib/log/start-marker.ts
-const PROXY_START_MARKER = "buildcage haproxy starting", logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
+const PROXY_START_MARKER = "buildcage haproxy starting", logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/, FAILURE_REASONS$1 = new Set(["dns-failed"]);
 async function scanHaproxyLog(lines, isAudit) {
-	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, headIntact, unparsed = 0;
+	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), failed = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, headIntact, unparsed = 0;
 	for await (let line of lines) {
 		let m = line.match(logPattern);
 		if (!m) {
@@ -19711,11 +19732,12 @@ async function scanHaproxyLog(lines, isAudit) {
 			ruleType,
 			reason: reason || "-"
 		};
-		decision === passedDecision ? passed.add(entry) : decision === "BLOCKED" && (blocked.add(entry), blockedCount++);
+		decision === passedDecision ? passed.add(entry) : decision === "BLOCKED" && (FAILURE_REASONS$1.has(entry.reason) ? failed.add(entry) : (blocked.add(entry), blockedCount++));
 	}
 	return {
 		passed: passed.toSortedArray(),
 		blocked: blocked.toSortedArray(),
+		failed: failed.toSortedArray(),
 		blockedCount,
 		headIntact: headIntact ?? !1,
 		unparsed
@@ -19749,19 +19771,20 @@ function targetOf(row) {
 //#endregion
 //#region src/core/lib/report/build/universal.ts
 async function buildUniversalReportData(lines, parameters) {
-	let { passed, blocked: blockedRawRows, blockedCount, headIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
+	let { passed, blocked: blockedRawRows, failed, blockedCount, headIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
 	return {
 		engine: "universal",
 		parameters,
 		passed,
 		blocked: annotateKnownBlocked(blockedRawRows, parameters.knownBlockedRules),
+		failed,
 		blockedCount,
 		logLooksPlausible: headIntact && unparsed === 0
 	};
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?(https?:\/\/\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) tlserr=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?host=(\S+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
 function timeOf(stamp) {
 	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
 	return Number.isNaN(parsed) ? 0 : parsed / 1e3;
@@ -19772,30 +19795,33 @@ function isRefusal(terminationState) {
 	let phase = terminationState[1];
 	return cause === "s" && (phase === "C" || phase === "H");
 }
-function reasonFor(logged, terminationState) {
+function reasonFor(logged, terminationState, tlsError, method) {
 	if (logged !== "-") return logged;
+	let cause = terminationState[0];
+	if (cause !== "S" && cause !== "s") return method === BAD_REQUEST_METHOD ? "bad-request" : "not-allowed";
 	switch (terminationState[1]) {
-		case "R": return "not-allowed";
-		case "C": return "origin-unreachable";
 		case "H": return "origin-no-response";
 		case "D":
 		case "L": return "origin-aborted";
-		default: return "not-allowed";
+		default: return tlsError === void 0 ? "origin-unreachable" : cause === "S" && tlsError !== "-" && tlsError !== "0" ? "origin-untrusted" : "origin-connect-failed";
 	}
 }
-const NO_AUTHORITY = new Set(["-", "--"]);
-function incompleteReason(terminationState, url) {
-	if (terminationState[1] !== "R") return;
+const BAD_REQUEST_METHOD = "<BADREQ>", REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
+function incompleteReason(terminationState, method) {
 	let cause = terminationState[0];
-	if (cause === "C") return "client-aborted";
-	if (cause === "c") return "client-timeout";
-	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
+	if (cause !== "P") return terminationState[1] === "R" ? cause === "C" ? "client-aborted" : cause === "c" ? "client-timeout" : "no-request" : method === BAD_REQUEST_METHOD ? "no-request" : void 0;
 }
-function actionFor(refused, isAudit) {
-	return refused ? "block" : isAudit ? "audit" : "allow";
+const FAILURE_REASONS = new Set([
+	"origin-unreachable",
+	"origin-no-response",
+	"origin-aborted",
+	"dns-failed"
+]);
+function actionFor(reason, isAudit) {
+	return reason === void 0 ? isAudit ? "audit" : "allow" : FAILURE_REASONS.has(reason) ? "failed" : "block";
 }
-function hostOf(url) {
-	return parseObservedUrl(url)?.host ?? url;
+function urlOf(scheme, authority, target) {
+	return target.startsWith("/") ? `${scheme}://${authority}${target}` : void 0;
 }
 function hostBeforeRequest(sni, destination) {
 	return sni === void 0 ? "(unknown)" : sni === "-" ? destination : sni;
@@ -19803,39 +19829,32 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6], request[11]);
-		if (incomplete) return {
+		let incomplete = incompleteReason(request[6], request[3]), tlsError = request[2] === "https" ? request[8] : void 0, reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], tlsError, request[3]) : void 0), namedByHandshake = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), parsedRequest = request[3] !== BAD_REQUEST_METHOD, scheme = request[2], authority = request[12], event = {
 			time: Number(request[1]) / 1e3,
-			action: "incomplete",
-			protocol: request[2],
-			host: hostBeforeRequest(request[10], request[8]),
-			port: Number(request[9]),
-			reason: incomplete,
-			destination: `${request[8]}:${request[9]}`
+			action: incomplete === void 0 ? actionFor(reason, isAudit) : "incomplete",
+			protocol: scheme,
+			host: namedByHandshake ? hostBeforeRequest(request[11], request[9]) : splitHostPort(authority).host,
+			port: Number(request[10]),
+			destination: `${request[9]}:${request[10]}`
 		};
-		let refused = isRefusal(request[6]), event = {
-			time: Number(request[1]) / 1e3,
-			action: actionFor(refused, isAudit),
-			protocol: request[2],
-			host: hostOf(request[11]),
-			port: Number(request[9]),
-			method: request[3],
-			url: request[11],
-			destination: `${request[8]}:${request[9]}`
-		};
-		return refused ? event.reason = reasonFor(request[7], request[6]) : (event.status = Number(request[4]), event.bytes = Number(request[5])), event;
+		if (parsedRequest) {
+			event.method = request[3];
+			let url = urlOf(scheme, authority, request[13]);
+			url !== void 0 && (event.url = url);
+		}
+		return reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let refused = isRefusal(pass[4]), sni = pass[8], event = {
+		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], void 0, "-") : void 0, sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
-			action: actionFor(refused, isAudit),
+			action: actionFor(reason, isAudit),
 			protocol: pass[2],
 			host: sni === "-" ? pass[6] : sni,
 			port: Number(pass[7]),
 			destination: `${pass[6]}:${pass[7]}`
 		};
-		return refused ? event.reason = reasonFor(pass[5], pass[4]) : event.bytes = Number(pass[3]), event;
+		return reason === void 0 ? event.bytes = Number(pass[3]) : event.reason = reason, event;
 	}
 	return null;
 }
@@ -19891,13 +19910,13 @@ async function scanInspectDnsLog(lines, isAudit = !1) {
 		}));
 	}
 	let events = [...seen.entries()].map(([host, { time, allowed }]) => {
-		let event = {
+		let reason = allowed ? void 0 : "dns-not-allowed", event = {
 			time,
-			action: actionFor(!allowed, isAudit),
+			action: actionFor(reason, isAudit),
 			protocol: "dns",
 			host
 		};
-		return allowed || (event.reason = "dns-not-allowed"), event;
+		return reason !== void 0 && (event.reason = reason), event;
 	});
 	for (let { time, host, queryType } of discovery.values()) events.push({
 		time,
@@ -19908,7 +19927,7 @@ async function scanInspectDnsLog(lines, isAudit = !1) {
 	});
 	for (let { time, host, queryType } of service.values()) events.push({
 		time,
-		action: actionFor(!0, isAudit),
+		action: actionFor("dns-service-not-allowed", isAudit),
 		protocol: "dns",
 		host,
 		queryType,
@@ -19937,14 +19956,15 @@ function toHostRow(event) {
 	};
 }
 async function buildInspectReportData(proxyLines, dnsLines, parameters) {
-	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [], connected = connectedHosts(timeline);
-	for (let event of timeline) event.action !== "discovery" && event.action !== "incomplete" && (isRedundantDns(event, connected) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
+	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [], failedRows = [], connected = connectedHosts(timeline);
+	for (let event of timeline) event.action !== "discovery" && event.action !== "incomplete" && (isRedundantDns(event, connected) || (event.action === "failed" ? failedRows.push(toHostRow(event)) : (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event))));
 	let blocked = annotateKnownBlocked(aggregate(blockedRows), parameters.knownBlockedRules);
 	return {
 		engine: "inspect",
 		parameters,
 		passed: aggregate(passedRows),
 		blocked,
+		failed: aggregate(failedRows),
 		blockedCount: blockedRows.length,
 		logLooksPlausible: proxyHeadIntact && dnsHeadIntact && unparsed === 0,
 		startedAt,

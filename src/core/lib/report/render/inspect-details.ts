@@ -25,9 +25,16 @@ export function renderInspectDetails(
   return wrapCommunicationDetails(`\`\`\`\n${body}\`\`\`\n\n`);
 }
 
-// Not `discovery`'s ℹ️: neither reaches a table, but a lookup nothing can
-// answer is harmless where a request that never got decided is worth a look.
-const MARK: Record<string, string> = { block: "🚫", discovery: "ℹ️", incomplete: "⚠️" };
+// ⚠️ covers both of the outcomes no rule decided that went wrong: a request
+// that never arrived whole, and a connection the origin broke. The reason
+// tells them apart. `discovery` keeps ℹ️: a lookup nothing can answer is
+// harmless.
+const MARK: Record<string, string> = {
+  block: "🚫",
+  discovery: "ℹ️",
+  incomplete: "⚠️",
+  failed: "⚠️",
+};
 
 function renderEvent(event: TrafficEvent, startedAt: number | undefined): string {
   const mark = MARK[event.action] ?? "✅";
@@ -102,7 +109,13 @@ function subject(event: TrafficEvent): string {
   // request has nothing to show, so for both a name and a port is all there is.
   // Not written as a URL: that would drop a non-default port.
   if (event.url === undefined) {
-    return `${event.protocol.toUpperCase()} ${event.host}:${event.port}`;
+    const nameAndPort = `${event.protocol.toUpperCase()} ${event.host}:${event.port}`;
+    // Unless a method did arrive: the request was then whole, and it is its
+    // target that no URL fits (`OPTIONS *`; see log/inspect.ts's urlOf).
+    // Dropping the method would read as a connection that carried no request.
+    // The log records only that there was no path, not which other form the
+    // target took, so naming the form here would be a guess.
+    return event.method === undefined ? nameAndPort : `${event.method} ${nameAndPort}`;
   }
   return `${event.method} ${redactCredentialQuery(event.url)}`;
 }
@@ -113,6 +126,8 @@ function outcome(event: TrafficEvent): string {
   // No status behind one, and the reason tells a close from a timeout and both
   // from bytes that never parsed.
   if (event.action === "incomplete") return event.reason ?? "no request";
+  // Allowed, then broken: the reason names what broke.
+  if (event.action === "failed") return event.reason ?? "failed";
   if (event.action === "discovery") return `no data (${event.queryType} is never served)`;
   const parts: string[] = [];
   if (event.status !== undefined) parts.push(String(event.status));

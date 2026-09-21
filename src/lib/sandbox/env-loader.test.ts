@@ -10,11 +10,14 @@ import {
   ACTION_INPUT_ENV_KEYS,
 } from "./env-loader.ts";
 import { withScratchDir } from "./scratch-dir.ts";
-import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
+import { OWN_CA_DESTINATION } from "./ca-trust.ts";
+
+/** Not the first candidate: the mount lands where the runner keeps its store. */
+const SYSTEM_STORE = "/etc/pki/tls/certs/ca-bundle.crt";
 
 const caTrust = {
   ownCaPath: "/scratch/buildcage-ca.pem",
-  systemCaPath: "/scratch/system-ca-bundle.pem",
+  systemCa: { path: "/scratch/system-ca-bundle.pem", destination: SYSTEM_STORE },
 };
 
 /** The KEY=VALUE records of a blob, terminator excluded. */
@@ -37,7 +40,7 @@ describe("resolveSandboxEnv", () => {
   it("adds the CA trust variables that are unset, without overriding the step's own", () => {
     const resolved = resolveSandboxEnv({ NODE_EXTRA_CA_CERTS: "/my/own/bundle.pem" }, caTrust);
     expect(resolved.NODE_EXTRA_CA_CERTS).toBe("/my/own/bundle.pem");
-    expect(resolved.REQUESTS_CA_BUNDLE).toBe(SYSTEM_CA_DESTINATION);
+    expect(resolved.REQUESTS_CA_BUNDLE).toBe(SYSTEM_STORE);
     expect(resolved.DENO_CERT).toBe(OWN_CA_DESTINATION);
   });
 

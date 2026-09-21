@@ -13,7 +13,7 @@ import type { HasMounts, MountEntry, OverlayDirs } from "./types.ts";
 import { assertScratchBaseNotWritable, isAtOrUnder, WritablePathConflictError } from "./paths.ts";
 import { SHM_DESTINATION } from "./host-probes.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
-import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
+import { OWN_CA_DESTINATION, SYSTEM_CA_CANDIDATES } from "./ca-trust.ts";
 
 /**
  * Pure: the set of destination paths `baseSpec.mounts` already declares a
@@ -57,12 +57,15 @@ export const RESOLV_CONF_DESTINATION = "/etc/resolv.conf";
  * themselves.
  *
  * The CA destinations are reserved for every engine, not just inspect, so the
- * same input isn't accepted under one engine and refused under another.
+ * same input isn't accepted under one engine and refused under another. Every
+ * candidate store path is reserved for the same reason, not only the one this
+ * runner happens to have: which one the mount lands on depends on the runner,
+ * not on the caller.
  */
 export const RESERVED_INTERNAL_DESTINATIONS = [
   RESOLV_CONF_DESTINATION,
   OWN_CA_DESTINATION,
-  SYSTEM_CA_DESTINATION,
+  ...SYSTEM_CA_CANDIDATES,
 ];
 
 /**

@@ -16,8 +16,8 @@
 #     GET ~^https://blocked\.example\.com/defaultport/.*$
 #     GET ~https://ok\.wildcard\.example\.com/regexpub/        (no anchors)
 #     GET ~^https://ok\.wildcard\.example\.com/regexexact$
-#   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443
-#   allowed_http_rules:  allowed.example.com:80
+#   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443 deadend.example.com:443
+#   allowed_http_rules:  allowed.example.com:80 deadend.example.com:80
 #   allowed_tls_rules:     tlspass.example.com:443 ~^tlspass\.example\.com:8443$
 #   allowed_ip_rules:    ~^10\.200\.0\.\d+:9080$
 # ---------------------------------------------------------------------------
@@ -50,6 +50,14 @@ check_ok "POST /v1/thing" "$OUT" "API POST"
 echo "=== [Traversal - normalised before the rules see it] ==="
 CODE=$($C https://allowed.example.com/public/../private/secret)
 check_status "GET /public/../private/secret" "$CODE" "403"
+
+# RFC 9112 §3.2.4's asterisk-form: a request-target that is not a path, so it
+# matches no rule and is refused. The point of the case is the report, which
+# must name allowed.example.com rather than a host built from an empty path.
+echo "=== [Request target is not a path] ==="
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+       -X OPTIONS --request-target '*' https://allowed.example.com/)
+check_status "OPTIONS *" "$CODE" "403"
 
 echo "=== [Traversal, encoded] ==="
 for P in "%2e%2e/private/secret" "%2e%2e%2fprivate/secret" \
@@ -151,6 +159,21 @@ PAD=$(awk 'BEGIN{s="";while(length(s)<1200)s=s "A";print s}')
 CODE=$($C "https://blocked.example.com/exfil?pad=$PAD&end=TAIL-MARKER")
 check_status "GET blocked.example.com/exfil?pad=<1.2KB>&end=TAIL-MARKER" "$CODE" "403"
 
+# Allowlisted and resolvable, with nothing listening there. The connection
+# never completes, so no certificate is ever accepted on it, and
+# integration-test-inspect-restrict.sh checks that is reported as a refusal
+# rather than as an outage.
+echo "=== [Origin connection never completes] ==="
+CODE=$($C https://deadend.example.com/)
+check_status "GET deadend.example.com" "$CODE" "503"
+
+# The same host over plaintext, where no certificate was ever going to be
+# checked. That one is an outage and nothing more, which is the distinction
+# integration-test-inspect-restrict.sh checks the report keeps.
+echo "=== [Plaintext origin connection never completes] ==="
+CODE=$($C http://deadend.example.com/)
+check_status "GET http://deadend.example.com" "$CODE" "503"
+
 echo "=== [Allowlisted name that does not resolve] ==="
 CODE=$($C https://absent.example.com/)
 check_status "GET absent.example.com" "$CODE" "502"
@@ -174,6 +197,21 @@ curl -sS -o /dev/null --max-time 10 \
   --pinnedpubkey "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" \
   https://aborted.example.com/
 check_status "GET aborted.example.com" "$?" "90"
+
+# [Bytes that are not an HTTP request, on a port no allowed_ip_rules or
+# allowed_tls_rules entry covers: anything that is not a TLS handshake reaches
+# the plain stage, which reads it as a request and refuses it.
+# integration-test-inspect-restrict.sh checks the report counts that refusal.]
+echo "=== [Not an HTTP request at all] ==="
+((printf 'NOT-HTTP\r\n\r\n'; sleep 1) | nc -w 5 10.200.0.100 5432 > /dev/null 2>&1 || true)
+echo "  bytes sent (a blocked row expected in the report)"
+
+# [A request that parsed and named no host, which the stage refuses ahead of
+# the rules: there is nothing to match and nothing to resolve. The inspect
+# counterpart of universal-restrict-scenarios.sh's own case.]
+echo "=== [HTTP - missing-host-header] ==="
+((printf 'GET /public/pkg.tgz HTTP/1.0\r\n\r\n'; sleep 1) | nc -w 5 allowed.example.com 80 > /dev/null 2>&1 || true)
+echo "  request sent (a blocked row expected in the report)"
 
 echo "=== [Forged Host - the destination is not the client's to choose] ==="
 OUT=$($S --insecure -H 'Host: allowed.example.com' https://10.200.0.101/public/pkg.tgz)

@@ -13,7 +13,8 @@ details.
 - [Rule syntax](#rule-syntax)
 - [Report details](#report-details)
 - [Blocked service names](#blocked-service-names)
-- [Requests Buildcage could not act on](#requests-buildcage-could-not-act-on)
+- [Requests that never arrived whole](#requests-that-never-arrived-whole)
+- [Connections that failed](#connections-that-failed)
 - [Traffic artifact](#traffic-artifact)
 - [CA trust variables](#ca-trust-variables)
 - [`write_through` paths](#write_through-paths)
@@ -316,36 +317,43 @@ Naming the service name in an `allowed_*` rule also clears the row, but it is th
 it reads as permission to reach something that nothing can connect to, and the record still does not
 resolve.
 
-## Requests Buildcage could not act on
+## Requests that never arrived whole
 
-Under `inspect`, a connection can end before a whole request has arrived, leaving the rules nothing
-to decide. **Communication details** shows each one with ⚠️ and the reason:
+Under `inspect`, a connection can end before a whole request has arrived. What the report does with
+one turns on who ended it: a client that walks away decided nothing, while bytes Buildcage refused to
+read as a request are a refusal like any other.
+
+Whichever it was, the host is the name from the handshake's SNI; a TLS connection that carried none
+was aimed at an address the step wrote out itself, so the address stands in. The plain-HTTP stage has
+no SNI to fall back on and its destination is Buildcage's own address for every name-based
+connection, so the host reads `(unknown)` there. The address it was sent to is still recorded, in the
+`destination` field of the [traffic artifact](#traffic-artifact).
+
+A row carries no method or URL where no request line ever parsed. `missing-host-header` is the
+exception: that one did parse, so it keeps the method and the path it asked for, with `-` standing
+where the `Host` would have been.
+
+### The ones nobody decided
+
+**Communication details** shows these with ⚠️ and the reason:
 
 ```
 ⚠️ 00:09.123: HTTPS untrusted-ca.example.com:443 -> client-aborted
 ⚠️ 00:11.407: HTTPS untrusted-ca.example.com:443 -> client-timeout
-⚠️ 00:14.002: HTTPS api.example.com:443 -> bad-request
-⚠️ 00:15.880: HTTP (unknown):5432 -> bad-request
+⚠️ 00:13.500: HTTPS api.example.com:443 -> no-request
 ```
 
 | Reason           | What happened                                                                   |
 | ---------------- | ------------------------------------------------------------------------------- |
 | `client-aborted` | the client finished the TLS handshake and then closed without sending a request |
 | `client-timeout` | it held the connection open instead of closing it, until the timeout expired    |
-| `bad-request`    | it sent bytes that could not be read as an HTTP request, or one with no `Host`  |
+| `no-request`     | no request arrived, and neither the client nor a rule of Buildcage's ended it   |
 
 The commonest cause of the first two is a container with no `ca-certificates` installed: the client
-cannot verify the certificate Buildcage signs and gives up at that point. `bad-request` is most often
-a protocol that is not HTTP at all, a database or `git://` connection to a port no `allowed_ip_rules`
-or `allowed_tls_rules` entry covers, since anything that is not a TLS handshake is handed to the
-plain-HTTP stage.
-
-There is no method or URL on these rows, because neither was ever readable. The host is the name from
-the handshake's SNI; a TLS connection that carried none was aimed at an address the step wrote out
-itself, so the address stands in. The plain-HTTP stage has no SNI to fall back on and its destination
-is Buildcage's own address for every name-based connection, so the host reads `(unknown)` there. The
-address it was sent to is still recorded, in the `destination` field of the
-[traffic artifact](#traffic-artifact).
+cannot verify the certificate Buildcage signs and gives up at that point. `no-request` is the rest:
+Buildcage's proxy running into an error of its own while still reading, and any other connection
+that carried no request and that neither of the first two explains. It is rare, and it is not the
+step's doing.
 
 Such a row is in neither host table and never fails the step, not even with `fail_on_blocked: true`:
 no rule refused it, so `known_blocked_rules` has nothing to match, and nothing reached an origin. A
@@ -353,11 +361,93 @@ no rule refused it, so `known_blocked_rules` has nothing to match, and nothing r
 they appear.
 
 What clears one is the client, not a rule. Install `ca-certificates`, or whatever else kept the
-client from trusting the CA; for traffic that is not HTTP, add the port to `allowed_ip_rules` or the
-name to `allowed_tls_rules` so the connection is passed through undecrypted instead of being read as
-a request. An `allowed_https_rules` or `allowed_http_rules` entry changes nothing, there having been
-no host to match it against. If the host is one the step does need, its name usually also appears as
-a blocked `DNS` row, which is the row to act on.
+client from trusting the CA. An `allowed_https_rules` or `allowed_http_rules` entry changes nothing,
+there having been no host to match it against. If the host is one the step does need, its name
+usually also appears as a blocked `DNS` row, which is the row to act on.
+
+### The ones Buildcage refused
+
+These are refusals: they are in **🚫 Blocked Hosts**, counted in the blocked-connections annotation,
+and they fail the step under `fail_on_blocked: true` like any other refused connection.
+
+```
+🚫 00:14.002: GET https://-/pkg.tgz?token=*** -> missing-host-header
+🚫 00:15.880: HTTP (unknown):5432 -> bad-request
+```
+
+| Reason                | What happened                                                          |
+| --------------------- | ---------------------------------------------------------------------- |
+| `bad-request`         | the step sent bytes that could not be read as an HTTP request at all   |
+| `missing-host-header` | a request parsed, and carried no `Host` for a rule to match or resolve |
+
+`bad-request` is most often a protocol that is not HTTP at all, a database or `git://` connection to
+a port no `allowed_ip_rules` or `allowed_tls_rules` entry covers: anything that is not a TLS
+handshake is handed to the plain-HTTP stage, which reads it as a request and refuses it. Both are
+refused in `audit` mode too, as the same check is under `universal`, since a request naming no host
+has nothing to connect to whatever the rules say.
+
+What clears one is a rule, though not a host rule. For traffic that is not HTTP, add the port to
+`allowed_ip_rules` or the name to `allowed_tls_rules`, and the connection is passed through
+undecrypted instead of being read as a request. `known_blocked_rules` can mark a row whose host is a
+name from the SNI; a row reading `(unknown)` names nothing a rule can be written against, so the
+passthrough rule is the only way to clear that one.
+
+## Connections that failed
+
+A request no rule refused can still come to nothing: the origin answers nothing usable, breaks off
+mid-transfer, or its name resolves nowhere. The report tables those apart from what the rules did
+refuse, under **⚠️ Failed Connections**. Under `inspect`, **Communication details** shows each with
+⚠️ too:
+
+```
+⚠️ 00:12.004: GET https://registry.npmjs.org/big.tgz -> origin-aborted
+⚠️ 00:13.771: GET https://mirror.example.com/index -> origin-no-response
+```
+
+| Reason               | What happened                                                         |
+| -------------------- | --------------------------------------------------------------------- |
+| `origin-no-response` | the connection was made, and no usable response headers came back     |
+| `origin-aborted`     | the response started and the transfer was cut short                   |
+| `dns-failed`         | the name resolved nowhere upstream, no rule having refused it         |
+| `origin-unreachable` | a connection carrying no certificate of Buildcage's could not be made |
+
+What the first two have in common is a connection that completed, which is where the origin's
+certificate was checked: whatever went wrong afterwards went wrong with an origin Buildcage had
+authenticated. `dns-failed` never reached a connection, and neither a plaintext request nor a
+passthrough has a certificate of Buildcage's behind it: the first is carried as it was sent, the
+second is relayed for the step to judge rather than decrypted.
+
+`universal` writes its decision before the connection is made and never sees what became of it, so
+`dns-failed` is the only one of the four it can report. `audit` reports them the same way, though
+nothing there was allowed by a rule either: what the table says is that the rules are not what
+stopped these.
+
+**A connection Buildcage never completed is not here.** It is a refusal, it is in Blocked Hosts, and
+it does fail the step:
+
+| Reason                  | What happened                                                            |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `origin-untrusted`      | the origin's certificate was presented and Buildcage would not accept it |
+| `origin-connect-failed` | the connection never completed, so no certificate was ever accepted      |
+
+`origin-untrusted` is the plain case: a forged certificate, an expired one, or an origin speaking no
+TLS at all. `origin-connect-failed` is the one that looks like an outage and cannot be shown to be
+one. HAProxy retries a failed connection, and the TLS error it reports belongs to the last attempt
+alone, so an impostor whose certificate is refused on one attempt leaves no trace once a later
+attempt fails at TCP. The report does not claim to tell that from an origin that is simply down: a
+connection it never completed is one whose origin it never authenticated. See
+[Attempts to get around it](./security.md#attempts-to-get-around-it).
+
+A host that is flaky rather than hostile is cleared the way any expected refusal is, by listing it
+in `known_blocked_rules`.
+
+None of the four fails the step, not even with `fail_on_blocked: true`, and a `::notice::` gives the
+count. No rule refused them, so no rule can clear them either: `known_blocked_rules` has nothing to
+match, and an `allowed_*` entry changes nothing. What clears one is the origin coming back, or the
+build reaching for something that is up.
+
+A blocked `DNS` row for the same name means something else entirely: that one is Buildcage's own
+resolver saying no rule allows the name, and it does fail the step.
 
 ## Traffic artifact
 
@@ -371,21 +461,21 @@ This is also the form to keep where the report is an audit trail rather than som
 `filesystem_mode: persistent` a later step can add to the Job Summary, but not to an artifact
 already uploaded. See [Known Limitations](./security.md#known-limitations).
 
-| Field         | Always | Notes                                                                          |
-| ------------- | ------ | ------------------------------------------------------------------------------ |
-| `time`        | yes    | ISO 8601 UTC                                                                   |
-| `elapsed`     |        | since the proxy started, fixed `HH:MM:SS.mmm`                                  |
-| `action`      | yes    | `allow`, `block`, `audit` when nothing was enforced, `discovery`, `incomplete` |
-| `protocol`    | yes    | `https`, `http`, `tls`, `tcp`, `dns`                                           |
-| `host`        | yes    | the name asked for, the address when there was none, or `(unknown)`            |
-| `port`        |        | absent for `dns`, which connects to nothing                                    |
-| `queryType`   |        | the record asked for; `discovery` rows and refused service names               |
-| `method`      |        | `http` and `https` only                                                        |
-| `url`         |        | `http` and `https` only; verbatim, unlike the summary's                        |
-| `status`      |        | only when something answered                                                   |
-| `bytes`       |        | absent for a refusal and for `dns`                                             |
-| `reason`      |        | only when `action` is `block` or `incomplete`                                  |
-| `destination` |        | the address it actually resolved to; absent for `dns`                          |
+| Field         | Always | Notes                                                                                    |
+| ------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `time`        | yes    | ISO 8601 UTC                                                                             |
+| `elapsed`     |        | since the proxy started, fixed `HH:MM:SS.mmm`                                            |
+| `action`      | yes    | `allow`, `block`, `audit` when nothing was enforced, `discovery`, `incomplete`, `failed` |
+| `protocol`    | yes    | `https`, `http`, `tls`, `tcp`, `dns`                                                     |
+| `host`        | yes    | the name asked for, the address when there was none, or `(unknown)`                      |
+| `port`        |        | absent for `dns`, which connects to nothing                                              |
+| `queryType`   |        | the record asked for; `discovery` rows and refused service names                         |
+| `method`      |        | `http` and `https` only                                                                  |
+| `url`         |        | `http` and `https` only; verbatim, unlike the summary's                                  |
+| `status`      |        | only when something answered                                                             |
+| `bytes`       |        | absent for a refusal and for `dns`                                                       |
+| `reason`      |        | only when `action` is `block`, `incomplete` or `failed`                                  |
+| `destination` |        | the address it actually resolved to; absent for `dns`                                    |
 
 A field is absent because it does not apply, never because it was zero: a refusal has no status
 because nothing answered, and a passthrough none because nothing was decrypted. Filter on `action`.
@@ -436,20 +526,22 @@ Job Summary is the exception: it replaces credential query parameters, see
 
 `proxy_engine: inspect` terminates TLS and re-signs it with a CA generated for the step, so the
 command has to trust that CA. The CA, and where relevant an augmented copy of the system CA store,
-is mounted over the sandbox's own view of those paths. Nothing is written to the runner's
-filesystem, and the mount goes away with the sandbox when the step ends.
+is mounted over the sandbox's own view of those paths. The store copy goes back over the path it was
+read from, which is what the tools going by their own compiled-in path read, so it is whichever of
+the well-known store paths this runner actually has. Nothing is written to the runner's filesystem,
+and the mount goes away with the sandbox when the step ends.
 
 The variables below are set only when the command's environment leaves them unset, and where each
 one points depends on what it means to the tool that reads it:
 
-| Variable              | Read by                                                                                                 | If unset                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `NODE_EXTRA_CA_CERTS` | Node.js                                                                                                 | Additive: pointed at a file holding only this CA |
-| `DENO_CERT`           | Deno                                                                                                    | Additive: pointed at a file holding only this CA |
-| `CURL_CA_BUNDLE`      | curl                                                                                                    | Left unset; curl already reads the system store  |
-| `REQUESTS_CA_BUNDLE`  | Python `requests`                                                                                       | Replaces the bundle: pointed at the system store |
-| `PIP_CERT`            | pip                                                                                                     | Replaces the bundle: pointed at the system store |
-| `SSL_CERT_FILE`       | OpenSSL, and anything reading it (Go's `crypto/x509` on Unix, Ruby, wget, Rust's `rustls-native-certs`) | Replaces the bundle: pointed at the system store |
+| Variable              | Read by                                                                                                                                                      | If unset                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `NODE_EXTRA_CA_CERTS` | Node.js                                                                                                                                                      | Additive: pointed at a file holding only this CA |
+| `DENO_CERT`           | Deno                                                                                                                                                         | Additive: pointed at a file holding only this CA |
+| `CURL_CA_BUNDLE`      | curl                                                                                                                                                         | Left unset; curl already reads the system store  |
+| `REQUESTS_CA_BUNDLE`  | Python `requests`                                                                                                                                            | Replaces the bundle: pointed at the system store |
+| `PIP_CERT`            | pip                                                                                                                                                          | Replaces the bundle: pointed at the system store |
+| `SSL_CERT_FILE`       | OpenSSL, and anything linked against it (Go's `crypto/x509` on Unix, Ruby, Rust's `rustls-native-certs`). Not GnuTLS, so Debian's wget and git never read it | Replaces the bundle: pointed at the system store |
 
 A variable that is already set is left alone rather than appended to, and the CA is added to a store
 that already exists rather than creating one. Both are in
@@ -505,11 +597,16 @@ non-isolated step.
 
 ### Reserved paths
 
-`/etc/resolv.conf`, `/etc/ssl/certs/ca-certificates.crt` and `/etc/buildcage-ca.pem` are mounted by
-the sandbox itself to reach the proxy's DNS and CA trust. Naming one of them, or anything under one,
-fails the step rather than being quietly ignored. Naming a directory that contains them
-(`write_through: /etc`) is fine: writes elsewhere under it reach the host, and only those three
-paths stay read-only. The same applies to the filesystems the sandbox mounts fresh, such as `/proc`
+`/etc/resolv.conf` and `/etc/buildcage-ca.pem` are mounted by the sandbox itself to reach the
+proxy's DNS and CA trust, and so is the runner's own CA store. Which path that last one is depends
+on the runner, so every path a CA store is looked for at is reserved, whether or not this runner
+keeps one there: `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+`/etc/ssl/ca-bundle.pem`, `/etc/pki/tls/cacert.pem` and `/etc/ssl/cert.pem`. An entry that worked on
+one runner and failed on the next would be worse than one that is refused everywhere.
+
+Naming a reserved path, or anything under one, fails the step rather than being quietly ignored.
+Naming a directory that contains them (`write_through: /etc`) is fine: writes elsewhere under it
+reach the host, and only the reserved paths themselves stay read-only. The same applies to the filesystems the sandbox mounts fresh, such as `/proc`
 and `/dev`, and to the sandbox's own scratch directory under `/var/tmp`; see
 [Known Limitations](./security.md#known-limitations).
 
