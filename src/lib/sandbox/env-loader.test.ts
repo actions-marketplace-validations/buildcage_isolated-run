@@ -12,8 +12,7 @@ import {
 import { withScratchDir } from "./scratch-dir.ts";
 import { OWN_CA_DESTINATION } from "./ca-trust.ts";
 
-/** Not the first candidate: the mount lands wherever the runner keeps its
- *  store, which on a self-hosted RHEL runner is this. */
+/** Not the first candidate: the mount lands where the runner keeps its store. */
 const SYSTEM_STORE = "/etc/pki/tls/certs/ca-bundle.crt";
 
 const caTrust = {

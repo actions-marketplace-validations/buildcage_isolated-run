@@ -58,9 +58,9 @@ export const RESOLV_CONF_DESTINATION = "/etc/resolv.conf";
  *
  * The CA destinations are reserved for every engine, not just inspect, so the
  * same input isn't accepted under one engine and refused under another. Every
- * candidate store path is reserved, not only the one this runner happens to
- * have, for the same reason: which one the mount lands on is the runner's
- * business, not the caller's.
+ * candidate store path is reserved for the same reason, not only the one this
+ * runner happens to have: which one the mount lands on depends on the runner,
+ * not on the caller.
  */
 export const RESERVED_INTERNAL_DESTINATIONS = [
   RESOLV_CONF_DESTINATION,

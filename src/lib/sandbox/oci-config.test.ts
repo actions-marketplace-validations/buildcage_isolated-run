@@ -9,8 +9,7 @@ import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 import { WritablePathConflictError } from "./paths.ts";
 import { OWN_CA_DESTINATION } from "./ca-trust.ts";
 
-/** Not the first candidate: the mount lands wherever the runner keeps its
- *  store, which on a self-hosted RHEL runner is this. */
+/** Not the first candidate: the mount lands where the runner keeps its store. */
 const SYSTEM_STORE = "/etc/pki/tls/certs/ca-bundle.crt";
 
 const SHM_BYTES = 4 * 1024 * 1024 * 1024;

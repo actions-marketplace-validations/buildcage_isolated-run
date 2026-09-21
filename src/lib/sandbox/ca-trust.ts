@@ -22,7 +22,7 @@ import type { MountEntry } from "./types.ts";
  * afterward: run-isolated.sh's `umount -R` (and the scratch dir's own
  * cleanup) removes it, along with the rest of the rootfs bind-mount, when
  * the step ends, and the real host store is never touched (the augmented copy
- * is mounted over the path it was read from, which by definition exists).
+ * goes back over the path it was read from, so there is always a file there).
  *
  * OWN_CA_DESTINATION is the one exception: nothing exists at that path
  * ahead of time, so runc creates an empty placeholder file to mount onto,
@@ -34,18 +34,15 @@ export interface CaTrustFiles {
   /** A CA-only file, mounted at OWN_CA_DESTINATION, for variables that add
    *  to a tool's built-in trust set (NODE_EXTRA_CA_CERTS, DENO_CERT). */
   ownCaPath: string;
-  /** The runner's own system CA store with this CA appended, for variables
-   *  that replace a tool's trust bundle outright (REQUESTS_CA_BUNDLE,
-   *  PIP_CERT, SSL_CERT_FILE), and for every other tool (curl, ...) that
-   *  already reads the system store by default. Undefined if the runner has
-   *  no system store at any of the well-known candidate paths.
-   *
-   *  The copy and where it goes are one value: mounted anywhere but the path
-   *  it was read from, a tool going by its own compiled-in path reads the
-   *  runner's untouched store and never sees this CA.
-   *  SYSTEM_CA_CANDIDATES[0] is the only candidate a GitHub-hosted
-   *  (passwordless-sudo) Linux runner has; the rest are what a self-hosted
-   *  RHEL or SUSE runner is reached by.
+  /** The runner's own system CA store with this CA appended, and the path it
+   *  was read from, which is where the copy is mounted; it is no use anywhere
+   *  else, so the two are one value. Undefined if the runner has no system
+   *  store at any of the well-known candidate paths. For the variables that
+   *  replace a tool's trust bundle outright (REQUESTS_CA_BUNDLE, PIP_CERT,
+   *  SSL_CERT_FILE), and for every other tool (curl, ...) that already reads
+   *  the system store by default. SYSTEM_CA_CANDIDATES[0] is the only
+   *  candidate a GitHub-hosted (passwordless-sudo) Linux runner has; the rest
+   *  are what a self-hosted RHEL or SUSE runner is reached by.
    */
   systemCa: { path: string; destination: string } | undefined;
 }
