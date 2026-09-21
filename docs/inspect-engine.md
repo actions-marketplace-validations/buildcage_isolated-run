@@ -10,4 +10,3 @@ This page holds no content of its own. The `inspect` engine is documented in the
 - [CA trust variables](./reference.md#ca-trust-variables): each variable it sets and what it points at
 - [The report](../README.md#the-report): what the Job Summary shows, and what the traffic artifact holds
 - [Inspect Proxy Engine](./security.md#inspect-proxy-engine): architecture, threat model, attack resistance
-- [Inspect Engine Internals](./development.md#inspect-engine-internals): HAProxy, CoreDNS, and the CA mount

@@ -39,12 +39,23 @@ The isolated command runs as an [OCI](https://github.com/opencontainers/runtime-
 under [runc](https://github.com/opencontainers/runc) rather than being wrapped directly by
 `unshare`/`setpriv` on the runner host. `run-isolated.sh` only sets up what runc cannot: wiring a
 veth pair directly into the proxy container's own netns, and bind-mounting the host's own `/` for
-runc's rootfs (`pivot_root` can't target `/` itself). Everything else below is declared in an OCI
-`config.json` and enforced by runc natively.
+runc's rootfs (`pivot_root` can't target `/` itself). It re-execs itself into a fresh, private mount
+namespace before touching either, so that work is invisible to every other `run:` step running
+concurrently on the same host. Everything else below is declared in an OCI `config.json` and
+enforced by runc natively.
+
+Each step gets a proxy container of its own, named explicitly on every `docker compose` invocation
+rather than through a directory-derived Compose project, so concurrent steps (Actions'
+`background`/`wait`/`parallel` keywords) never recreate or tear down each other's. Everything the
+sandbox needs on the host, `runc` and the seccomp generator included, is extracted from the proxy
+image into that step's own scratch directory on each invocation and torn down with it, so no step
+inherits anything another one left behind.
 
 - **Network namespace**: the isolated command runs in its own network namespace, connected to the
   proxy container's netns by a dedicated veth pair. There is no bridge, since it is always a 1:1
-  connection, one sandbox to one proxy. iptables `REDIRECT`/`DROP`, the DNS redirect, and the
+  connection, one sandbox to one proxy. The proxy's netns is referenced by Docker's own
+  `NetworkSettings.SandboxKey` path rather than by PID, which Docker holds for the container's whole
+  lifetime, so it cannot be silently reused if the proxy dies before the sandbox starts. iptables `REDIRECT`/`DROP`, the DNS redirect, and the
   allowlist proxy are what enforce the rules. IPv6 is closed off the same way: `ip6tables` drops all
   forwarded IPv6 traffic from the isolated network, and the internal DNS server returns the IPv6
   unspecified address (`::`) for all queries, so even an allowed domain is never reached over IPv6.
@@ -112,10 +123,14 @@ runc's rootfs (`pivot_root` can't target `/` itself). Everything else below is d
 - **Process environment matched to the runner**: `runc spec`'s defaults are written for containers,
   not for a step running on the runner's own machine, so a few of them are overridden. The OCI spec
   carries the runner's own `RLIMIT_NOFILE`, read from the process that started the action, which is
-  also the one that would have started the step unwrapped. Both runc's default spec and the `sudo`
+  also the one that would have started the step unwrapped. It is read from that process rather than
+  the action's own, because Node raises its soft limit to the hard one before any JavaScript runs,
+  which would hand the sandbox more than the step had. Both runc's default spec and the `sudo`
   on the way to it pin the soft limit at 1024 against the 65536 a GitHub-hosted runner gives a step,
   which surfaces as `EMFILE` in webpack and jest. `/dev/shm` is sized from the host's own instead of
-  runc's 64MB cap, which Chromium and everything built on it crashes under. The hostname is the
+  runc's 64MB cap, which Chromium and everything built on it crashes under, and only once its fstype
+  is confirmed to be tmpfs: where it is a plain directory, `statfs` answers for the containing
+  filesystem, and sizing a fresh tmpfs to a whole disk would let a step exhaust host memory. The hostname is the
   runner's rather than the literal `runc`, matching the `/etc/hostname` the rootfs bind-mount
   already carries in. None of this is a boundary anything rests on: the sandbox restricts where the
   command can connect and what it can write, not how much of the machine it can use. `/dev` itself
@@ -127,8 +142,11 @@ runc's rootfs (`pivot_root` can't target `/` itself). Everything else below is d
   JavaScript action's handler variables it does not hand a `run:` step: `ACTIONS_RUNTIME_TOKEN`,
   which reaches the run's artifacts and cache, plus `ACTIONS_RUNTIME_URL`, `ACTIONS_CACHE_URL`,
   `ACTIONS_RESULTS_URL`, `ACTIONS_CACHE_SERVICE_V2` and `ACTIONS_CACHE_MODE`, which name the
-  endpoints it is spent against. Those are dropped before the environment is written, as are this
-  action's own `INPUT_*` inputs, so that wrapping a step only ever narrows what it can reach.
+  endpoints it is spent against. Those are dropped before the environment is assembled, as are
+  this action's own `INPUT_*` inputs, so that wrapping a step only ever narrows what it can reach.
+  What is left is piped to the sandboxed process over stdin as NUL-delimited `KEY=VALUE` records and
+  applied by a small loader that execs the run script, rather than being written into `config.json`,
+  so an `env:` secret never reaches the runner's disk.
   `ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN` and anything else the runner sets still arrive: this is a
   named list rather than a sweep over `ACTIONS_*`, which would rest on guessing which of them a
   `run:` step legitimately sees. A token the runner introduces later needs adding to the list.
@@ -137,6 +155,12 @@ runc's rootfs (`pivot_root` can't target `/` itself). Everything else below is d
   (the OCI spec's `linux.maskedPaths`, extending runc's own sensible defaults), closing off
   kernel-memory-adjacent information disclosure paths that aren't already covered by the capability
   drop.
+- **Other steps' sandbox bundles hidden**: `/var/tmp/buildcage-<uid>`, where the rootfs bind-mount
+  and every run's own bundle are staged, is covered with an empty tmpfs inside the sandbox, with only
+  this run's own `exec/` subdirectory revealed back on top, read-only. Without it the host `/` below
+  would hand every step a readable copy of every other concurrent step's bundle. That reveal is a
+  non-recursive `bind` rather than an `rbind`, which would pull the live `mount --rbind /` rootfs
+  staged beside it back in as a second, writable copy of the whole host `/`.
 - **The named-network-namespace directory masked**: `ip netns add` leaves the namespace's name as a
   real file under the host's own `/run/netns`, which the rootfs bind-mount carries into every
   sandbox, so a step could otherwise list the names of the sandboxes running beside it. Nothing
@@ -167,6 +191,11 @@ runc's rootfs (`pivot_root` can't target `/` itself). Everything else below is d
   trust with it. Naming one of those three paths directly, or a filesystem runc mounts fresh such as
   `/proc`, fails the step instead of being silently overridden; without that, `write_through: /proc`
   would shadow the sandbox's own procfs with the host's and undo the PID-namespace separation below.
+- **Nothing survives the step**: an exit trap tears down the container, the rootfs bind-mount, the
+  veth and the network namespace, and force-detaches anything still mounted under the run's own
+  scratch directory before deleting it. If the action is killed before reaching that point, a
+  fallback step reads the container's identity back from job state, reconstructs the scratch path
+  deterministically from it, and does the same.
 - **Die-with-parent**: the isolated command's life is tied to `run-isolated.sh`'s own via a two-hop
   `setpriv --pdeathsig=KILL` chain (`run-isolated.sh` to `runc run` to the isolated command, since
   `runc run`'s own process sits between the two and a single-hop guard wouldn't be enough). If
@@ -209,6 +238,11 @@ Two components, plus a CA-trust mount:
   namespace, and the real host files those paths would otherwise resolve to are never touched. See
   [CA trust variables](./reference.md#ca-trust-variables) for which variables are set
   and what that does not cover.
+
+Where the proxy resolves a name is the container's own `/etc/resolv.conf`, in both engines. On a
+runner that is Docker's embedded DNS forwarding to the runner's own resolvers, so a name only an
+internal resolver knows still resolves, and the query follows the runner's own DNS policy. There is
+no search-domain expansion either way, so a rule has to name a host in full.
 
 ### How a request is handled
 

@@ -11,8 +11,6 @@ This document covers local development, testing, and the project structure of is
 - [Viewing Logs](#viewing-logs)
 - [Makefile Commands](#makefile-commands)
 - [Directory Structure](#directory-structure)
-- [Action Internals](#action-internals)
-- [Inspect Engine Internals](#inspect-engine-internals)
 - [Troubleshooting](#troubleshooting)
 
 ## Local Usage
@@ -31,7 +29,7 @@ The action's own isolation mechanism (`run-isolated.sh`) uses Linux-only primiti
 which is enough to reach the proxy container's `SandboxKey` netns the same way production does.
 That is close enough to the real "runner host + separate proxy container"
 arrangement for day-to-day iteration, though it can't validate the container-boundary parts of
-production (see [Action Internals](#action-internals) below). `runc` and `gen-seccomp-profile` are
+production. `runc` and `gen-seccomp-profile` are
 built directly into the dev-loop image (mirroring `docker/universal/Dockerfile`) rather than
 `docker cp`-extracted from the proxy image at runtime, so the dev loop doesn't need the Docker
 socket mounted in just to reach a sibling container; `dev/build-test-bundle.sh` stands in for
@@ -68,8 +66,8 @@ test_integration_sandbox_linux` drives `dist/main.cjs` directly for checks that 
 the real action wrapper (see `test/integration-test-*.sh`) and is what CI's `test_sandbox` job in
 `test-integration.yml` runs. The ones that need the fixture origin live in
 `test_integration_sandbox_universal` instead, whether they need it for what only a fixture can
-cover or just to keep off the real internet. The CI-only `test_sandbox_*` end-to-end jobs (real
-runner host, no nested container) are described in [Action Internals](#action-internals) below.
+cover or just to keep off the real internet. The CI-only `test_sandbox_*` end-to-end jobs run on a real
+runner host with no nested container, and are the final word on whether a change works.
 
 ### Running the integration tests from several git worktrees
 
@@ -188,54 +186,10 @@ buildcage 1787471975123 https GET 200 708 ts=-- reason=- dst=104.16.1.34:443 sni
 buildcage 1787471976000 pass tls 3421 ts=-- reason=- dst=10.200.0.100:5432 sni=db.example.com
 ```
 
-Only the stage that terminates TLS has an SNI, so the plain-HTTP stage logs no such field. It is
-what names the host of a connection that delivered no whole request, where the method and the
-captured `Host` are both empty.
-
-The URL and the SNI come last because a step decides how long they are: every field the report
-needs to place an event then sits ahead of anything that could cut the line short. The line is
-sized for the longest request HAProxy will accept, so nothing should cut one; a line that arrives
-unreadable anyway is counted, and the report says it is not a full record rather than passing off
-what survived as everything. A line the log pipe dropped whole leaves no trace and cannot be
-counted.
-
-Refusals are interleaved with the rest:
-
-```
-✅ 00:00.512: GET https://registry.npmjs.org/express -> 200 (99.9KB)
-🚫 00:01.048: DNS secret-data.attacker.example -> dns-not-allowed
-🚫 00:01.390: POST https://registry.npmjs.org/express/-rev/1-abc -> not-allowed
-✅ 00:02.115: TLS db.example.com:5432 -> (12.3KB)
-⚠️ 00:03.407: HTTPS untrusted-ca.example.com:443 -> client-aborted
-⚠️ 00:04.881: HTTP (unknown):5432 -> bad-request
-```
-
-Times are relative to when the proxy started. A refusal names its reason rather than a status. The
-`reason` field carries it whenever the rule that refused knew one the line could not otherwise show
-(`dns-failed`, `internal-address`); a `-` there leaves the termination state's phase to name it: `R`
-a request buildcage refused (`not-allowed`), `C` an origin that could not be reached or verified,
-`H` one that never sent usable response headers, `D`/`L` one that cut the transfer short.
-
-The ⚠️ lines are the exception: phase `R` is the stage still reading the request line and headers,
-and it resolves the `Host` and connects only after one has parsed, so nothing left the proxy. The
-cause tells what ended it there: `C` the client closing (`client-aborted`), `c` its own timeout
-expiring (`client-timeout`), `P` this proxy answering (`bad-request`), either HAProxy's own 400 for
-bytes it could not read as a request or a rule denying one whose `Host` never arrived. `P` in phase
-`R` is every ordinary refusal too, so the authority tells them apart: the URL is built from the
-captured `Host` and the path, for each of which HAProxy prints `-` when the request carried none, so
-an authority of exactly `-` is a missing `Host` and `--` is bytes that parsed as neither. A `Host`
-the step did send is logged as sent, hyphen-leading or not, and stays an ordinary refusal.
-
-None of the three is an allow or a block, and like a `discovery` lookup each stays out of both host
-tables, so no row appears that no rule could take away. A `::warning::` gives their count instead,
-the collapsed details section being their only other trace. Only phase `R` counts: a later phase
-means the rules had already decided on a request.
-
-The host of such a line is its SNI. Without one the `dst` stands in, but only on the TLS stage: a
-name-based client always sends an SNI, so a handshake carrying none was aimed at an address the step
-wrote out itself. The plain-HTTP stage logs no SNI field, and CoreDNS answers every name with the
-proxy's own address, so there a name-based connection's `dst` is the proxy itself and the host is
-reported as `(unknown)`.
+`ts` is HAProxy's termination state and `reason` the refusal reason where the rule that refused knew
+one the line could not otherwise show. What the report makes of the two, and of a connection that
+never delivered a whole request, is in
+[Requests Buildcage could not act on](./reference.md#requests-buildcage-could-not-act-on).
 
 Each log is an s6-log directory rather than a single file: `current` rotates into a timestamped
 archive once it crosses 1MB, up to 100 archives kept, and a line is only ever split past 32KB. The
@@ -275,245 +229,38 @@ runs rather than running it in one go; build the image a group needs, then run t
 │   ├── main.ts / post.ts      # Start proxy, run isolated command, report, stop
 │   ├── lib/                   # Action-specific implementation: container, report, sudo-preflight,
 │   │                          # sandbox/ (OCI config, runc bootstrap, netns/mountinfo helpers)
-│   └── core/                  # Code shared with the isolated-run proxy image's QuickJS scripts
-│       ├── lib/                # acl/ (rule parsing and the proxy config generators, dual-consumed
-│       │                      # by Node and QuickJS), actions/, docker/, provenance/ (Sigstore,
-│       │                      # OCI registry lookups, image ref resolution, local-image test-hook
-│       │                      # override), report/, log/, test/test-shim.ts (portable
-│       │                      # node:test-alike shim used by *.test.ts across Node and QuickJS
-│       │                      # alike)
-│       └── scripts/            # QuickJS entry point (convert-rule.qjs.ts), run inside the built
-│                              # image (rolldown-bundled into /opt/buildcage/scripts/ at image
-│                              # build time; see rolldown.scripts.config.js). test/ is a qjs test
-│                              # runner, types/ is the qjs:std/qjs:os ambient type declaration
-├── dist/                      # Bundled output (rolldown → CommonJS); dist/qjs, dist/qjs-test are
-│                              # gitignored build-time scratch output, not committed
+│   └── core/                  # Code shared with the proxy image's QuickJS scripts
+│       ├── lib/               # acl/ (rule parsing and the proxy config generators) is the one
+│       │                      # part built for both runtimes; actions/, docker/, provenance/,
+│       │                      # report/ and log/ are Node-only, and test/test-shim.ts is the
+│       │                      # node:test-alike shim *.test.ts uses under either runtime
+│       └── scripts/           # QuickJS entry points, rolldown-bundled into
+│                              # /opt/buildcage/scripts/ at image build time
+├── dist/                      # Bundled output (rolldown → CommonJS), committed. dist/qjs and
+│                              # dist/qjs-test are gitignored scratch
 ├── docker/                    # Proxy image build contexts, one per proxy_engine
 │   ├── universal/             # alpine + haproxy/dnsmasq/iptables/s6-overlay + pinned runc +
-│   │                          # gen-seccomp-profile, plus their config and s6 service definitions
+│   │                          # gen-seccomp-profile, with their config and s6 service definitions
 │   ├── inspect/               # alpine + haproxy/CoreDNS/s6-overlay, plus scripts/ (gen-configs
 │   │                          # runs under QuickJS at container startup)
 │   ├── gen-seccomp-profile/   # Go module: derives a seccomp filter from Docker's default profile
-│   ├── compose.action.yaml    # Runtime compose file the action itself uses (verified,
-│   │                          # digest-pinned image ref), distinct from the top-level compose.yaml
+│   ├── compose.action.yaml    # Runtime compose file the action uses (verified, digest-pinned
+│   │                          # image ref), distinct from the top-level compose.yaml below
 │   ├── compose.action.test-inspect.yaml  # Same, for the inspect-engine integration tests
-│   └── compose.sandbox-dev.yaml  # Mac dev-loop overlay (see dev/)
-├── scripts/run-isolated.sh    # netns/veth/rootfs-bind setup around `runc run`, invoked via
-│                              # `sudo -n` (see Action Internals)
-├── test/                      # assert-sandbox*.sh + integration-test-*.sh (capability/filesystem/
-│                              # seccomp/die-with-parent checks driving dist/main.cjs directly) and
-│                              # *-scenarios.sh (run inside the sandbox as a step's own `run:`).
-│                              # helpers.sh carries what both halves share: pass/fail, check_status/
-│                              # check_ok, assert_summary_contains, and the result line each half
-│                              # ends with
-├── dev/                       # Mac dev-loop-only Dockerfile + smoke-test.sh + build-test-bundle.sh
-│                              # (see docker/compose.sandbox-dev.yaml), not used in production or CI
+│   └── compose.sandbox-dev.yaml          # Mac dev-loop overlay (see dev/)
+├── scripts/run-isolated.sh    # netns/veth/rootfs-bind setup around `runc run`, via `sudo -n`
+├── test/                      # assert-sandbox*.sh + integration-test-*.sh driving dist/main.cjs,
+│                              # and *-scenarios.sh run inside the sandbox as a step's own `run:`.
+│                              # helpers.sh carries what both halves share
+├── dev/                       # Mac dev-loop-only image and scripts, not used in production or CI
 ├── docs/                      # development.md, security.md, plus the reference.md/rules.md/
 │                              # inspect-engine.md link stubs
 ├── licenses/                  # gen-license-file.mjs, which regenerates THIRD_PARTY_LICENSES_NPM
 │                              # during `vp run build`, and what .glf.jsonc substitutes in
-├── compose.yaml               # Docker Compose config for local dev (builds docker/universal/Dockerfile;
+├── compose.yaml               # Local-dev compose config (builds docker/universal/Dockerfile;
 │                              # also what CI's test_sandbox/test_sandbox_* jobs build from)
 └── Makefile                   # Operational commands
 ```
-
-## Action Internals
-
-This section walks through how the action isolates one `run:` command, in the order it actually
-happens. For the user-facing behavior and threat model, see [Security Details](./security.md) and
-the [README](../README.md).
-
-1. Verify the proxy image's provenance and resolve a digest-pinned image ref (`src/main.ts`).
-2. Start a dedicated, throwaway proxy container for this one step (`src/main.ts`).
-   - The container provides network-layer isolation only (iptables `REDIRECT`/`INPUT`/`DROP`
-     rules, dnsmasq, HAProxy), with no build daemon.
-   - Every `docker compose` invocation passes an explicit `-p <containerName>`, so concurrent
-     `run:` steps in the same job (GitHub Actions' `background`/`wait`/`parallel` keywords) never
-     share an implicit, directory-derived Compose project; otherwise one step's `up`/`down` could
-     recreate or tear down another step's still-running container.
-3. Extract `runc` and a seccomp-profile generator onto the runner host
-   (`src/lib/sandbox/runc-bootstrap.ts`).
-   - Both ship inside the proxy image and are pulled onto the host via `docker cp`, then run
-     natively there rather than `docker exec`'d, since the seccomp profile's content depends on
-     the real host's kernel and architecture.
-   - Extracted fresh into this step's own scratch directory on every invocation (no shared,
-     cross-step/cross-job cache), so each `run:` step is fully independent and everything extracted
-     is torn down with the scratch directory afterward.
-4. Build an OCI runtime bundle (`config.json`) describing the sandbox
-   (`src/lib/sandbox/oci-config.ts`).
-   - Starts from `runc`'s own default spec, then patches in: a root filesystem pointing at a
-     not-yet-created bind-mount directory, made read-only (every real host mount point is forced
-     individually read-only outside workdir/home/tmp/RUNNER_TEMP/writable, since the top-level
-     read-only flag alone doesn't cover separate mount points); a network namespace reference to the
-     netns created in the next step; all Linux capabilities cleared plus no-new-privileges; and a
-     seccomp filter resolved from Docker's own default profile, applied against an empty
-     capability set to match the sandbox.
-   - A few of `runc`'s own defaults are overridden so the command sees the environment an
-     unwrapped step would: the runner's own `RLIMIT_NOFILE` in place of the 1024-file cap runc and
-     `sudo` both impose, `/dev/shm` sized from the host's own, and the runner's hostname in place of
-     the literal `runc`. `test/integration-test-host-parity.sh` checks these on a real runner, once
-     with the limits as inherited and once under a deliberately lowered soft limit.
-   - The limit is read from `/proc/<ppid>/limits`, never `self`. Node raises its own soft
-     `RLIMIT_NOFILE` to the hard limit before any JS runs, so the action's own view reports the hard
-     limit as the soft one, and the sandbox would end up with more than the step had. A
-     GitHub-hosted runner sets soft = hard, which hides the difference entirely; that is what the
-     lowered-limit pass in the parity test exists to expose.
-   - `/dev/shm`'s size is taken only after confirming the fstype is tmpfs. Where `/dev/shm` is a
-     plain directory rather than a mount of its own, `statfs` answers for the containing filesystem,
-     and sizing a fresh tmpfs to a whole disk would let a step exhaust host memory.
-   - The step's environment is deliberately _not_ part of that config. It is piped to the
-     sandboxed process over stdin as NUL-delimited `KEY=VALUE` records and applied by a small
-     loader that execs the run script, so an `env:` secret is never written to the runner's disk.
-     Do not move it back into `config.json`. `RUNNER_ONLY_ENV_KEYS` and `ACTION_INPUT_ENV_KEYS`
-     in `env-loader.ts` are what keep the runner's JavaScript-action credentials, and this
-     action's own inputs, out of that blob.
-   - `/var/tmp/buildcage-<uid>` is covered with an empty tmpfs inside the sandbox, with only this
-     run's own `exec/` subdirectory (the run script and that loader) bound back on top, read-only.
-     Without it, the host-`/` rootfs below would hand every step a readable copy of every other
-     concurrent step's bundle. The reveal is a non-recursive `bind`: the scratch directory also
-     holds the live `mount --rbind /` rootfs, and an `rbind` would pull that in as a second,
-     writable copy of the whole host `/`.
-   - The writable exceptions are recursive bind-mounts (so legitimately nested mounts under them
-     stay visible). The `mount --rbind /` rootfs is therefore staged under `/var/tmp/buildcage-<uid>`,
-     never one of the writable exceptions, so those recursive rbinds don't re-expose it as a
-     second, _writable_ copy of the whole host `/` inside the sandbox. A `write_through:` input
-     naming that directory (or an ancestor of it) is rejected outright rather than silently accepted. The
-     sandbox's real host view (its own `/` and every nested mount) is untouched and stays read-only
-     outside the writable set.
-5. Stage the sandbox's network and filesystem as root, via `sudo -n` (`run-isolated.sh`).
-   - Re-execs itself into a fresh, private mount namespace before touching anything else, so the
-     mount work below is invisible to every other `run:` step running concurrently on the same
-     host.
-   - Bind-mounts the host's own root filesystem onto a fresh directory to serve as the sandbox's
-     rootfs (a plain `pivot_root` can't target the real root directly). Done before the network
-     setup below, since it has no dependency on it and doing it first minimizes the gap between the
-     mount-table snapshot the read-only patching above was computed from and this actually
-     capturing the host's mount table.
-   - Creates a network namespace and a veth pair, with one end moved into it (as `eth0`) and the
-     other moved into the proxy container's own netns, renamed to `buildcage0`, and given the
-     proxy's fixed gateway address directly. There is no bridge, since this is always a 1:1
-     connection (one sandbox, one proxy) and a plain named interface is enough for `init-iptables`'s
-     `-i buildcage0` rule (added at container startup) to match once this device appears later.
-   - The proxy's netns is referenced by Docker's own `NetworkSettings.SandboxKey` path (see
-     `getContainerNetns` in `src/lib/container.ts`), not by PID -- Docker holds that path for the
-     container's whole lifetime, so it can't be silently reused if the proxy dies before use.
-6. Run the sandboxed command via `runc`.
-   - runc creates its own further-nested namespaces per `config.json` and enforces every
-     isolation guarantee declared there: capability drop, seccomp filter, read-only filesystem,
-     network namespace.
-   - A two-hop process-supervision chain ties the sandboxed process's life to the staging step
-     above: the process that starts `runc` and, separately, the sandboxed command itself both
-     die if their immediate parent does, so killing the staging step tears down the whole chain
-     instead of leaving the sandboxed command running as an orphan.
-7. Clean up once the command exits (`run-isolated.sh`).
-   - An exit trap tears the container down, unmounts the rootfs bind-mount, removes the veth, and
-     deletes the network namespace.
-   - As a second layer of defense, anything still mounted under the run's own scratch directory
-     is force-detached before that directory is deleted, in case the trap above didn't run to
-     completion.
-8. Append this step's report to the Job Summary and stop the proxy container (`src/main.ts`).
-   - The report is built in-process on the runner: `src/lib/report.ts` reads the container's own
-     communication log via `docker exec ... cat`, then the container is stopped.
-   - If the whole process is killed before reaching this point, a fallback step reads the
-     container's identity back from job state and stops it anyway, and reclaims the step's scratch
-     directory, whose path it reconstructs deterministically from that same identity, then
-     force-detaches any surviving mount before deleting (`src/post.ts`).
-
-## Inspect Engine Internals
-
-This section covers how `proxy_engine: inspect` is implemented internally. For the user-facing
-behavior, see [Inspect Proxy Engine](./security.md#inspect-proxy-engine) in Security Details.
-
-- `PROXY_ENGINE=inspect` selects `docker/inspect/Dockerfile` at build time (see `compose.yaml`'s
-  `build.dockerfile: docker/${PROXY_ENGINE:-universal}/Dockerfile`), and the action's own runtime
-  compose file for the engine is `docker/compose.action.yaml`, with
-  `docker/compose.action.test-inspect.yaml` overlaying it for the integration tests.
-- **HAProxy** is the single listener. `req.ssl_hello_type` tells a TLS handshake from a plain
-  request by its first bytes, so one `bind` line handles both without the config declaring per-port
-  whether it's plaintext or TLS. Two HAProxy features carry the rest of the enforcement:
-  `normalize-uri` (an upstream directive still marked experimental, gated behind
-  `expose-experimental-directives` in `src/core/lib/acl/haproxy-sections.ts`) resolves `..` in the
-  path before ACLs see it, and `do-resolve` + `set-dst` resolve the requested name and rewrite the
-  connection's destination to it, run only after the ACL check for that request has already passed.
-
-  What those two resolve against is the container's own `/etc/resolv.conf`, through HAProxy's
-  `parse-resolv-conf`, as in `universal`. On a runner that file is Docker's embedded DNS forwarding
-  to the runner's own resolvers, so a name only an internal resolver knows resolves, and the query
-  follows the runner's own DNS policy. `EXTERNAL_RESOLVER` names upstreams explicitly instead; it
-  is not an action input, and only the integration tests set it, to reach their own fixture
-  resolver. Either way HAProxy's resolvers do no search-domain expansion, so a rule has to name a
-  host in full.
-
-- **CoreDNS** answers every query with the proxy's own address, allowed or not, using an `expr`
-  plugin view compiled from the same host patterns HAProxy's own ACLs use, so what's logged as
-  `allowed` matches exactly what HAProxy would actually let through:
-
-  ```
-  # Allowlisted names are logged as allowed, but answered exactly like a denied
-  # one below: this resolver never gets a request any closer to a real address.
-  . {
-      view allowlist {
-        expr name() matches '^(abc[^.]*\.amazonaws\.com|registry\.npmjs\.org)\.$'
-      }
-      template IN A   { answer "{{ .Name }} 60 IN A <proxy-ip>" }
-      template IN AAAA { }
-      template IN ANY  { }
-      log . "buildcage dns allowed name={name}"
-  }
-  ```
-
-  Reverse lookups get their own block, ahead of these, answering `PTR` with `NXDOMAIN` and
-  logging `buildcage dns reverse name=...`. Nothing in the cage has a name to give back, and no
-  rule can name an address backwards, so the lookup is recorded rather than judged. `NXDOMAIN` is
-  what ends it: a query no template matches is answered `SERVFAIL` instead, which musl retries and
-  then waits out its full five-second resolver timeout on, once per lookup. `template IN ANY` above
-  does the same for every other query type, `SRV` and `HTTPS` included.
-
-  A view of its own holds that block to names that really are an address backwards. Anything else
-  under `in-addr.arpa` or `ip6.arpa`, `SECRET-DATA.in-addr.arpa` included, misses the view and
-  falls through to the blocks above, so appending a reverse suffix is no way out of the report.
-
-  Service-discovery names get a block of the same shape, logging
-  `buildcage dns discovery name=... type=...`. No rule can permit one: this resolver returns no
-  discovery record to anybody, so reporting the lookup as denied would put a row in the report that
-  no rule could ever take away, and fail the step under `fail_on_blocked` over a lookup the caller
-  falls back from on its own. apt asks for `_http._tcp.<repo>` on every repository it fetches from,
-  which is how this shows up in practice. The report keeps these out of both host tables and shows
-  them in the timeline instead, carrying the query type, which is the difference between a fallback
-  nobody notices and a `mongodb+srv://` connection that fails outright.
-
-  Its view is what stops that verb from becoming a hiding place. Three things have to hold: the name
-  is shaped like a service name, the host below it is one the rules allow, and the type is one of
-  the four defined at such a name (`SRV`, `TXT`, `TLSA`, `URI`). A type nobody has taught the block
-  about is not one to exempt on a guess.
-
-  Every other service name gets a block of its own after the allowlist, logging
-  `buildcage dns service-denied name=... type=...`. Note that only this second block sits after the
-  allowlist: the discovery block sits before it, so a service name under an allowed host reads as
-  `discovery` even when a rule names it outright. That is the more accurate of the two, the record
-  being unserved either way. It is a refusal like any other, kept apart only
-  so the report can name the remedy: the host below the name, never the name itself, which no rule
-  can make resolve. That becomes `dns-service-not-allowed` in the Blocked Hosts table. Sitting after
-  the allowlist is what leaves a name someone did write a rule for reading as allowed.
-
-  Between them, these two blocks are the only place a service name is recognised. The report reads
-  the verbs they log under, so nothing in `src/core/lib/log/` or `src/core/lib/report/` has to know
-  the shape, and the two cannot drift apart.
-
-- **The CA trust mount** is built by `src/lib/sandbox/` rather than written into the sandbox. The CA
-  and, where the step has one, an augmented copy of the system CA store are written into this run's
-  own scratch directory and mounted over the sandbox's view of those paths in its OCI
-  `config.json`, so nothing is written to the runner and `run-isolated.sh`'s teardown removes them
-  with the rest of the mount namespace. Which variables get set, and when, is in
-  [CA trust variables](./reference.md#ca-trust-variables).
-- The `allowed_url_rules` compiler enumerates hosts rather than generalizing them
-  (`a.example.com`/`b.example.com` never becomes `*.example.com`), because CoreDNS's own allow/deny
-  view is generated from the same host patterns. Widening a host widens what's logged as allowed
-  DNS-side, not only what matches HTTP-side.
-- `make test_integration_sandbox_inspect` (see [Testing](#testing) above) ends with
-  `test/integration-test-inspect-roundtrip.sh`, which runs an audit step, feeds its own generated
-  `allowed_url_rules` back as `restrict`, and checks both halves: every request the audit saw still
-  passes, and a path, method, host, or port it never saw is refused.
 
 ## Troubleshooting
 
