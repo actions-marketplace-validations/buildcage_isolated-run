@@ -19278,7 +19278,7 @@ function describeFailedConnections(report, engineLabel) {
 	if (count !== 0) return {
 		level: "notice",
 		shouldFail: !1,
-		message: `${count} connection(s) failed after buildcage ${engineLabel} allowed them, listed under Failed Connections. The origin broke off, or its name could not be resolved upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
+		message: `${count} connection(s) failed after buildcage ${engineLabel} allowed them, listed under Failed Connections. The origin could not be reached, broke off, or its name resolved nowhere upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
 	};
 }
 //#endregion
@@ -19778,7 +19778,7 @@ async function buildUniversalReportData(lines, parameters) {
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?(https?:\/\/\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) tlserr=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?(https?:\/\/\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
 function timeOf(stamp) {
 	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
 	return Number.isNaN(parsed) ? 0 : parsed / 1e3;
@@ -19789,7 +19789,7 @@ function isRefusal(terminationState) {
 	let phase = terminationState[1];
 	return cause === "s" && (phase === "C" || phase === "H");
 }
-function reasonFor(logged, terminationState) {
+function reasonFor(logged, terminationState, tlsError) {
 	if (logged !== "-") return logged;
 	let cause = terminationState[0];
 	if (cause !== "S" && cause !== "s") return "not-allowed";
@@ -19797,7 +19797,7 @@ function reasonFor(logged, terminationState) {
 		case "H": return "origin-no-response";
 		case "D":
 		case "L": return "origin-aborted";
-		default: return "origin-unreachable";
+		default: return tlsError === "-" || tlsError === "0" ? "origin-unreachable" : "origin-untrusted";
 	}
 }
 const NO_AUTHORITY = new Set(["-", "--"]);
@@ -19809,6 +19809,7 @@ function incompleteReason(terminationState, url) {
 	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
 }
 const FAILURE_REASONS = new Set([
+	"origin-unreachable",
 	"origin-no-response",
 	"origin-aborted",
 	"dns-failed"
@@ -19825,31 +19826,31 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6], request[11]);
+		let incomplete = incompleteReason(request[6], request[12]);
 		if (incomplete) return {
 			time: Number(request[1]) / 1e3,
 			action: "incomplete",
 			protocol: request[2],
-			host: hostBeforeRequest(request[10], request[8]),
-			port: Number(request[9]),
+			host: hostBeforeRequest(request[11], request[9]),
+			port: Number(request[10]),
 			reason: incomplete,
-			destination: `${request[8]}:${request[9]}`
+			destination: `${request[9]}:${request[10]}`
 		};
-		let reason = isRefusal(request[6]) ? reasonFor(request[7], request[6]) : void 0, event = {
+		let reason = isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8]) : void 0, event = {
 			time: Number(request[1]) / 1e3,
 			action: actionFor(reason, isAudit),
 			protocol: request[2],
-			host: hostOf(request[11]),
-			port: Number(request[9]),
+			host: hostOf(request[12]),
+			port: Number(request[10]),
 			method: request[3],
-			url: request[11],
-			destination: `${request[8]}:${request[9]}`
+			url: request[12],
+			destination: `${request[9]}:${request[10]}`
 		};
 		return reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4]) : void 0, sni = pass[8], event = {
+		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], "-") : void 0, sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
 			action: actionFor(reason, isAudit),
 			protocol: pass[2],
