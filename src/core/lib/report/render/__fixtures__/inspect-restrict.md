@@ -34,3 +34,5 @@
 </details>
 
 *Reported by [buildcage/isolated-run](https://github.com/buildcage/isolated-run)*
+
+<hr>
