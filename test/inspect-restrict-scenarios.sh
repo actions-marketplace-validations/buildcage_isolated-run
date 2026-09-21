@@ -51,6 +51,14 @@ echo "=== [Traversal - normalised before the rules see it] ==="
 CODE=$($C https://allowed.example.com/public/../private/secret)
 check_status "GET /public/../private/secret" "$CODE" "403"
 
+# RFC 9112 §3.2.4's asterisk-form: a request-target that is not a path, so it
+# matches no rule and is refused. The point of the case is the report, which
+# must name allowed.example.com rather than a host built from an empty path.
+echo "=== [Request target is not a path] ==="
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+       -X OPTIONS --request-target '*' https://allowed.example.com/)
+check_status "OPTIONS *" "$CODE" "403"
+
 echo "=== [Traversal, encoded] ==="
 for P in "%2e%2e/private/secret" "%2e%2e%2fprivate/secret" \
          "%2E%2E%2Fprivate/secret" "..%2fprivate/secret"; do

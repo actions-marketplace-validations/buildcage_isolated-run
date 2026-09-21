@@ -102,6 +102,10 @@ assert_summary_contains "| deadend.example.com:443 | HTTPS | origin-connect-fail
 assert_summary_contains "| deadend.example.com:80 | HTTP | origin-unreachable |" \
   "a plaintext connection that failed is a failure, not a refusal"
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
+# `OPTIONS *` carries no path, so no URL can spell what it asked for and the
+# row names the method and the host instead. The host is the point: built from
+# the logged URL it would read as the nonexistent `allowed.example.com-`.
+assert_summary_contains "OPTIONS HTTPS allowed.example.com:443 -> not-allowed" "a target that is not a path is recorded against the host the request carried"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "https://v6only.example.com/ -> dns-failed" "allowlisted name with AAAA records only recorded as dns-failed"
 assert_summary_contains "exfil?token=*** -> not-allowed" "the refused URL's credential parameter was replaced"

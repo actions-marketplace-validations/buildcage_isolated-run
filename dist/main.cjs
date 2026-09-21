@@ -19492,7 +19492,13 @@ function redactCredentialQuery(url) {
 	return url.slice(0, start + 1) + query + url.slice(end);
 }
 function subject(event) {
-	return event.queryType === void 0 ? event.protocol === "dns" ? `DNS ${event.host}` : event.url === void 0 ? `${event.protocol.toUpperCase()} ${event.host}:${event.port}` : `${event.method} ${redactCredentialQuery(event.url)}` : `DNS ${event.queryType} ${event.host}`;
+	if (event.queryType !== void 0) return `DNS ${event.queryType} ${event.host}`;
+	if (event.protocol === "dns") return `DNS ${event.host}`;
+	if (event.url === void 0) {
+		let nameAndPort = `${event.protocol.toUpperCase()} ${event.host}:${event.port}`;
+		return event.method === void 0 ? nameAndPort : `${event.method} ${nameAndPort}`;
+	}
+	return `${event.method} ${redactCredentialQuery(event.url)}`;
 }
 function outcome(event) {
 	if (event.action === "block") return event.reason ?? "blocked";
@@ -19778,7 +19784,7 @@ async function buildUniversalReportData(lines, parameters) {
 }
 //#endregion
 //#region src/core/lib/log/inspect.ts
-const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) tlserr=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?(https?:\/\/\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
+const REQUEST = /^buildcage (\d+) (https?) (\S+) (-?\d+) (\d+) ts=(\S*) reason=(\S+) tlserr=(\S+) dst=(\S+):(\d+) (?:sni=(\S+) )?host=(\S+) (\S+)$/, PASSTHROUGH = /^buildcage (\d+) pass (tls|tcp) (\d+) ts=(\S*) reason=(\S+) dst=(\S+):(\d+) sni=(\S+)$/, DNS = /^(\S+ \S+)\s+.*buildcage dns (allowed|denied) name=(\S+?)\.?$/, DNS_DISCOVERY = /^(\S+ \S+)\s+.*buildcage dns discovery name=(\S+?)\.? type=(\S+)$/, DNS_SERVICE_DENIED = /^(\S+ \S+)\s+.*buildcage dns service-denied name=(\S+?)\.? type=(\S+)$/, START = RegExp(`^${PROXY_START_MARKER} (\\d+)$`);
 function timeOf(stamp) {
 	let parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
 	return Number.isNaN(parsed) ? 0 : parsed / 1e3;
@@ -19814,8 +19820,8 @@ const FAILURE_REASONS = new Set([
 function actionFor(reason, isAudit) {
 	return reason === void 0 ? isAudit ? "audit" : "allow" : FAILURE_REASONS.has(reason) ? "failed" : "block";
 }
-function hostOf(url) {
-	return parseObservedUrl(url)?.host ?? url;
+function urlOf(scheme, authority, target) {
+	return target.startsWith("/") ? `${scheme}://${authority}${target}` : void 0;
 }
 function hostBeforeRequest(sni, destination) {
 	return sni === void 0 ? "(unknown)" : sni === "-" ? destination : sni;
@@ -19823,15 +19829,20 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6], request[3]), tlsError = request[2] === "https" ? request[8] : void 0, reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], tlsError, request[3]) : void 0), namedByHandshake = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), parsedRequest = request[3] !== BAD_REQUEST_METHOD, event = {
+		let incomplete = incompleteReason(request[6], request[3]), tlsError = request[2] === "https" ? request[8] : void 0, reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], tlsError, request[3]) : void 0), namedByHandshake = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), parsedRequest = request[3] !== BAD_REQUEST_METHOD, scheme = request[2], authority = request[12], event = {
 			time: Number(request[1]) / 1e3,
 			action: incomplete === void 0 ? actionFor(reason, isAudit) : "incomplete",
-			protocol: request[2],
-			host: namedByHandshake ? hostBeforeRequest(request[11], request[9]) : hostOf(request[12]),
+			protocol: scheme,
+			host: namedByHandshake ? hostBeforeRequest(request[11], request[9]) : splitHostPort(authority).host,
 			port: Number(request[10]),
 			destination: `${request[9]}:${request[10]}`
 		};
-		return parsedRequest && (event.method = request[3], event.url = request[12]), reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
+		if (parsedRequest) {
+			event.method = request[3];
+			let url = urlOf(scheme, authority, request[13]);
+			url !== void 0 && (event.url = url);
+		}
+		return reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
