@@ -19797,7 +19797,7 @@ function reasonFor(logged, terminationState, tlsError, method) {
 		case "H": return "origin-no-response";
 		case "D":
 		case "L": return "origin-aborted";
-		default: return tlsError === "-" || tlsError === "0" ? "origin-unreachable" : "origin-untrusted";
+		default: return cause === "S" && tlsError !== "-" && tlsError !== "0" ? "origin-untrusted" : "origin-unreachable";
 	}
 }
 const BAD_REQUEST_METHOD = "<BADREQ>", REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
