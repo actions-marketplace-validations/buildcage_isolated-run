@@ -19246,6 +19246,29 @@ function describeBlockedOutcome({ isAudit, failOnBlocked, blockedCount, blockedR
 	};
 }
 //#endregion
+//#region src/core/lib/report/outcome/report-outcomes.ts
+function describeReportOutcomes(report, { failOnBlocked, engineLabel }) {
+	let emissions = [describeBlockedOutcome({
+		isAudit: report.parameters.mode === "audit",
+		failOnBlocked,
+		blockedCount: report.blockedCount,
+		blockedRows: report.blocked,
+		logLooksPlausible: report.logLooksPlausible,
+		engineLabel,
+		engine: report.engine
+	})], undecided = describeUndecidedRequests(report, engineLabel);
+	return undecided && emissions.push(undecided), emissions;
+}
+function describeUndecidedRequests(report, engineLabel) {
+	if (report.engine !== "inspect") return;
+	let count = report.timeline.filter((event) => event.action === "incomplete").length;
+	if (count !== 0) return {
+		level: "warning",
+		shouldFail: !1,
+		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, timed out, or sent something that could not be read as HTTP. None of them fails the step.`
+	};
+}
+//#endregion
 //#region src/core/lib/report/render/markdown-table.ts
 const ALIGN_MARKERS = {
 	left: "---",
@@ -19418,7 +19441,7 @@ function renderInspectDetails(timeline, startedAt) {
 const MARK = {
 	block: "🚫",
 	discovery: "ℹ️",
-	aborted: "⚠️"
+	incomplete: "⚠️"
 };
 function renderEvent(event, startedAt) {
 	return `${MARK[event.action] ?? "✅"} ${formatTime(event.time, startedAt)}: ${subject(event)} -> ${outcome(event)}`;
@@ -19459,7 +19482,7 @@ function subject(event) {
 }
 function outcome(event) {
 	if (event.action === "block") return event.reason ?? "blocked";
-	if (event.action === "aborted") return event.reason ?? "aborted";
+	if (event.action === "incomplete") return event.reason ?? "no request";
 	if (event.action === "discovery") return `no data (${event.queryType} is never served)`;
 	let parts = [];
 	return event.status !== void 0 && parts.push(String(event.status)), event.bytes !== void 0 && parts.push(`(${formatBytes(event.bytes)})`), parts.length > 0 ? parts.join(" ") : "resolved";
@@ -19760,9 +19783,13 @@ function reasonFor(logged, terminationState) {
 		default: return "not-allowed";
 	}
 }
-function isAborted(terminationState) {
+const NO_AUTHORITY = new Set(["-", "--"]);
+function incompleteReason(terminationState, url) {
+	if (terminationState[1] !== "R") return;
 	let cause = terminationState[0];
-	return terminationState[1] === "R" && (cause === "C" || cause === "c");
+	if (cause === "C") return "client-aborted";
+	if (cause === "c") return "client-timeout";
+	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
 }
 function actionFor(refused, isAudit) {
 	return refused ? "block" : isAudit ? "audit" : "allow";
@@ -19770,21 +19797,22 @@ function actionFor(refused, isAudit) {
 function hostOf(url) {
 	return parseObservedUrl(url)?.host ?? url;
 }
+function hostBeforeRequest(sni, destination) {
+	return sni === void 0 ? "(unknown)" : sni === "-" ? destination : sni;
+}
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		if (isAborted(request[6])) {
-			let sni = request[10];
-			return {
-				time: Number(request[1]) / 1e3,
-				action: "aborted",
-				protocol: request[2],
-				host: sni === void 0 || sni === "-" ? request[8] : sni,
-				port: Number(request[9]),
-				reason: request[6][0] === "c" ? "client-timeout" : "client-aborted",
-				destination: `${request[8]}:${request[9]}`
-			};
-		}
+		let incomplete = incompleteReason(request[6], request[11]);
+		if (incomplete) return {
+			time: Number(request[1]) / 1e3,
+			action: "incomplete",
+			protocol: request[2],
+			host: hostBeforeRequest(request[10], request[8]),
+			port: Number(request[9]),
+			reason: incomplete,
+			destination: `${request[8]}:${request[9]}`
+		};
 		let refused = isRefusal(request[6]), event = {
 			time: Number(request[1]) / 1e3,
 			action: actionFor(refused, isAudit),
@@ -19910,7 +19938,7 @@ function toHostRow(event) {
 }
 async function buildInspectReportData(proxyLines, dnsLines, parameters) {
 	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [], connected = connectedHosts(timeline);
-	for (let event of timeline) event.action !== "discovery" && event.action !== "aborted" && (isRedundantDns(event, connected) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
+	for (let event of timeline) event.action !== "discovery" && event.action !== "incomplete" && (isRedundantDns(event, connected) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
 	let blocked = annotateKnownBlocked(aggregate(blockedRows), parameters.knownBlockedRules);
 	return {
 		engine: "inspect",
@@ -19925,8 +19953,8 @@ async function buildInspectReportData(proxyLines, dnsLines, parameters) {
 }
 //#endregion
 //#region src/core/lib/report/outcome/annotate.ts
-function applyOutcomeAnnotation(annotation, { level, message, shouldFail }) {
-	level === "error" ? annotation.error(message) : level === "notice" && annotation.notice(message), shouldFail && (process.exitCode = 1);
+function applyOutcomeAnnotations(annotation, emissions) {
+	for (let { level, message, shouldFail } of emissions) level === "error" ? annotation.error(message) : level === "warning" ? annotation.warning(message) : level === "notice" && annotation.notice(message), shouldFail && (process.exitCode = 1);
 }
 //#endregion
 //#region src/lib/report.ts
@@ -19946,15 +19974,10 @@ function readActionVersion(containerName, proxyEngine, docker) {
 		return;
 	}
 }
-function computeReportOutcome(report, { stepLabel, failOnBlocked, actionRepo, actionRef, runCommand, actionVersion }) {
-	let { level, message, shouldFail } = describeBlockedOutcome({
-		isAudit: report.parameters.mode === "audit",
+function computeReportOutcomes(report, { stepLabel, failOnBlocked, actionRepo, actionRef, runCommand, actionVersion }) {
+	let emissions = describeReportOutcomes(report, {
 		failOnBlocked: failOnBlocked ?? !1,
-		blockedCount: report.blockedCount,
-		blockedRows: report.blocked,
-		logLooksPlausible: report.logLooksPlausible,
-		engineLabel: "sandbox",
-		engine: report.engine
+		engineLabel: "sandbox"
 	});
 	return {
 		markdown: renderReportMarkdown(report, actionRepo, actionRef, {
@@ -19962,16 +19985,14 @@ function computeReportOutcome(report, { stepLabel, failOnBlocked, actionRepo, ac
 			runCommand,
 			actionVersion
 		}),
-		message,
-		level,
-		shouldFail
+		emissions
 	};
 }
 async function writeReportSummary(report, annotation, options, artifactAvailable, env, { appendFile = node_fs.appendFileSync } = {}) {
-	let outcome = computeReportOutcome(report, options);
-	await writeStepSummary(truncateForStepSummary(outcome.markdown, artifactAvailable), env.GITHUB_STEP_SUMMARY);
+	let outcomes = computeReportOutcomes(report, options);
+	await writeStepSummary(truncateForStepSummary(outcomes.markdown, artifactAvailable), env.GITHUB_STEP_SUMMARY);
 	let debugSummaryFile = env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
-	debugSummaryFile && appendFile(debugSummaryFile, outcome.markdown), applyOutcomeAnnotation(annotation, outcome);
+	debugSummaryFile && appendFile(debugSummaryFile, outcomes.markdown), applyOutcomeAnnotations(annotation, outcomes.emissions);
 }
 //#endregion
 //#region src/core/lib/report/outcome/traffic-output.ts

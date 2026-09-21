@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  computeReportOutcome,
+  computeReportOutcomes,
   readActionVersion,
   writeReportSummary,
-  type ComputeReportOutcomeOptions,
+  type ComputeReportOutcomesOptions,
 } from "./report.ts";
 import { createAnnotation } from "#core/lib/actions/annotation.ts";
 import { annotateKnownBlocked } from "#core/lib/report/build/aggregate.ts";
-import type { UniversalReportData } from "#core/lib/report/types.ts";
+import type { InspectReportData, UniversalReportData } from "#core/lib/report/types.ts";
 import type { Docker } from "#core/lib/docker/client.ts";
 import { reportParams } from "#core/lib/test/report-data.node.ts";
 
@@ -21,14 +21,14 @@ const readLabels = vi.fn();
 const docker = { readLabels } as unknown as Docker;
 
 function options(
-  overrides: Partial<ComputeReportOutcomeOptions> = {},
-): ComputeReportOutcomeOptions {
+  overrides: Partial<ComputeReportOutcomesOptions> = {},
+): ComputeReportOutcomesOptions {
   return { actionRepo: "buildcage/isolated-run", actionRef: "v1", ...overrides };
 }
 
 // blocked rows are already expected to be annotated by the time a Report
-// reaches computeReportOutcome: this mirrors that, applying
-// parameters.knownBlockedRules the same way. computeReportOutcome only ever
+// reaches computeReportOutcomes: this mirrors that, applying
+// parameters.knownBlockedRules the same way. The blocked outcome only ever
 // touches ReportDataCommon fields, so a universal-shaped fixture exercises
 // it just as well as an inspect-shaped one would.
 function report(overrides: Partial<UniversalReportData> = {}): UniversalReportData {
@@ -44,14 +44,18 @@ function report(overrides: Partial<UniversalReportData> = {}): UniversalReportDa
   };
 }
 
-// The decision matrix itself is tested elsewhere; these only verify
-// shouldFail and the rendered markdown combine correctly. Markdown content
+// The decision matrix itself is tested elsewhere; these only verify that the
+// annotations and the rendered markdown combine correctly. Markdown content
 // itself is covered by render-report-markdown.test.ts, which
-// computeReportOutcome delegates to.
-describe("computeReportOutcome", () => {
+// computeReportOutcomes delegates to.
+describe("computeReportOutcomes", () => {
+  /** The blocked-connections check, which is always the first emission. */
+  const blockedOutcome = (r: UniversalReportData | InspectReportData, failOnBlocked = true) =>
+    computeReportOutcomes(r, options({ failOnBlocked })).emissions[0];
+
   it("does not fail when there are no blocked connections", () => {
     const r = report({ blockedCount: 0 });
-    expect(computeReportOutcome(r, options({ failOnBlocked: true })).shouldFail).toBe(false);
+    expect(blockedOutcome(r).shouldFail).toBe(false);
   });
 
   it("fails when blocked connections are detected and failOnBlocked is true", () => {
@@ -70,7 +74,7 @@ describe("computeReportOutcome", () => {
         [],
       ),
     });
-    expect(computeReportOutcome(r, options({ failOnBlocked: true })).shouldFail).toBe(true);
+    expect(blockedOutcome(r).shouldFail).toBe(true);
   });
 
   // Audit's outcome never depends on known_blocked_rules matching, so the
@@ -85,9 +89,31 @@ describe("computeReportOutcome", () => {
         knownBlockedRules,
       ),
     });
-    const outcome = computeReportOutcome(r, options({ failOnBlocked: true }));
+    const outcome = blockedOutcome(r);
     expect(outcome.level).toBe("notice");
     expect(outcome.message).toBe("2 blocked connection(s) detected by buildcage sandbox");
+  });
+
+  it("warns about a request no rule decided, naming this action", () => {
+    const r: InspectReportData = {
+      ...report(),
+      engine: "inspect",
+      startedAt: 1787471970,
+      timeline: [
+        {
+          time: 1787471975,
+          action: "incomplete",
+          protocol: "http",
+          host: "(unknown)",
+          port: 8080,
+          reason: "bad-request",
+        },
+      ],
+    };
+    const { emissions } = computeReportOutcomes(r, options({ failOnBlocked: true }));
+    expect(emissions.length).toBe(2);
+    expect(emissions[1].level).toBe("warning");
+    expect(emissions[1].message).toContain("buildcage sandbox");
   });
 
   it("passes stepLabel/runCommand through to the rendered markdown", () => {
@@ -97,7 +123,7 @@ describe("computeReportOutcome", () => {
         { host: "registry.npmjs.org", port: "443", ruleType: "HTTPS", reason: "-", count: 3 },
       ],
     });
-    const { markdown } = computeReportOutcome(
+    const { markdown } = computeReportOutcomes(
       r,
       options({ stepLabel: "npm install", runCommand: "npm install" }),
     );
