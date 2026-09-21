@@ -429,7 +429,7 @@ data, or source you do not publish. For the full threat model, see
 - `universal` never sees the method or the path. They travel inside TLS, so neither is enforced and
   neither reaches the report or the traffic artifact. A request fronted behind an allowed SNI is
   invisible to it as well, while `inspect` matches on the real `Host` and refuses it. See
-  [What it can't see](./docs/security.md#what-it-cant-see).
+  [Domain fronting](./docs/security.md#domain-fronting).
 - The generated allowlist covers only what the engine classified. `allowed_tls_rules` and
   `allowed_ip_rules` come back exactly as the audit run was configured with them, since nothing
   behind a passthrough was ever decrypted.
