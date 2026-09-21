@@ -19783,12 +19783,13 @@ function reasonFor(logged, terminationState) {
 		default: return "not-allowed";
 	}
 }
+const NO_AUTHORITY = new Set(["-", "--"]);
 function incompleteReason(terminationState, url) {
 	if (terminationState[1] !== "R") return;
 	let cause = terminationState[0];
 	if (cause === "C") return "client-aborted";
 	if (cause === "c") return "client-timeout";
-	if (cause === "P" && hostOf(url).startsWith("-")) return "bad-request";
+	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
 }
 function actionFor(refused, isAudit) {
 	return refused ? "block" : isAudit ? "audit" : "allow";
