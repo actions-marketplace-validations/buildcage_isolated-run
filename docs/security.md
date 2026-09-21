@@ -241,8 +241,10 @@ Two components, plus a CA-trust mount:
 
 Where the proxy resolves a name is the container's own `/etc/resolv.conf`, in both engines. On a
 runner that is Docker's embedded DNS forwarding to the runner's own resolvers, so a name only an
-internal resolver knows still resolves, and the query follows the runner's own DNS policy. There is
-no search-domain expansion either way, so a rule has to name a host in full.
+internal resolver knows still resolves, and the query follows the runner's own DNS policy.
+`EXTERNAL_RESOLVER` names upstreams explicitly instead, which is not an action input and only this
+repo's own integration tests set. Either way there is no search-domain expansion, so a rule has to
+name a host in full.
 
 ### How a request is handled
 

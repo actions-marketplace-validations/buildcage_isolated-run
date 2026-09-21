@@ -43,6 +43,10 @@ make setup_sandbox_dev  # start the proxy + dev-loop runner container
 make test_sandbox_dev   # run a sample isolated command and verify allow/block + capability drop
 ```
 
+`EXTERNAL_RESOLVER` is the one variable here with no action input behind it: locally it takes a
+comma-separated list of IPv4 addresses for HAProxy to resolve against in place of the container's own
+`/etc/resolv.conf`. The integration tests set it to reach their own fixture resolver.
+
 ## Testing
 
 ```bash
@@ -230,10 +234,11 @@ runs rather than running it in one go; build the image a group needs, then run t
 │   ├── lib/                   # Action-specific implementation: container, report, sudo-preflight,
 │   │                          # sandbox/ (OCI config, runc bootstrap, netns/mountinfo helpers)
 │   └── core/                  # Code shared with the proxy image's QuickJS scripts
-│       ├── lib/               # acl/ (rule parsing and the proxy config generators) is the one
-│       │                      # part built for both runtimes; actions/, docker/, provenance/,
-│       │                      # report/ and log/ are Node-only, and test/test-shim.ts is the
-│       │                      # node:test-alike shim *.test.ts uses under either runtime
+│       ├── lib/               # acl/ (rule parsing and the proxy config generators) is built for
+│       │                      # both runtimes, and so is anything it imports — errors.ts today.
+│       │                      # actions/, docker/, provenance/, report/ and log/ are Node-only,
+│       │                      # and test/test-shim.ts is the node:test-alike shim *.test.ts uses
+│       │                      # under either runtime
 │       └── scripts/           # QuickJS entry points, rolldown-bundled into
 │                              # /opt/buildcage/scripts/ at image build time
 ├── dist/                      # Bundled output (rolldown → CommonJS), committed. dist/qjs and
