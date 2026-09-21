@@ -47,7 +47,7 @@ BUILDCAGE_TEST_COMPOSE_FILE="$REPO_ROOT/docker/compose.action.test-inspect.yaml"
 BUILDCAGE_TEST_CERT_PATH="$REPO_ROOT/test/test-server-inspect/cert.pem" \
 INPUT_PROXY_ENGINE="inspect" \
 INPUT_PROXY_MODE="restrict" \
-INPUT_ALLOWED_HTTPS_RULES="sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443" \
+INPUT_ALLOWED_HTTPS_RULES="sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443 deadend.example.com:443" \
 INPUT_ALLOWED_HTTP_RULES="allowed.example.com:80" \
 INPUT_ALLOWED_TLS_RULES="tlspass.example.com:443 ~^tlspass\.example\.com:8443$" \
 INPUT_ALLOWED_IP_RULES="~^10\.200\.0\.\d+:9080$" \
@@ -92,6 +92,11 @@ assert_summary_contains "| 10.200.0.100:9080 | IP |" "the ~regex allowed_ip_rule
 # No rule refused this one and none can clear it, so it is tabled apart.
 assert_summary_contains "### ⚠️ Failed Connections" "a name that resolved nowhere is tabled apart from what the rules refused"
 assert_summary_contains "| absent.example.com:443 | HTTPS | dns-failed |" "absent.example.com:443 recorded as failed, reason dns-failed"
+# The opposite case: a connection that never completed is a refusal, because
+# nothing on it was ever authenticated. It reads like an outage and is counted
+# anyway.
+assert_summary_contains "| deadend.example.com:443 | HTTPS | origin-connect-failed |" \
+  "a connection that never completed is in the blocked table, not the failed one"
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "https://v6only.example.com/ -> dns-failed" "allowlisted name with AAAA records only recorded as dns-failed"

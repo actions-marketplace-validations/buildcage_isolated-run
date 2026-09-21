@@ -16,7 +16,7 @@
 #     GET ~^https://blocked\.example\.com/defaultport/.*$
 #     GET ~https://ok\.wildcard\.example\.com/regexpub/        (no anchors)
 #     GET ~^https://ok\.wildcard\.example\.com/regexexact$
-#   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443
+#   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443 deadend.example.com:443
 #   allowed_http_rules:  allowed.example.com:80
 #   allowed_tls_rules:     tlspass.example.com:443 ~^tlspass\.example\.com:8443$
 #   allowed_ip_rules:    ~^10\.200\.0\.\d+:9080$
@@ -150,6 +150,14 @@ echo "=== [Blocked host - a URL the size a signed one really is] ==="
 PAD=$(awk 'BEGIN{s="";while(length(s)<1200)s=s "A";print s}')
 CODE=$($C "https://blocked.example.com/exfil?pad=$PAD&end=TAIL-MARKER")
 check_status "GET blocked.example.com/exfil?pad=<1.2KB>&end=TAIL-MARKER" "$CODE" "403"
+
+# Allowlisted and resolvable, with nothing listening there. The connection
+# never completes, so no certificate is ever accepted on it, and
+# integration-test-inspect-restrict.sh checks that is reported as a refusal
+# rather than as an outage.
+echo "=== [Origin connection never completes] ==="
+CODE=$($C https://deadend.example.com/)
+check_status "GET deadend.example.com" "$CODE" "503"
 
 echo "=== [Allowlisted name that does not resolve] ==="
 CODE=$($C https://absent.example.com/)

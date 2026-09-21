@@ -19797,7 +19797,7 @@ function reasonFor(logged, terminationState, tlsError, method) {
 		case "H": return "origin-no-response";
 		case "D":
 		case "L": return "origin-aborted";
-		default: return cause === "S" && tlsError !== "-" && tlsError !== "0" ? "origin-untrusted" : "origin-unreachable";
+		default: return tlsError === void 0 ? "origin-unreachable" : cause === "S" && tlsError !== "-" && tlsError !== "0" ? "origin-untrusted" : "origin-connect-failed";
 	}
 }
 const BAD_REQUEST_METHOD = "<BADREQ>", REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
@@ -19835,7 +19835,7 @@ function parseProxyLine(line, isAudit) {
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], "-", "-") : void 0, sni = pass[8], event = {
+		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], void 0, "-") : void 0, sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
 			action: actionFor(reason, isAudit),
 			protocol: pass[2],
