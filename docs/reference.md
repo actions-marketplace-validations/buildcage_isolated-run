@@ -436,20 +436,22 @@ Job Summary is the exception: it replaces credential query parameters, see
 
 `proxy_engine: inspect` terminates TLS and re-signs it with a CA generated for the step, so the
 command has to trust that CA. The CA, and where relevant an augmented copy of the system CA store,
-is mounted over the sandbox's own view of those paths. Nothing is written to the runner's
-filesystem, and the mount goes away with the sandbox when the step ends.
+is mounted over the sandbox's own view of those paths. The store copy goes back over the path it was
+read from, which is what the tools going by their own compiled-in path read, so it is whichever of
+the well-known store paths this runner actually has. Nothing is written to the runner's filesystem,
+and the mount goes away with the sandbox when the step ends.
 
 The variables below are set only when the command's environment leaves them unset, and where each
 one points depends on what it means to the tool that reads it:
 
-| Variable              | Read by                                                                                                 | If unset                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `NODE_EXTRA_CA_CERTS` | Node.js                                                                                                 | Additive: pointed at a file holding only this CA |
-| `DENO_CERT`           | Deno                                                                                                    | Additive: pointed at a file holding only this CA |
-| `CURL_CA_BUNDLE`      | curl                                                                                                    | Left unset; curl already reads the system store  |
-| `REQUESTS_CA_BUNDLE`  | Python `requests`                                                                                       | Replaces the bundle: pointed at the system store |
-| `PIP_CERT`            | pip                                                                                                     | Replaces the bundle: pointed at the system store |
-| `SSL_CERT_FILE`       | OpenSSL, and anything reading it (Go's `crypto/x509` on Unix, Ruby, wget, Rust's `rustls-native-certs`) | Replaces the bundle: pointed at the system store |
+| Variable              | Read by                                                                                                                                                      | If unset                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `NODE_EXTRA_CA_CERTS` | Node.js                                                                                                                                                      | Additive: pointed at a file holding only this CA |
+| `DENO_CERT`           | Deno                                                                                                                                                         | Additive: pointed at a file holding only this CA |
+| `CURL_CA_BUNDLE`      | curl                                                                                                                                                         | Left unset; curl already reads the system store  |
+| `REQUESTS_CA_BUNDLE`  | Python `requests`                                                                                                                                            | Replaces the bundle: pointed at the system store |
+| `PIP_CERT`            | pip                                                                                                                                                          | Replaces the bundle: pointed at the system store |
+| `SSL_CERT_FILE`       | OpenSSL, and anything linked against it (Go's `crypto/x509` on Unix, Ruby, Rust's `rustls-native-certs`). Not GnuTLS, so Debian's wget and git never read it | Replaces the bundle: pointed at the system store |
 
 A variable that is already set is left alone rather than appended to, and the CA is added to a store
 that already exists rather than creating one. Both are in
@@ -505,11 +507,16 @@ non-isolated step.
 
 ### Reserved paths
 
-`/etc/resolv.conf`, `/etc/ssl/certs/ca-certificates.crt` and `/etc/buildcage-ca.pem` are mounted by
-the sandbox itself to reach the proxy's DNS and CA trust. Naming one of them, or anything under one,
-fails the step rather than being quietly ignored. Naming a directory that contains them
-(`write_through: /etc`) is fine: writes elsewhere under it reach the host, and only those three
-paths stay read-only. The same applies to the filesystems the sandbox mounts fresh, such as `/proc`
+`/etc/resolv.conf` and `/etc/buildcage-ca.pem` are mounted by the sandbox itself to reach the
+proxy's DNS and CA trust, and so is the runner's own CA store. Which path that last one is depends
+on the runner, so every path a CA store is looked for at is reserved, whether or not this runner
+keeps one there: `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+`/etc/ssl/ca-bundle.pem`, `/etc/pki/tls/cacert.pem` and `/etc/ssl/cert.pem`. An entry that worked on
+one runner and failed on the next would be worse than one that is refused everywhere.
+
+Naming a reserved path, or anything under one, fails the step rather than being quietly ignored.
+Naming a directory that contains them (`write_through: /etc`) is fine: writes elsewhere under it
+reach the host, and only the reserved paths themselves stay read-only. The same applies to the filesystems the sandbox mounts fresh, such as `/proc`
 and `/dev`, and to the sandbox's own scratch directory under `/var/tmp`; see
 [Known Limitations](./security.md#known-limitations).
 

@@ -18261,7 +18261,7 @@ const SYSTEM_CA_CANDIDATES = [
 	"/etc/ssl/ca-bundle.pem",
 	"/etc/pki/tls/cacert.pem",
 	"/etc/ssl/cert.pem"
-], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem", SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
+], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem";
 function defaultExec$1(command, args) {
 	(0, node_child_process.execFileSync)(command, args);
 }
@@ -18282,14 +18282,17 @@ function extractCaCert(containerName, destDir, { exec = defaultExec$1, chmod = n
 function writeCaTrustFiles(caCertPath, dir, { readFile = defaultReadFile$1, writeFile = defaultWriteFile, exists = node_fs.existsSync } = {}) {
 	let ca = readFile(caCertPath).trimEnd(), ownCaPath = (0, node_path.join)(dir, "buildcage-ca.pem");
 	writeFile(ownCaPath, `${ca}\n`, 420);
-	let systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCaPath;
-	if (systemStoreSource) {
-		let existing = readFile(systemStoreSource).trimEnd();
-		systemCaPath = (0, node_path.join)(dir, "system-ca-bundle.pem"), writeFile(systemCaPath, `${existing}\n${ca}\n`, 420);
+	let destination = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCa;
+	if (destination) {
+		let existing = readFile(destination).trimEnd(), path = (0, node_path.join)(dir, "system-ca-bundle.pem");
+		writeFile(path, `${existing}\n${ca}\n`, 420), systemCa = {
+			path,
+			destination
+		};
 	}
 	return {
 		ownCaPath,
-		systemCaPath
+		systemCa
 	};
 }
 const POINT_AT_OWN_CA = ["NODE_EXTRA_CA_CERTS", "DENO_CERT"], POINT_AT_SYSTEM_STORE = [
@@ -18305,14 +18308,14 @@ function caTrustAdditions(files, env) {
 		options: ["rbind", "ro"]
 	}], extraEnv = {};
 	for (let name of POINT_AT_OWN_CA) env[name] || (extraEnv[name] = OWN_CA_DESTINATION);
-	if (files.systemCaPath) {
+	if (files.systemCa) {
 		mounts.push({
-			destination: SYSTEM_CA_DESTINATION,
+			destination: files.systemCa.destination,
 			type: "none",
-			source: files.systemCaPath,
+			source: files.systemCa.path,
 			options: ["rbind", "ro"]
 		});
-		for (let name of POINT_AT_SYSTEM_STORE) env[name] || (extraEnv[name] = SYSTEM_CA_DESTINATION);
+		for (let name of POINT_AT_SYSTEM_STORE) env[name] || (extraEnv[name] = files.systemCa.destination);
 	}
 	return {
 		mounts,
@@ -18337,7 +18340,7 @@ function withHostShmSize(mounts, hostShmBytes) {
 const RESOLV_CONF_DESTINATION = "/etc/resolv.conf", RESERVED_INTERNAL_DESTINATIONS = [
 	RESOLV_CONF_DESTINATION,
 	OWN_CA_DESTINATION,
-	SYSTEM_CA_DESTINATION
+	...SYSTEM_CA_CANDIDATES
 ];
 function assertNoFreshMountDestinations(writableDirs, freshMountDestinations) {
 	for (let dir of writableDirs) {
@@ -18418,7 +18421,7 @@ function validateFilesystemInputs(filesystemMode, writeThroughPaths) {
 	if (filesystemMode === "ephemeral" && writeThroughPaths.includes("/")) throw new SandboxError("write_through: / drops the read-only restriction wholesale, which has no meaning in filesystem_mode: ephemeral -- it would persist every write, the one thing that mode exists to prevent. List the paths that must survive instead.", "FILESYSTEM_INPUT_CONFLICT");
 	for (let path of writeThroughPaths) {
 		let reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
-		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
+		if (reserved) throw new SandboxError(`write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts the proxy's DNS and CA trust over ${JSON.stringify(reserved)}, last of all. Which path the CA store goes to depends on the runner, so every one it could be is refused rather than working on one machine and not the next. Name a containing directory instead to persist writes around it.`, "FILESYSTEM_INPUT_CONFLICT");
 	}
 }
 function resolveFilesystemPlan(filesystemMode, writeThroughInput, env, deps = {}) {
