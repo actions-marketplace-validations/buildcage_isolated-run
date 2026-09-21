@@ -194,7 +194,7 @@ buildcage 1787471976000 pass tls 3421 ts=-- reason=- dst=10.200.0.100:5432 sni=d
 knew one the line could not otherwise show. `tlserr` carries haproxy's own error from the handshake
 with the origin, which is what tells a connection the proxy would not make from one it could not
 make; the passthrough stage terminates no TLS and logs no such field. What the report makes of the two is in
-[Requests Buildcage could not act on](./reference.md#requests-buildcage-could-not-act-on), for a
+[Requests that never arrived whole](./reference.md#requests-that-never-arrived-whole), for a
 connection that never delivered a whole request, and in
 [Connections that failed](./reference.md#connections-that-failed), for one the rules allowed that
 then came to nothing.

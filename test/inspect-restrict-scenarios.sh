@@ -175,6 +175,21 @@ curl -sS -o /dev/null --max-time 10 \
   https://aborted.example.com/
 check_status "GET aborted.example.com" "$?" "90"
 
+# [Bytes that are not an HTTP request, on a port no allowed_ip_rules or
+# allowed_tls_rules entry covers: anything that is not a TLS handshake reaches
+# the plain stage, which reads it as a request and refuses it.
+# integration-test-inspect-restrict.sh checks the report counts that refusal.]
+echo "=== [Not an HTTP request at all] ==="
+((printf 'NOT-HTTP\r\n\r\n'; sleep 1) | nc -w 5 10.200.0.100 5432 > /dev/null 2>&1 || true)
+echo "  bytes sent (a blocked row expected in the report)"
+
+# [A request that parsed and named no host, which the stage refuses ahead of
+# the rules: there is nothing to match and nothing to resolve. The inspect
+# counterpart of universal-restrict-scenarios.sh's own case.]
+echo "=== [HTTP - missing-host-header] ==="
+((printf 'GET /public/pkg.tgz HTTP/1.0\r\n\r\n'; sleep 1) | nc -w 5 allowed.example.com 80 > /dev/null 2>&1 || true)
+echo "  request sent (a blocked row expected in the report)"
+
 echo "=== [Forged Host - the destination is not the client's to choose] ==="
 OUT=$($S --insecure -H 'Host: allowed.example.com' https://10.200.0.101/public/pkg.tgz)
 case "$OUT" in

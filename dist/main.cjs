@@ -19789,10 +19789,10 @@ function isRefusal(terminationState) {
 	let phase = terminationState[1];
 	return cause === "s" && (phase === "C" || phase === "H");
 }
-function reasonFor(logged, terminationState, tlsError) {
+function reasonFor(logged, terminationState, tlsError, method) {
 	if (logged !== "-") return logged;
 	let cause = terminationState[0];
-	if (cause !== "S" && cause !== "s") return "not-allowed";
+	if (cause !== "S" && cause !== "s") return method === BAD_REQUEST_METHOD ? "bad-request" : "not-allowed";
 	switch (terminationState[1]) {
 		case "H": return "origin-no-response";
 		case "D":
@@ -19800,13 +19800,14 @@ function reasonFor(logged, terminationState, tlsError) {
 		default: return tlsError === "-" || tlsError === "0" ? "origin-unreachable" : "origin-untrusted";
 	}
 }
-const NO_AUTHORITY = new Set(["-", "--"]);
-function incompleteReason(terminationState, url) {
-	if (terminationState[1] !== "R") return;
-	let cause = terminationState[0];
-	if (cause === "C") return "client-aborted";
-	if (cause === "c") return "client-timeout";
-	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
+const BAD_REQUEST_METHOD = "<BADREQ>", REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
+function incompleteReason(terminationState) {
+	if (terminationState[1] === "R") switch (terminationState[0]) {
+		case "C": return "client-aborted";
+		case "c": return "client-timeout";
+		case "P": return;
+		default: return "no-request";
+	}
 }
 const FAILURE_REASONS = new Set([
 	"origin-unreachable",
@@ -19826,31 +19827,19 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6], request[12]);
-		if (incomplete) return {
+		let incomplete = incompleteReason(request[6]), reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8], request[3]) : void 0), requestless = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), event = {
 			time: Number(request[1]) / 1e3,
-			action: "incomplete",
+			action: incomplete === void 0 ? actionFor(reason, isAudit) : "incomplete",
 			protocol: request[2],
-			host: hostBeforeRequest(request[11], request[9]),
+			host: requestless ? hostBeforeRequest(request[11], request[9]) : hostOf(request[12]),
 			port: Number(request[10]),
-			reason: incomplete,
 			destination: `${request[9]}:${request[10]}`
 		};
-		let reason = isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8]) : void 0, event = {
-			time: Number(request[1]) / 1e3,
-			action: actionFor(reason, isAudit),
-			protocol: request[2],
-			host: hostOf(request[12]),
-			port: Number(request[10]),
-			method: request[3],
-			url: request[12],
-			destination: `${request[9]}:${request[10]}`
-		};
-		return reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
+		return requestless || (event.method = request[3], event.url = request[12]), reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], "-") : void 0, sni = pass[8], event = {
+		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], "-", "-") : void 0, sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
 			action: actionFor(reason, isAudit),
 			protocol: pass[2],

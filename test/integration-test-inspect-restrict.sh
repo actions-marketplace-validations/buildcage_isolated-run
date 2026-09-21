@@ -158,6 +158,15 @@ fi
 # to survive: it is the only row a reader can act on.
 assert_summary_contains "| aborted.example.com | DNS | dns-not-allowed |" \
   "the refused lookup for the same name is still its own Blocked row"
+# A refusal made before a whole request arrived is still a refusal, so it is in
+# the table and in fail_on_blocked. The plain stage has no SNI to name it by,
+# hence the host both rows carry.
+if grep -qE '^\| \(unknown\):[0-9]+ \| HTTP \| bad-request \|' <<< "$SUMMARY" \
+  && grep -qE '^\| \(unknown\):[0-9]+ \| HTTP \| missing-host-header \|' <<< "$SUMMARY"; then
+  pass "both refusals that named no host are in the Blocked Hosts table"
+else
+  fail "the Blocked Hosts table is missing the rows for requests that named no host"
+fi
 
 echo ""
 echo "--- positive control: the UDP echo server is reachable from beside the cage ---"
