@@ -26,6 +26,11 @@ export interface ReportDataCommon {
    *  knownBlockedRules. Can be non-empty even in audit mode. */
   blocked: AnnotatedBlockedRow[];
 
+  /** Connections the rules allowed that then did not complete: the origin
+   *  broke off, or the upstream resolver could not answer the name. Tabulated
+   *  apart from `blocked` and left out of `blockedCount`; see TrafficAction. */
+  failed: AggregatedEntry[];
+
   /** Raw blocked-event count: both engines count log lines rather than
    *  aggregated rows, so it can be larger than blocked.length. */
   blockedCount: number;

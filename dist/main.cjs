@@ -19260,7 +19260,9 @@ function describeReportOutcomes(report, { failOnBlocked, engineLabel }) {
 		engineLabel,
 		engine: report.engine
 	})], undecided = describeUndecidedRequests(report, engineLabel);
-	return undecided && emissions.push(undecided), emissions;
+	undecided && emissions.push(undecided);
+	let failed = describeFailedConnections(report, engineLabel);
+	return failed && emissions.push(failed), emissions;
 }
 function describeUndecidedRequests(report, engineLabel) {
 	if (report.engine !== "inspect") return;
@@ -19269,6 +19271,14 @@ function describeUndecidedRequests(report, engineLabel) {
 		level: "warning",
 		shouldFail: !1,
 		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, timed out, or sent something that could not be read as HTTP. None of them fails the step.`
+	};
+}
+function describeFailedConnections(report, engineLabel) {
+	let count = report.failed.reduce((total, row) => total + row.count, 0);
+	if (count !== 0) return {
+		level: "notice",
+		shouldFail: !1,
+		message: `${count} connection(s) failed after buildcage ${engineLabel} allowed them, listed under Failed Connections. The origin broke off, or its name could not be resolved upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
 	};
 }
 //#endregion
@@ -19444,7 +19454,8 @@ function renderInspectDetails(timeline, startedAt) {
 const MARK = {
 	block: "🚫",
 	discovery: "ℹ️",
-	incomplete: "⚠️"
+	incomplete: "⚠️",
+	failed: "⚠️"
 };
 function renderEvent(event, startedAt) {
 	return `${MARK[event.action] ?? "✅"} ${formatTime(event.time, startedAt)}: ${subject(event)} -> ${outcome(event)}`;
@@ -19486,6 +19497,7 @@ function subject(event) {
 function outcome(event) {
 	if (event.action === "block") return event.reason ?? "blocked";
 	if (event.action === "incomplete") return event.reason ?? "no request";
+	if (event.action === "failed") return event.reason ?? "failed";
 	if (event.action === "discovery") return `no data (${event.queryType} is never served)`;
 	let parts = [];
 	return event.status !== void 0 && parts.push(String(event.status)), event.bytes !== void 0 && parts.push(`(${formatBytes(event.bytes)})`), parts.length > 0 ? parts.join(" ") : "resolved";
@@ -19635,7 +19647,7 @@ function renderReportMarkdown(report, actionRepo, actionRef, { title = "Outbound
 			showExpected
 		}) + "\n";
 	}
-	return report.passed.length === 0 && report.blocked.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown;
+	return report.failed.length > 0 && ((report.passed.length > 0 || report.blocked.length > 0) && (markdown += "\n"), markdown += "### ⚠️ Failed Connections\n\n" + renderHostTable(report.failed, { showReason: !0 }) + "\n\n<sub>*Note: no rule refused these; the connection itself did not complete, so no rule can change the outcome and none of them fails the step.*</sub>\n"), report.passed.length === 0 && report.blocked.length === 0 && report.failed.length === 0 && (markdown += "_(no communication)_\n\n"), report.engine === "inspect" ? markdown += renderInspectDetails(report.timeline, report.startedAt) : markdown += "\n<sub>*Note: HTTP rules are based on the Host header, HTTPS rules on SNI, and IP rules on the destination IP address.*</sub>\n", markdown += `\n*Reported by [${actionRepo}](https://github.com/${actionRepo})*\n`, markdown;
 }
 //#endregion
 //#region src/core/lib/report/render/truncate-communication-details.ts
@@ -19696,9 +19708,9 @@ function createIncrementalAggregator() {
 }
 //#endregion
 //#region src/core/lib/log/start-marker.ts
-const PROXY_START_MARKER = "buildcage haproxy starting", logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/;
+const PROXY_START_MARKER = "buildcage haproxy starting", logPattern = /^\[[^\]]*\]\s+buildcage\s+\[(AUDIT|ALLOWED|BLOCKED)\]\s+\((\w+)\)\s+"([A-Za-z0-9._:-]+)"\s*([A-Za-z0-9-]*)\s*$/, FAILURE_REASONS$1 = new Set(["dns-failed"]);
 async function scanHaproxyLog(lines, isAudit) {
-	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, headIntact, unparsed = 0;
+	let passed = createIncrementalAggregator(), blocked = createIncrementalAggregator(), failed = createIncrementalAggregator(), passedDecision = isAudit ? "AUDIT" : "ALLOWED", blockedCount = 0, headIntact, unparsed = 0;
 	for await (let line of lines) {
 		let m = line.match(logPattern);
 		if (!m) {
@@ -19714,11 +19726,12 @@ async function scanHaproxyLog(lines, isAudit) {
 			ruleType,
 			reason: reason || "-"
 		};
-		decision === passedDecision ? passed.add(entry) : decision === "BLOCKED" && (blocked.add(entry), blockedCount++);
+		decision === passedDecision ? passed.add(entry) : decision === "BLOCKED" && (FAILURE_REASONS$1.has(entry.reason) ? failed.add(entry) : (blocked.add(entry), blockedCount++));
 	}
 	return {
 		passed: passed.toSortedArray(),
 		blocked: blocked.toSortedArray(),
+		failed: failed.toSortedArray(),
 		blockedCount,
 		headIntact: headIntact ?? !1,
 		unparsed
@@ -19752,12 +19765,13 @@ function targetOf(row) {
 //#endregion
 //#region src/core/lib/report/build/universal.ts
 async function buildUniversalReportData(lines, parameters) {
-	let { passed, blocked: blockedRawRows, blockedCount, headIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
+	let { passed, blocked: blockedRawRows, failed, blockedCount, headIntact, unparsed } = await scanHaproxyLog(lines, parameters.mode === "audit");
 	return {
 		engine: "universal",
 		parameters,
 		passed,
 		blocked: annotateKnownBlocked(blockedRawRows, parameters.knownBlockedRules),
+		failed,
 		blockedCount,
 		logLooksPlausible: headIntact && unparsed === 0
 	};
@@ -19777,13 +19791,13 @@ function isRefusal(terminationState) {
 }
 function reasonFor(logged, terminationState) {
 	if (logged !== "-") return logged;
+	let cause = terminationState[0];
+	if (cause !== "S" && cause !== "s") return "not-allowed";
 	switch (terminationState[1]) {
-		case "R": return "not-allowed";
-		case "C": return "origin-unreachable";
 		case "H": return "origin-no-response";
 		case "D":
 		case "L": return "origin-aborted";
-		default: return "not-allowed";
+		default: return "origin-unreachable";
 	}
 }
 const NO_AUTHORITY = new Set(["-", "--"]);
@@ -19794,8 +19808,13 @@ function incompleteReason(terminationState, url) {
 	if (cause === "c") return "client-timeout";
 	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
 }
-function actionFor(refused, isAudit) {
-	return refused ? "block" : isAudit ? "audit" : "allow";
+const FAILURE_REASONS = new Set([
+	"origin-no-response",
+	"origin-aborted",
+	"dns-failed"
+]);
+function actionFor(reason, isAudit) {
+	return reason === void 0 ? isAudit ? "audit" : "allow" : FAILURE_REASONS.has(reason) ? "failed" : "block";
 }
 function hostOf(url) {
 	return parseObservedUrl(url)?.host ?? url;
@@ -19816,9 +19835,9 @@ function parseProxyLine(line, isAudit) {
 			reason: incomplete,
 			destination: `${request[8]}:${request[9]}`
 		};
-		let refused = isRefusal(request[6]), event = {
+		let reason = isRefusal(request[6]) ? reasonFor(request[7], request[6]) : void 0, event = {
 			time: Number(request[1]) / 1e3,
-			action: actionFor(refused, isAudit),
+			action: actionFor(reason, isAudit),
 			protocol: request[2],
 			host: hostOf(request[11]),
 			port: Number(request[9]),
@@ -19826,19 +19845,19 @@ function parseProxyLine(line, isAudit) {
 			url: request[11],
 			destination: `${request[8]}:${request[9]}`
 		};
-		return refused ? event.reason = reasonFor(request[7], request[6]) : (event.status = Number(request[4]), event.bytes = Number(request[5])), event;
+		return reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let refused = isRefusal(pass[4]), sni = pass[8], event = {
+		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4]) : void 0, sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
-			action: actionFor(refused, isAudit),
+			action: actionFor(reason, isAudit),
 			protocol: pass[2],
 			host: sni === "-" ? pass[6] : sni,
 			port: Number(pass[7]),
 			destination: `${pass[6]}:${pass[7]}`
 		};
-		return refused ? event.reason = reasonFor(pass[5], pass[4]) : event.bytes = Number(pass[3]), event;
+		return reason === void 0 ? event.bytes = Number(pass[3]) : event.reason = reason, event;
 	}
 	return null;
 }
@@ -19894,13 +19913,13 @@ async function scanInspectDnsLog(lines, isAudit = !1) {
 		}));
 	}
 	let events = [...seen.entries()].map(([host, { time, allowed }]) => {
-		let event = {
+		let reason = allowed ? void 0 : "dns-not-allowed", event = {
 			time,
-			action: actionFor(!allowed, isAudit),
+			action: actionFor(reason, isAudit),
 			protocol: "dns",
 			host
 		};
-		return allowed || (event.reason = "dns-not-allowed"), event;
+		return reason !== void 0 && (event.reason = reason), event;
 	});
 	for (let { time, host, queryType } of discovery.values()) events.push({
 		time,
@@ -19911,7 +19930,7 @@ async function scanInspectDnsLog(lines, isAudit = !1) {
 	});
 	for (let { time, host, queryType } of service.values()) events.push({
 		time,
-		action: actionFor(!0, isAudit),
+		action: actionFor("dns-service-not-allowed", isAudit),
 		protocol: "dns",
 		host,
 		queryType,
@@ -19940,14 +19959,15 @@ function toHostRow(event) {
 	};
 }
 async function buildInspectReportData(proxyLines, dnsLines, parameters) {
-	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [], connected = connectedHosts(timeline);
-	for (let event of timeline) event.action !== "discovery" && event.action !== "incomplete" && (isRedundantDns(event, connected) || (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event)));
+	let isAudit = parameters.mode === "audit", [{ events: proxyEvents, startedAt, headIntact: proxyHeadIntact, unparsed }, { events: dnsEvents, headIntact: dnsHeadIntact }] = await Promise.all([scanInspectLog(proxyLines, isAudit), scanInspectDnsLog(dnsLines, isAudit)]), timeline = [...proxyEvents, ...dnsEvents].sort((a, b) => a.time - b.time), passedRows = [], blockedRows = [], failedRows = [], connected = connectedHosts(timeline);
+	for (let event of timeline) event.action !== "discovery" && event.action !== "incomplete" && (isRedundantDns(event, connected) || (event.action === "failed" ? failedRows.push(toHostRow(event)) : (event.action === "block" ? blockedRows : passedRows).push(toHostRow(event))));
 	let blocked = annotateKnownBlocked(aggregate(blockedRows), parameters.knownBlockedRules);
 	return {
 		engine: "inspect",
 		parameters,
 		passed: aggregate(passedRows),
 		blocked,
+		failed: aggregate(failedRows),
 		blockedCount: blockedRows.length,
 		logLooksPlausible: proxyHeadIntact && dnsHeadIntact && unparsed === 0,
 		startedAt,

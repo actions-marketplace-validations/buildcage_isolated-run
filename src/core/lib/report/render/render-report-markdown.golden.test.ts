@@ -41,11 +41,17 @@ const blocked = [
   },
 ];
 
+/** A host the rules allow whose name the upstream resolver could not answer. */
+const failed = [
+  { host: "c.example.com", port: "443", ruleType: "HTTPS", reason: "dns-failed", count: 1 },
+];
+
 const universal: UniversalReportData = {
   engine: "universal",
   parameters: params(),
   passed,
   blocked,
+  failed,
   blockedCount: 2,
   logLooksPlausible: true,
 };
@@ -98,6 +104,7 @@ const inspect: InspectReportData = {
   parameters: params(),
   passed,
   blocked,
+  failed,
   blockedCount: 1,
   logLooksPlausible: true,
   timeline,
@@ -114,7 +121,7 @@ const CASES: Record<string, ReportData> = {
   // The incomplete-log banner sits above the tables and applies to either engine.
   "universal-incomplete": { ...universal, logLooksPlausible: false },
   // Nothing happened at all: the "(no communication)" note, no tables.
-  "universal-empty": { ...universal, passed: [], blocked: [], blockedCount: 0 },
+  "universal-empty": { ...universal, passed: [], blocked: [], failed: [], blockedCount: 0 },
   // The Expected column, with the known_blocked_rules rows left unfolded.
   "universal-expected": {
     ...universal,
