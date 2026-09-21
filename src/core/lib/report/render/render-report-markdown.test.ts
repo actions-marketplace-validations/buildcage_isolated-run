@@ -20,6 +20,7 @@ describe("renderReportMarkdown", () => {
     parameters: reportParams(),
     passed: [],
     blocked: [],
+    failed: [],
     blockedCount: 0,
     logLooksPlausible: true,
   };
@@ -118,6 +119,35 @@ describe("renderReportMarkdown", () => {
     expect(blockedMd).not.toMatch(/_\(no communication\)_/);
   });
 
+  const failedRow = {
+    host: "good.com",
+    port: "443",
+    ruleType: "HTTPS",
+    reason: "origin-no-response",
+    count: 1,
+  };
+
+  it("tables connections the origin broke under their own heading", () => {
+    const md = renderReportMarkdown(
+      { ...base, blocked: [blockedRow], blockedCount: 1, failed: [failedRow] },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    expect(md).toMatch(/### ⚠️ Failed Connections\n/);
+    expect(md).toMatch(/origin-no-response/);
+    // The reader is told why the step passed regardless.
+    expect(md).toMatch(/none of them fails the step/);
+  });
+
+  it("does not call a run that only failed connections no communication", () => {
+    const md = renderReportMarkdown(
+      { ...base, failed: [failedRow] },
+      "buildcage/isolated-run",
+      "v1",
+    );
+    expect(md.includes("_(no communication)_")).toBe(false);
+  });
+
   it("uses the title option verbatim, e.g. a run step's em-dash label", () => {
     const md = renderReportMarkdown(base, "buildcage/isolated-run", "v1", {
       title: "Outbound Traffic Report — npm install",
@@ -206,6 +236,7 @@ describe("renderReportMarkdown: inspect", () => {
     parameters: reportParams(),
     passed: [],
     blocked: [],
+    failed: [],
     blockedCount: 0,
     logLooksPlausible: true,
     timeline: [],

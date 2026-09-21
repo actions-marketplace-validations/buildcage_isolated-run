@@ -89,7 +89,9 @@ assert_summary_contains "| allowed.example.com:80 | HTTP |" "allowed.example.com
 assert_summary_contains "| blocked.example.com:443 | HTTPS |" "blocked.example.com:443 recorded as blocked"
 assert_summary_contains "| blocked.example.com:9443 | HTTPS |" "the ~regex rule's blocked.example.com:9443 recorded as allowed"
 assert_summary_contains "| 10.200.0.100:9080 | IP |" "the ~regex allowed_ip_rules entry recorded as allowed"
-assert_summary_contains "| absent.example.com:443 | HTTPS |" "absent.example.com:443 recorded as blocked"
+# No rule refused this one and none can clear it, so it is tabled apart.
+assert_summary_contains "### ⚠️ Failed Connections" "a name that resolved nowhere is tabled apart from what the rules refused"
+assert_summary_contains "| absent.example.com:443 | HTTPS | dns-failed |" "absent.example.com:443 recorded as failed, reason dns-failed"
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "https://v6only.example.com/ -> dns-failed" "allowlisted name with AAAA records only recorded as dns-failed"

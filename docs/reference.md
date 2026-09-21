@@ -14,6 +14,7 @@ details.
 - [Report details](#report-details)
 - [Blocked service names](#blocked-service-names)
 - [Requests Buildcage could not act on](#requests-buildcage-could-not-act-on)
+- [Connections that failed](#connections-that-failed)
 - [Traffic artifact](#traffic-artifact)
 - [CA trust variables](#ca-trust-variables)
 - [`write_through` paths](#write_through-paths)
@@ -359,6 +360,40 @@ a request. An `allowed_https_rules` or `allowed_http_rules` entry changes nothin
 no host to match it against. If the host is one the step does need, its name usually also appears as
 a blocked `DNS` row, which is the row to act on.
 
+## Connections that failed
+
+A request no rule refused can still come to nothing: the origin answers nothing usable, breaks off
+mid-transfer, or its name resolves nowhere. The report tables those apart from what the rules did refuse, under
+**⚠️ Failed Connections**. Under `inspect`, **Communication details** shows each with ⚠️ too:
+
+```
+⚠️ 00:12.004: GET https://registry.npmjs.org/big.tgz -> origin-aborted
+⚠️ 00:13.771: GET https://mirror.example.com/index -> origin-no-response
+```
+
+| Reason               | What happened                                                           |
+| -------------------- | ----------------------------------------------------------------------- |
+| `origin-no-response` | the connection was made, and no usable response headers came back       |
+| `origin-aborted`     | the response started and the transfer was cut short                     |
+| `dns-failed`         | the name resolved nowhere upstream, the rules having already allowed it |
+
+`universal` writes its decision before the connection is made and never sees what became of it, so
+`dns-failed` is the only one of the three it can report. `inspect` reports all three.
+
+A connection that never established is **not** here: it stays in Blocked Hosts as
+`origin-unreachable`, and it does fail the step. A refused port, an unroutable address and a
+certificate Buildcage would not verify all end the same way, and nothing in the log tells them
+apart, so the row is kept where the certificate check's own refusals are. See
+[the threat model](./security.md#what-it-actually-stops).
+
+None of these fails the step, not even with `fail_on_blocked: true`, and a `::notice::` gives the
+count. No rule refused them, so no rule can clear them either: `known_blocked_rules` has nothing to
+match, and an `allowed_*` entry is already there. What clears one is the origin coming back, or the
+build reaching for something that is up.
+
+A blocked `DNS` row for the same name means something else entirely: that one is Buildcage's own
+resolver saying no rule allows the name, and it does fail the step.
+
 ## Traffic artifact
 
 `upload_traffic_artifact: true` uploads the report's timeline as a `traffic.json` inside an artifact
@@ -371,21 +406,21 @@ This is also the form to keep where the report is an audit trail rather than som
 `filesystem_mode: persistent` a later step can add to the Job Summary, but not to an artifact
 already uploaded. See [Known Limitations](./security.md#known-limitations).
 
-| Field         | Always | Notes                                                                          |
-| ------------- | ------ | ------------------------------------------------------------------------------ |
-| `time`        | yes    | ISO 8601 UTC                                                                   |
-| `elapsed`     |        | since the proxy started, fixed `HH:MM:SS.mmm`                                  |
-| `action`      | yes    | `allow`, `block`, `audit` when nothing was enforced, `discovery`, `incomplete` |
-| `protocol`    | yes    | `https`, `http`, `tls`, `tcp`, `dns`                                           |
-| `host`        | yes    | the name asked for, the address when there was none, or `(unknown)`            |
-| `port`        |        | absent for `dns`, which connects to nothing                                    |
-| `queryType`   |        | the record asked for; `discovery` rows and refused service names               |
-| `method`      |        | `http` and `https` only                                                        |
-| `url`         |        | `http` and `https` only; verbatim, unlike the summary's                        |
-| `status`      |        | only when something answered                                                   |
-| `bytes`       |        | absent for a refusal and for `dns`                                             |
-| `reason`      |        | only when `action` is `block` or `incomplete`                                  |
-| `destination` |        | the address it actually resolved to; absent for `dns`                          |
+| Field         | Always | Notes                                                                                    |
+| ------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `time`        | yes    | ISO 8601 UTC                                                                             |
+| `elapsed`     |        | since the proxy started, fixed `HH:MM:SS.mmm`                                            |
+| `action`      | yes    | `allow`, `block`, `audit` when nothing was enforced, `discovery`, `incomplete`, `failed` |
+| `protocol`    | yes    | `https`, `http`, `tls`, `tcp`, `dns`                                                     |
+| `host`        | yes    | the name asked for, the address when there was none, or `(unknown)`                      |
+| `port`        |        | absent for `dns`, which connects to nothing                                              |
+| `queryType`   |        | the record asked for; `discovery` rows and refused service names                         |
+| `method`      |        | `http` and `https` only                                                                  |
+| `url`         |        | `http` and `https` only; verbatim, unlike the summary's                                  |
+| `status`      |        | only when something answered                                                             |
+| `bytes`       |        | absent for a refusal and for `dns`                                                       |
+| `reason`      |        | only when `action` is `block`, `incomplete` or `failed`                                  |
+| `destination` |        | the address it actually resolved to; absent for `dns`                                    |
 
 A field is absent because it does not apply, never because it was zero: a refusal has no status
 because nothing answered, and a passthrough none because nothing was decrypted. Filter on `action`.
