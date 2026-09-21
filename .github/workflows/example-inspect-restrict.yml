@@ -22,19 +22,12 @@ jobs:
           proxy_mode: restrict
           proxy_engine: inspect
           allowed_url_rules: |
-            # npm install, plus its post-install audit-endpoint POST
-            GET|HEAD https://registry.npmjs.org/**
+            GET https://registry.npmjs.org/**
             POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk
-
-            # pip: the index, and the files it points at
-            GET|HEAD https://pypi.org/simple/**
-            GET|HEAD https://files.pythonhosted.org/**
           fail_on_blocked: false
           run: |
             npm init -y
             npm install --ignore-scripts @hono/node-server
-
-            python3 -m pip install --user --quiet tornado
 
             # Refused: the report names the full URL, not just the host.
             curl -sS --max-time 5 -o /dev/null https://example.com/ || true
