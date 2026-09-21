@@ -47,8 +47,8 @@ BUILDCAGE_TEST_COMPOSE_FILE="$REPO_ROOT/docker/compose.action.test-inspect.yaml"
 BUILDCAGE_TEST_CERT_PATH="$REPO_ROOT/test/test-server-inspect/cert.pem" \
 INPUT_PROXY_ENGINE="inspect" \
 INPUT_PROXY_MODE="restrict" \
-INPUT_ALLOWED_HTTPS_RULES="sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443" \
-INPUT_ALLOWED_HTTP_RULES="allowed.example.com:80" \
+INPUT_ALLOWED_HTTPS_RULES="sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443 deadend.example.com:443" \
+INPUT_ALLOWED_HTTP_RULES="allowed.example.com:80 deadend.example.com:80" \
 INPUT_ALLOWED_TLS_RULES="tlspass.example.com:443 ~^tlspass\.example\.com:8443$" \
 INPUT_ALLOWED_IP_RULES="~^10\.200\.0\.\d+:9080$" \
 INPUT_ALLOWED_URL_RULES="GET https://allowed.example.com/public/**
@@ -92,6 +92,15 @@ assert_summary_contains "| 10.200.0.100:9080 | IP |" "the ~regex allowed_ip_rule
 # No rule refused this one and none can clear it, so it is tabled apart.
 assert_summary_contains "### ⚠️ Failed Connections" "a name that resolved nowhere is tabled apart from what the rules refused"
 assert_summary_contains "| absent.example.com:443 | HTTPS | dns-failed |" "absent.example.com:443 recorded as failed, reason dns-failed"
+# The opposite case: a connection that never completed is a refusal, because
+# nothing on it was ever authenticated. It reads like an outage and is counted
+# anyway.
+assert_summary_contains "| deadend.example.com:443 | HTTPS | origin-connect-failed |" \
+  "a connection that never completed is in the blocked table, not the failed one"
+# The same host over plaintext, where no certificate was ever going to be
+# checked, so nothing was hidden by the connection failing.
+assert_summary_contains "| deadend.example.com:80 | HTTP | origin-unreachable |" \
+  "a plaintext connection that failed is a failure, not a refusal"
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "https://v6only.example.com/ -> dns-failed" "allowlisted name with AAAA records only recorded as dns-failed"
@@ -158,6 +167,15 @@ fi
 # to survive: it is the only row a reader can act on.
 assert_summary_contains "| aborted.example.com | DNS | dns-not-allowed |" \
   "the refused lookup for the same name is still its own Blocked row"
+# A refusal made before a whole request arrived is still a refusal, so it is in
+# the table and in fail_on_blocked. The plain stage has no SNI to name it by,
+# hence the host both rows carry.
+if grep -qE '^\| \(unknown\):[0-9]+ \| HTTP \| bad-request \|' <<< "$SUMMARY" \
+  && grep -qE '^\| \(unknown\):[0-9]+ \| HTTP \| missing-host-header \|' <<< "$SUMMARY"; then
+  pass "both refusals that named no host are in the Blocked Hosts table"
+else
+  fail "the Blocked Hosts table is missing the rows for requests that named no host"
+fi
 
 echo ""
 echo "--- positive control: the UDP echo server is reachable from beside the cage ---"

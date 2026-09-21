@@ -19270,7 +19270,7 @@ function describeUndecidedRequests(report, engineLabel) {
 	if (count !== 0) return {
 		level: "warning",
 		shouldFail: !1,
-		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, timed out, or sent something that could not be read as HTTP. None of them fails the step.`
+		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, its own timeout expired, or this proxy ran into an error while still reading. None of them fails the step. Bytes this proxy would not read as a request are not among them: that is a refusal, and it is in Blocked Hosts.`
 	};
 }
 function describeFailedConnections(report, engineLabel) {
@@ -19278,7 +19278,7 @@ function describeFailedConnections(report, engineLabel) {
 	if (count !== 0) return {
 		level: "notice",
 		shouldFail: !1,
-		message: `${report.parameters.mode === "audit" ? `${count} connection(s) buildcage ${engineLabel} recorded did not complete` : `${count} connection(s) failed after buildcage ${engineLabel} allowed them`}, listed under Failed Connections. The origin could not be reached, broke off, or its name resolved nowhere upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
+		message: `${report.parameters.mode === "audit" ? `${count} connection(s) buildcage ${engineLabel} recorded did not complete` : `${count} connection(s) failed after buildcage ${engineLabel} allowed them`}, listed under Failed Connections. The origin broke off, answered nothing usable, or its name resolved nowhere upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
 	};
 }
 //#endregion
@@ -19789,24 +19789,21 @@ function isRefusal(terminationState) {
 	let phase = terminationState[1];
 	return cause === "s" && (phase === "C" || phase === "H");
 }
-function reasonFor(logged, terminationState, tlsError) {
+function reasonFor(logged, terminationState, tlsError, method) {
 	if (logged !== "-") return logged;
 	let cause = terminationState[0];
-	if (cause !== "S" && cause !== "s") return "not-allowed";
+	if (cause !== "S" && cause !== "s") return method === BAD_REQUEST_METHOD ? "bad-request" : "not-allowed";
 	switch (terminationState[1]) {
 		case "H": return "origin-no-response";
 		case "D":
 		case "L": return "origin-aborted";
-		default: return tlsError === "-" || tlsError === "0" ? "origin-unreachable" : "origin-untrusted";
+		default: return tlsError === void 0 ? "origin-unreachable" : cause === "S" && tlsError !== "-" && tlsError !== "0" ? "origin-untrusted" : "origin-connect-failed";
 	}
 }
-const NO_AUTHORITY = new Set(["-", "--"]);
-function incompleteReason(terminationState, url) {
-	if (terminationState[1] !== "R") return;
+const BAD_REQUEST_METHOD = "<BADREQ>", REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
+function incompleteReason(terminationState, method) {
 	let cause = terminationState[0];
-	if (cause === "C") return "client-aborted";
-	if (cause === "c") return "client-timeout";
-	if (cause === "P" && NO_AUTHORITY.has(hostOf(url))) return "bad-request";
+	if (cause !== "P") return terminationState[1] === "R" ? cause === "C" ? "client-aborted" : cause === "c" ? "client-timeout" : "no-request" : method === BAD_REQUEST_METHOD ? "no-request" : void 0;
 }
 const FAILURE_REASONS = new Set([
 	"origin-unreachable",
@@ -19826,31 +19823,19 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6], request[12]);
-		if (incomplete) return {
+		let incomplete = incompleteReason(request[6], request[3]), tlsError = request[2] === "https" ? request[8] : void 0, reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], tlsError, request[3]) : void 0), namedByHandshake = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), parsedRequest = request[3] !== BAD_REQUEST_METHOD, event = {
 			time: Number(request[1]) / 1e3,
-			action: "incomplete",
+			action: incomplete === void 0 ? actionFor(reason, isAudit) : "incomplete",
 			protocol: request[2],
-			host: hostBeforeRequest(request[11], request[9]),
+			host: namedByHandshake ? hostBeforeRequest(request[11], request[9]) : hostOf(request[12]),
 			port: Number(request[10]),
-			reason: incomplete,
 			destination: `${request[9]}:${request[10]}`
 		};
-		let reason = isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8]) : void 0, event = {
-			time: Number(request[1]) / 1e3,
-			action: actionFor(reason, isAudit),
-			protocol: request[2],
-			host: hostOf(request[12]),
-			port: Number(request[10]),
-			method: request[3],
-			url: request[12],
-			destination: `${request[9]}:${request[10]}`
-		};
-		return reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
+		return parsedRequest && (event.method = request[3], event.url = request[12]), reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
-		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], "-") : void 0, sni = pass[8], event = {
+		let reason = isRefusal(pass[4]) ? reasonFor(pass[5], pass[4], void 0, "-") : void 0, sni = pass[8], event = {
 			time: Number(pass[1]) / 1e3,
 			action: actionFor(reason, isAudit),
 			protocol: pass[2],
