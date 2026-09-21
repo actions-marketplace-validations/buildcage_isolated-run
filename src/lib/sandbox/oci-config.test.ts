@@ -760,8 +760,7 @@ describe("buildOciConfig: caTrust", () => {
   };
   const caTrust = {
     ownCaPath: "/scratch/buildcage-ca.pem",
-    systemCaPath: "/scratch/system-ca-bundle.pem",
-    systemCaDestination: SYSTEM_STORE,
+    systemCa: { path: "/scratch/system-ca-bundle.pem", destination: SYSTEM_STORE },
   };
 
   it("adds no CA mounts when caTrust is omitted", () => {
@@ -783,7 +782,7 @@ describe("buildOciConfig: caTrust", () => {
     expect(config.mounts).toContainEqual({
       destination: SYSTEM_STORE,
       type: "none",
-      source: caTrust.systemCaPath,
+      source: caTrust.systemCa.path,
       options: ["rbind", "ro"],
     });
   });

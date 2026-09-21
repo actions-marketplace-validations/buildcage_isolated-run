@@ -39,15 +39,15 @@ export interface CaTrustFiles {
    *  PIP_CERT, SSL_CERT_FILE), and for every other tool (curl, ...) that
    *  already reads the system store by default. Undefined if the runner has
    *  no system store at any of the well-known candidate paths.
+   *
+   *  The copy and where it goes are one value: mounted anywhere but the path
+   *  it was read from, a tool going by its own compiled-in path reads the
+   *  runner's untouched store and never sees this CA.
+   *  SYSTEM_CA_CANDIDATES[0] is the only candidate a GitHub-hosted
+   *  (passwordless-sudo) Linux runner has; the rest are what a self-hosted
+   *  RHEL or SUSE runner is reached by.
    */
-  systemCaPath: string | undefined;
-  /** Where that copy is mounted: the candidate path it was read from, so the
-   *  tools that go by their own compiled-in path find the augmented store
-   *  rather than the runner's untouched one. SYSTEM_CA_CANDIDATES[0] is the
-   *  only one a GitHub-hosted (passwordless-sudo) Linux runner has; the rest
-   *  are what a self-hosted RHEL or SUSE runner is reached by.
-   */
-  systemCaDestination: string | undefined;
+  systemCa: { path: string; destination: string } | undefined;
 }
 
 export const SYSTEM_CA_CANDIDATES = [
@@ -130,15 +130,16 @@ export function writeCaTrustFiles(
   const ownCaPath = join(dir, "buildcage-ca.pem");
   writeFile(ownCaPath, `${ca}\n`, 0o644);
 
-  const systemCaDestination = SYSTEM_CA_CANDIDATES.find((p) => exists(p));
-  let systemCaPath: string | undefined;
-  if (systemCaDestination) {
-    const existing = readFile(systemCaDestination).trimEnd();
-    systemCaPath = join(dir, "system-ca-bundle.pem");
-    writeFile(systemCaPath, `${existing}\n${ca}\n`, 0o644);
+  const destination = SYSTEM_CA_CANDIDATES.find((p) => exists(p));
+  let systemCa: CaTrustFiles["systemCa"];
+  if (destination) {
+    const existing = readFile(destination).trimEnd();
+    const path = join(dir, "system-ca-bundle.pem");
+    writeFile(path, `${existing}\n${ca}\n`, 0o644);
+    systemCa = { path, destination };
   }
 
-  return { ownCaPath, systemCaPath, systemCaDestination };
+  return { ownCaPath, systemCa };
 }
 
 // Mirrors buildcage/docker's inspect-engine CA-injection policy table (see
@@ -181,15 +182,15 @@ export function caTrustAdditions(files: CaTrustFiles, env: NodeJS.ProcessEnv): C
     if (!env[name]) extraEnv[name] = OWN_CA_DESTINATION;
   }
 
-  if (files.systemCaPath && files.systemCaDestination) {
+  if (files.systemCa) {
     mounts.push({
-      destination: files.systemCaDestination,
+      destination: files.systemCa.destination,
       type: "none",
-      source: files.systemCaPath,
+      source: files.systemCa.path,
       options: ["rbind", "ro"],
     });
     for (const name of POINT_AT_SYSTEM_STORE) {
-      if (!env[name]) extraEnv[name] = files.systemCaDestination;
+      if (!env[name]) extraEnv[name] = files.systemCa.destination;
     }
   }
 

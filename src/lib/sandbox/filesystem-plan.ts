@@ -56,9 +56,10 @@ export function validateFilesystemInputs(
     const reserved = RESERVED_INTERNAL_DESTINATIONS.find((r) => isAtOrUnder(path, r));
     if (reserved) {
       throw new SandboxError(
-        `write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts ${JSON.stringify(reserved)} ` +
-          "itself for the proxy's DNS and CA trust, last of all, so the entry would have no effect. " +
-          "Name a containing directory instead to persist writes around it.",
+        `write_through entry ${JSON.stringify(path)} is reserved: the sandbox mounts the proxy's DNS ` +
+          `and CA trust over ${JSON.stringify(reserved)}, last of all. Which path the CA store goes to ` +
+          "depends on the runner, so every one it could be is refused rather than working on one " +
+          "machine and not the next. Name a containing directory instead to persist writes around it.",
         "FILESYSTEM_INPUT_CONFLICT",
       );
     }

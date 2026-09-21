@@ -63,11 +63,10 @@ describe("writeCaTrustFiles", () => {
       [CA_INPUT]: `${FAKE_CA}\n`,
       [DEBIAN_STORE]: `${FAKE_SYSTEM_BUNDLE}\n`,
     });
-    const { systemCaPath, systemCaDestination } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+    const { systemCa } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
 
-    expect(systemCaPath).toBe("/scratch/system-ca-bundle.pem");
-    expect(systemCaDestination).toBe(DEBIAN_STORE);
-    expect(written[systemCaPath!].contents).toBe(`${FAKE_SYSTEM_BUNDLE}\n${FAKE_CA}\n`);
+    expect(systemCa).toEqual({ path: "/scratch/system-ca-bundle.pem", destination: DEBIAN_STORE });
+    expect(written[systemCa!.path].contents).toBe(`${FAKE_SYSTEM_BUNDLE}\n${FAKE_CA}\n`);
   });
 
   // The augmented copy has to go back over the path it was read from. Mounted
@@ -78,19 +77,18 @@ describe("writeCaTrustFiles", () => {
       [CA_INPUT]: `${FAKE_CA}\n`,
       [RHEL_STORE]: `${FAKE_SYSTEM_BUNDLE}\n`,
     });
-    const { systemCaDestination } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+    const { systemCa } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
 
-    expect(systemCaDestination).toBe(RHEL_STORE);
+    expect(systemCa?.destination).toBe(RHEL_STORE);
   });
 
   // A tool pointed at a replacing variable would otherwise end up trusting the
   // proxy CA and nothing else, so no system file means no system bundle.
   it("leaves systemCaPath undefined when no candidate store exists", () => {
     const { deps, written } = fakeHost({ [CA_INPUT]: `${FAKE_CA}\n` });
-    const { systemCaPath, systemCaDestination } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+    const { systemCa } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
 
-    expect(systemCaPath).toBeUndefined();
-    expect(systemCaDestination).toBeUndefined();
+    expect(systemCa).toBeUndefined();
     expect(written["/scratch/system-ca-bundle.pem"]).toBeUndefined();
   });
 
@@ -100,21 +98,17 @@ describe("writeCaTrustFiles", () => {
       "/etc/ssl/ca-bundle.pem": `${FAKE_SYSTEM_BUNDLE}\n`,
       "/etc/ssl/cert.pem": "-----BEGIN CERTIFICATE-----\nlater\n-----END CERTIFICATE-----\n",
     });
-    const { systemCaPath } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
+    const { systemCa } = writeCaTrustFiles(CA_INPUT, "/scratch", deps);
 
-    expect(written[systemCaPath!].contents).toContain(FAKE_SYSTEM_BUNDLE);
-    expect(written[systemCaPath!].contents).not.toContain("later");
+    expect(written[systemCa!.path].contents).toContain(FAKE_SYSTEM_BUNDLE);
+    expect(written[systemCa!.path].contents).not.toContain("later");
   });
 });
 
 describe("caTrustAdditions", () => {
   it("mounts the CA-only file and points the additive variables at it, when unset", () => {
     const { mounts, env } = caTrustAdditions(
-      {
-        ownCaPath: "/scratch/buildcage-ca.pem",
-        systemCaPath: undefined,
-        systemCaDestination: undefined,
-      },
+      { ownCaPath: "/scratch/buildcage-ca.pem", systemCa: undefined },
       {},
     );
     expect(mounts).toEqual([
@@ -131,11 +125,7 @@ describe("caTrustAdditions", () => {
 
   it("does not override a variable the step already set", () => {
     const { env } = caTrustAdditions(
-      {
-        ownCaPath: "/scratch/buildcage-ca.pem",
-        systemCaPath: undefined,
-        systemCaDestination: undefined,
-      },
+      { ownCaPath: "/scratch/buildcage-ca.pem", systemCa: undefined },
       { NODE_EXTRA_CA_CERTS: "/my/own/bundle.pem" },
     );
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
@@ -146,8 +136,7 @@ describe("caTrustAdditions", () => {
     const { mounts, env } = caTrustAdditions(
       {
         ownCaPath: "/scratch/buildcage-ca.pem",
-        systemCaPath: "/scratch/system-ca-bundle.pem",
-        systemCaDestination: RHEL_STORE,
+        systemCa: { path: "/scratch/system-ca-bundle.pem", destination: RHEL_STORE },
       },
       {},
     );
@@ -166,8 +155,7 @@ describe("caTrustAdditions", () => {
     const { env } = caTrustAdditions(
       {
         ownCaPath: "/scratch/buildcage-ca.pem",
-        systemCaPath: "/scratch/system-ca-bundle.pem",
-        systemCaDestination: RHEL_STORE,
+        systemCa: { path: "/scratch/system-ca-bundle.pem", destination: RHEL_STORE },
       },
       {},
     );
@@ -178,8 +166,7 @@ describe("caTrustAdditions", () => {
     const { env } = caTrustAdditions(
       {
         ownCaPath: "/scratch/buildcage-ca.pem",
-        systemCaPath: "/scratch/system-ca-bundle.pem",
-        systemCaDestination: RHEL_STORE,
+        systemCa: { path: "/scratch/system-ca-bundle.pem", destination: RHEL_STORE },
       },
       { REQUESTS_CA_BUNDLE: "/my/own/bundle.pem" },
     );
@@ -189,11 +176,7 @@ describe("caTrustAdditions", () => {
 
   it("omits the system-store mount entirely when no system store was found", () => {
     const { mounts, env } = caTrustAdditions(
-      {
-        ownCaPath: "/scratch/buildcage-ca.pem",
-        systemCaPath: undefined,
-        systemCaDestination: undefined,
-      },
+      { ownCaPath: "/scratch/buildcage-ca.pem", systemCa: undefined },
       {},
     );
     expect(mounts.some((m) => m.destination === RHEL_STORE)).toBe(false);
