@@ -19801,13 +19801,9 @@ function reasonFor(logged, terminationState, tlsError, method) {
 	}
 }
 const BAD_REQUEST_METHOD = "<BADREQ>", REQUESTLESS_REASONS = new Set(["bad-request", "missing-host-header"]);
-function incompleteReason(terminationState) {
-	if (terminationState[1] === "R") switch (terminationState[0]) {
-		case "C": return "client-aborted";
-		case "c": return "client-timeout";
-		case "P": return;
-		default: return "no-request";
-	}
+function incompleteReason(terminationState, method) {
+	let cause = terminationState[0];
+	if (cause !== "P") return terminationState[1] === "R" ? cause === "C" ? "client-aborted" : cause === "c" ? "client-timeout" : "no-request" : method === BAD_REQUEST_METHOD ? "no-request" : void 0;
 }
 const FAILURE_REASONS = new Set([
 	"origin-unreachable",
@@ -19827,7 +19823,7 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6]), reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8], request[3]) : void 0), requestless = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), event = {
+		let incomplete = incompleteReason(request[6], request[3]), reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8], request[3]) : void 0), requestless = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), event = {
 			time: Number(request[1]) / 1e3,
 			action: incomplete === void 0 ? actionFor(reason, isAudit) : "incomplete",
 			protocol: request[2],
