@@ -19270,7 +19270,7 @@ function describeUndecidedRequests(report, engineLabel) {
 	if (count !== 0) return {
 		level: "warning",
 		shouldFail: !1,
-		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, timed out, or sent something that could not be read as HTTP. None of them fails the step.`
+		message: `${count} request(s) buildcage ${engineLabel} could not act on, shown with ⚠️ in Communication details. Each ended before a whole request had arrived, so no rule decided it and none reached an origin: the client closed, its own timeout expired, or this proxy ran into an error while still reading. None of them fails the step. Bytes this proxy would not read as a request are not among them: that is a refusal, and it is in Blocked Hosts.`
 	};
 }
 function describeFailedConnections(report, engineLabel) {
@@ -19823,15 +19823,15 @@ function hostBeforeRequest(sni, destination) {
 function parseProxyLine(line, isAudit) {
 	let trimmed = line.trim(), request = REQUEST.exec(trimmed);
 	if (request) {
-		let incomplete = incompleteReason(request[6], request[3]), reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8], request[3]) : void 0), requestless = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), event = {
+		let incomplete = incompleteReason(request[6], request[3]), reason = incomplete ?? (isRefusal(request[6]) ? reasonFor(request[7], request[6], request[8], request[3]) : void 0), namedByHandshake = reason !== void 0 && (incomplete !== void 0 || REQUESTLESS_REASONS.has(reason)), parsedRequest = request[3] !== BAD_REQUEST_METHOD, event = {
 			time: Number(request[1]) / 1e3,
 			action: incomplete === void 0 ? actionFor(reason, isAudit) : "incomplete",
 			protocol: request[2],
-			host: requestless ? hostBeforeRequest(request[11], request[9]) : hostOf(request[12]),
+			host: namedByHandshake ? hostBeforeRequest(request[11], request[9]) : hostOf(request[12]),
 			port: Number(request[10]),
 			destination: `${request[9]}:${request[10]}`
 		};
-		return requestless || (event.method = request[3], event.url = request[12]), reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
+		return parsedRequest && (event.method = request[3], event.url = request[12]), reason === void 0 ? (event.status = Number(request[4]), event.bytes = Number(request[5])) : event.reason = reason, event;
 	}
 	let pass = PASSTHROUGH.exec(trimmed);
 	if (pass) {
