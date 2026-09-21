@@ -18261,7 +18261,7 @@ const SYSTEM_CA_CANDIDATES = [
 	"/etc/ssl/ca-bundle.pem",
 	"/etc/pki/tls/cacert.pem",
 	"/etc/ssl/cert.pem"
-], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem", SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
+], OWN_CA_DESTINATION = "/etc/buildcage-ca.pem";
 function defaultExec$1(command, args) {
 	(0, node_child_process.execFileSync)(command, args);
 }
@@ -18282,14 +18282,15 @@ function extractCaCert(containerName, destDir, { exec = defaultExec$1, chmod = n
 function writeCaTrustFiles(caCertPath, dir, { readFile = defaultReadFile$1, writeFile = defaultWriteFile, exists = node_fs.existsSync } = {}) {
 	let ca = readFile(caCertPath).trimEnd(), ownCaPath = (0, node_path.join)(dir, "buildcage-ca.pem");
 	writeFile(ownCaPath, `${ca}\n`, 420);
-	let systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCaPath;
-	if (systemStoreSource) {
-		let existing = readFile(systemStoreSource).trimEnd();
+	let systemCaDestination = SYSTEM_CA_CANDIDATES.find((p) => exists(p)), systemCaPath;
+	if (systemCaDestination) {
+		let existing = readFile(systemCaDestination).trimEnd();
 		systemCaPath = (0, node_path.join)(dir, "system-ca-bundle.pem"), writeFile(systemCaPath, `${existing}\n${ca}\n`, 420);
 	}
 	return {
 		ownCaPath,
-		systemCaPath
+		systemCaPath,
+		systemCaDestination
 	};
 }
 const POINT_AT_OWN_CA = ["NODE_EXTRA_CA_CERTS", "DENO_CERT"], POINT_AT_SYSTEM_STORE = [
@@ -18305,14 +18306,14 @@ function caTrustAdditions(files, env) {
 		options: ["rbind", "ro"]
 	}], extraEnv = {};
 	for (let name of POINT_AT_OWN_CA) env[name] || (extraEnv[name] = OWN_CA_DESTINATION);
-	if (files.systemCaPath) {
+	if (files.systemCaPath && files.systemCaDestination) {
 		mounts.push({
-			destination: SYSTEM_CA_DESTINATION,
+			destination: files.systemCaDestination,
 			type: "none",
 			source: files.systemCaPath,
 			options: ["rbind", "ro"]
 		});
-		for (let name of POINT_AT_SYSTEM_STORE) env[name] || (extraEnv[name] = SYSTEM_CA_DESTINATION);
+		for (let name of POINT_AT_SYSTEM_STORE) env[name] || (extraEnv[name] = files.systemCaDestination);
 	}
 	return {
 		mounts,
@@ -18337,7 +18338,7 @@ function withHostShmSize(mounts, hostShmBytes) {
 const RESOLV_CONF_DESTINATION = "/etc/resolv.conf", RESERVED_INTERNAL_DESTINATIONS = [
 	RESOLV_CONF_DESTINATION,
 	OWN_CA_DESTINATION,
-	SYSTEM_CA_DESTINATION
+	...SYSTEM_CA_CANDIDATES
 ];
 function assertNoFreshMountDestinations(writableDirs, freshMountDestinations) {
 	for (let dir of writableDirs) {

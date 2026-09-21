@@ -21,8 +21,8 @@ import type { MountEntry } from "./types.ts";
  * overlay, not a host write. The mount needs nothing undone
  * afterward: run-isolated.sh's `umount -R` (and the scratch dir's own
  * cleanup) removes it, along with the rest of the rootfs bind-mount, when
- * the step ends, and the real host file SYSTEM_CA_DESTINATION resolves to is
- * never touched (it already exists, so runc mounts straight over it).
+ * the step ends, and the real host store is never touched (the augmented copy
+ * is mounted over the path it was read from, which by definition exists).
  *
  * OWN_CA_DESTINATION is the one exception: nothing exists at that path
  * ahead of time, so runc creates an empty placeholder file to mount onto,
@@ -34,19 +34,23 @@ export interface CaTrustFiles {
   /** A CA-only file, mounted at OWN_CA_DESTINATION, for variables that add
    *  to a tool's built-in trust set (NODE_EXTRA_CA_CERTS, DENO_CERT). */
   ownCaPath: string;
-  /** The runner's own system CA store with this CA appended, mounted at
-   *  SYSTEM_CA_DESTINATION, for variables that replace a tool's trust
-   *  bundle outright (REQUESTS_CA_BUNDLE, PIP_CERT, SSL_CERT_FILE), and for
-   *  every other tool (curl, ...) that already reads the system store by
-   *  default. Undefined if the runner has no system store at any of the
-   *  well-known candidate paths. SYSTEM_CA_CANDIDATES[0] is the only one
-   *  a GitHub-hosted (passwordless-sudo) Linux runner actually has; the
-   *  rest are kept only as a defensive fallback.
+  /** The runner's own system CA store with this CA appended, for variables
+   *  that replace a tool's trust bundle outright (REQUESTS_CA_BUNDLE,
+   *  PIP_CERT, SSL_CERT_FILE), and for every other tool (curl, ...) that
+   *  already reads the system store by default. Undefined if the runner has
+   *  no system store at any of the well-known candidate paths.
    */
   systemCaPath: string | undefined;
+  /** Where that copy is mounted: the candidate path it was read from, so the
+   *  tools that go by their own compiled-in path find the augmented store
+   *  rather than the runner's untouched one. SYSTEM_CA_CANDIDATES[0] is the
+   *  only one a GitHub-hosted (passwordless-sudo) Linux runner has; the rest
+   *  are what a self-hosted RHEL or SUSE runner is reached by.
+   */
+  systemCaDestination: string | undefined;
 }
 
-const SYSTEM_CA_CANDIDATES = [
+export const SYSTEM_CA_CANDIDATES = [
   "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu
   "/etc/pki/tls/certs/ca-bundle.crt", // RHEL/Fedora
   "/etc/ssl/ca-bundle.pem", // openSUSE
@@ -58,7 +62,6 @@ const SYSTEM_CA_CANDIDATES = [
  *  value must stay in sync with run-isolated.sh's own BUILDCAGE_CA_PLACEHOLDER
  *  (its cleanup() targets this exact path; see the module doc comment). */
 export const OWN_CA_DESTINATION = "/etc/buildcage-ca.pem";
-export const SYSTEM_CA_DESTINATION = SYSTEM_CA_CANDIDATES[0];
 
 export interface CaTrustDeps {
   exec?: (command: string, args: string[]) => void;
@@ -127,15 +130,15 @@ export function writeCaTrustFiles(
   const ownCaPath = join(dir, "buildcage-ca.pem");
   writeFile(ownCaPath, `${ca}\n`, 0o644);
 
-  const systemStoreSource = SYSTEM_CA_CANDIDATES.find((p) => exists(p));
+  const systemCaDestination = SYSTEM_CA_CANDIDATES.find((p) => exists(p));
   let systemCaPath: string | undefined;
-  if (systemStoreSource) {
-    const existing = readFile(systemStoreSource).trimEnd();
+  if (systemCaDestination) {
+    const existing = readFile(systemCaDestination).trimEnd();
     systemCaPath = join(dir, "system-ca-bundle.pem");
     writeFile(systemCaPath, `${existing}\n${ca}\n`, 0o644);
   }
 
-  return { ownCaPath, systemCaPath };
+  return { ownCaPath, systemCaPath, systemCaDestination };
 }
 
 // Mirrors buildcage/docker's inspect-engine CA-injection policy table (see
@@ -144,7 +147,8 @@ export function writeCaTrustFiles(
 // SSL_CERT_FILE replace a tool's bundle outright, so they're pointed at the
 // (augmented) system store instead, never a CA-only file: doing so would
 // leave the tool trusting nothing else. CURL_CA_BUNDLE is left unset: curl
-// already reads the system store by default.
+// already reads the system store by default, which is also how GnuTLS-linked
+// tools (Debian's wget and git) reach it, since they read none of these.
 //
 // Only applied when a variable is unset. A step that already points one of
 // these somewhere keeps doing so unmodified: safely appending to an
@@ -177,15 +181,15 @@ export function caTrustAdditions(files: CaTrustFiles, env: NodeJS.ProcessEnv): C
     if (!env[name]) extraEnv[name] = OWN_CA_DESTINATION;
   }
 
-  if (files.systemCaPath) {
+  if (files.systemCaPath && files.systemCaDestination) {
     mounts.push({
-      destination: SYSTEM_CA_DESTINATION,
+      destination: files.systemCaDestination,
       type: "none",
       source: files.systemCaPath,
       options: ["rbind", "ro"],
     });
     for (const name of POINT_AT_SYSTEM_STORE) {
-      if (!env[name]) extraEnv[name] = SYSTEM_CA_DESTINATION;
+      if (!env[name]) extraEnv[name] = files.systemCaDestination;
     }
   }
 

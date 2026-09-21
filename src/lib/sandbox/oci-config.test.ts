@@ -7,7 +7,11 @@ import { buildOciConfig } from "./oci-config.ts";
 import { RESOLV_CONF_DESTINATION } from "./oci-mounts.ts";
 import { SANDBOX_SCRATCH_BASE } from "./scratch-dir.ts";
 import { WritablePathConflictError } from "./paths.ts";
-import { OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION } from "./ca-trust.ts";
+import { OWN_CA_DESTINATION } from "./ca-trust.ts";
+
+/** Not the first candidate: the mount lands wherever the runner keeps its
+ *  store, which on a self-hosted RHEL runner is this. */
+const SYSTEM_STORE = "/etc/pki/tls/certs/ca-bundle.crt";
 
 const SHM_BYTES = 4 * 1024 * 1024 * 1024;
 const PROC_LIMITS = [
@@ -757,12 +761,13 @@ describe("buildOciConfig: caTrust", () => {
   const caTrust = {
     ownCaPath: "/scratch/buildcage-ca.pem",
     systemCaPath: "/scratch/system-ca-bundle.pem",
+    systemCaDestination: SYSTEM_STORE,
   };
 
   it("adds no CA mounts when caTrust is omitted", () => {
     const config = build(fakeBaseSpec(), baseArgs);
     expect(config.mounts.some((m) => m.destination === OWN_CA_DESTINATION)).toBe(false);
-    expect(config.mounts.some((m) => m.destination === SYSTEM_CA_DESTINATION)).toBe(false);
+    expect(config.mounts.some((m) => m.destination === SYSTEM_STORE)).toBe(false);
   });
 
   // The matching CA env vars are resolveSandboxEnv's job; see
@@ -776,7 +781,7 @@ describe("buildOciConfig: caTrust", () => {
       options: ["rbind", "ro"],
     });
     expect(config.mounts).toContainEqual({
-      destination: SYSTEM_CA_DESTINATION,
+      destination: SYSTEM_STORE,
       type: "none",
       source: caTrust.systemCaPath,
       options: ["rbind", "ro"],
@@ -790,7 +795,7 @@ describe("buildOciConfig: caTrust", () => {
       caTrust,
     });
     const destinations = config.mounts.map((m) => m.destination);
-    for (const ca of [OWN_CA_DESTINATION, SYSTEM_CA_DESTINATION]) {
+    for (const ca of [OWN_CA_DESTINATION, SYSTEM_STORE]) {
       expect(destinations.indexOf(ca)).toBeGreaterThan(destinations.indexOf("/etc"));
     }
   });
