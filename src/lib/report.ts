@@ -4,12 +4,15 @@ import type { Annotation } from "#core/lib/actions/annotation.ts";
 import { writeStepSummary } from "#core/lib/actions/write-step-summary.ts";
 import { createDocker, type Docker } from "#core/lib/docker/client.ts";
 import { readRotatedLog } from "#core/lib/docker/rotated-log.ts";
-import { describeBlockedOutcome } from "#core/lib/report/outcome/blocked-outcome.ts";
+import { describeReportOutcomes } from "#core/lib/report/outcome/report-outcomes.ts";
 import { renderReportMarkdown } from "#core/lib/report/render/render-report-markdown.ts";
 import { truncateForStepSummary } from "#core/lib/report/render/truncate-communication-details.ts";
 import { buildUniversalReportData } from "#core/lib/report/build/universal.ts";
 import { buildInspectReportData } from "#core/lib/report/build/inspect.ts";
-import { applyOutcomeAnnotation } from "#core/lib/report/outcome/annotate.ts";
+import {
+  applyOutcomeAnnotations,
+  type OutcomeEmission,
+} from "#core/lib/report/outcome/annotate.ts";
 import type { GenReportParameters, ReportData } from "#core/lib/report/types.ts";
 import type { ProxyEngine } from "./engine.ts";
 
@@ -77,7 +80,7 @@ export function readActionVersion(
   }
 }
 
-export interface ComputeReportOutcomeOptions {
+export interface ComputeReportOutcomesOptions {
   stepLabel?: string;
   actionRepo: string;
   actionRef: string;
@@ -86,18 +89,17 @@ export interface ComputeReportOutcomeOptions {
   failOnBlocked?: boolean;
 }
 
-export interface ReportOutcome {
+export interface ReportOutcomes {
   markdown: string;
-  message: string;
-  level: "none" | "notice" | "error";
-  shouldFail: boolean;
+  /** Every annotation this report calls for, in the order to emit them. */
+  emissions: OutcomeEmission[];
 }
 
 /**
  * Pure decision + rendering step, kept free of process.env/file I/O so it's
  * testable without touching the filesystem.
  */
-export function computeReportOutcome(
+export function computeReportOutcomes(
   report: Report,
   {
     stepLabel,
@@ -106,14 +108,10 @@ export function computeReportOutcome(
     actionRef,
     runCommand,
     actionVersion,
-  }: ComputeReportOutcomeOptions,
-): ReportOutcome {
-  const { level, message, shouldFail } = describeBlockedOutcome({
-    isAudit: report.parameters.mode === "audit",
+  }: ComputeReportOutcomesOptions,
+): ReportOutcomes {
+  const emissions = describeReportOutcomes(report, {
     failOnBlocked: failOnBlocked ?? false,
-    blockedCount: report.blockedCount,
-    blockedRows: report.blocked,
-    logLooksPlausible: report.logLooksPlausible,
     engineLabel: "sandbox",
   });
   const markdown = renderReportMarkdown(report, actionRepo, actionRef, {
@@ -122,7 +120,7 @@ export function computeReportOutcome(
     actionVersion,
   });
 
-  return { markdown, message, level, shouldFail };
+  return { markdown, emissions };
 }
 
 /** The one write this module makes that isn't the Job Summary; injected for
@@ -132,7 +130,7 @@ export interface WriteReportSummaryDeps {
 }
 
 /**
- * Side-effecting half of the report step: computeReportOutcome() decides what
+ * Side-effecting half of the report step: computeReportOutcomes() decides what
  * to say; this writes it to the Job Summary, the annotations and the exit code.
  * `artifactAvailable` only affects the wording of a truncation notice if the
  * report turns out to be too large for GitHub's own per-step limit: it
@@ -144,15 +142,15 @@ export interface WriteReportSummaryDeps {
 export async function writeReportSummary(
   report: Report,
   annotation: Annotation,
-  options: ComputeReportOutcomeOptions,
+  options: ComputeReportOutcomesOptions,
   artifactAvailable: boolean,
   env: NodeJS.ProcessEnv,
   { appendFile = appendFileSync }: WriteReportSummaryDeps = {},
 ): Promise<void> {
-  const outcome = computeReportOutcome(report, options);
+  const outcomes = computeReportOutcomes(report, options);
 
   await writeStepSummary(
-    truncateForStepSummary(outcome.markdown, artifactAvailable),
+    truncateForStepSummary(outcomes.markdown, artifactAvailable),
     env.GITHUB_STEP_SUMMARY,
   );
 
@@ -162,8 +160,8 @@ export async function writeReportSummary(
   // test/assert-sandbox.sh.
   const debugSummaryFile = env.BUILDCAGE_RUN_DEBUG_SUMMARY_FILE;
   if (debugSummaryFile) {
-    appendFile(debugSummaryFile, outcome.markdown);
+    appendFile(debugSummaryFile, outcomes.markdown);
   }
 
-  applyOutcomeAnnotation(annotation, outcome);
+  applyOutcomeAnnotations(annotation, outcomes.emissions);
 }
