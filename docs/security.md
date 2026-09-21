@@ -20,15 +20,15 @@ the [README](../README.md); for implementation internals, see the
 
 ## Threat model
 
-What this action governs is the command it wraps: a `run:` step's shell command and everything it
-pulls in, a dependency's `postinstall` script included. It decides which destinations that command
-can reach and records what it tried.
+This action governs the command it wraps: a `run:` step's shell command and everything it pulls in,
+a dependency's `postinstall` script included. It decides which destinations that command can reach,
+and records what it tried.
 
 The difference from a Docker-build tool is that the command is not already inside a container. It is
 a full shell command chosen by the workflow author, running with the same privileges as the Actions
 runner, so restricting its network alone would not be enough: the command also has to be unable to
 leave by other means, whether by escalating privileges, reaching the Docker socket, or reading
-another process's memory. [Isolation Mechanisms](#isolation-mechanisms) is that part.
+another process's memory. See [Isolation Mechanisms](#isolation-mechanisms).
 
 The design goal is to bolt egress control onto an existing step without changing how the rest of the
 job works. A step that configures AWS credentials, an npm cache directory, or anything else keeps
@@ -45,7 +45,7 @@ Four things sit outside the model by design.
   default, to tamper with the proxy container's state, most notably its traffic log. Sigstore proves
   the image was genuine at startup, not afterwards. The report refuses a log that doesn't start
   where a real proxy run would, which catches wholesale erasure, but not a format-aware forgery.
-  What covers this is procedural: don't place an untrusted step immediately around this action.
+  The defense here is procedural: don't place an untrusted step immediately around this action.
 - **What the command reads.** It restricts where the command can send data, not what it can open, so
   a compromised dependency can still read `~/.aws/credentials` or `~/.docker/config.json`; it just
   cannot send them anywhere outside the allowlist. See
@@ -216,9 +216,9 @@ HAProxy resolves that name itself and rewrites the destination to the result (`d
 or an SNI naming one host while the connection aims at another all reach the server the name belongs
 to: destination spoofing is removed rather than detected.
 
-That the rules run first is an invariant rather than an optimisation. Reversed, resolution would
-itself become the exfiltration channel the resolver below is built to avoid being, so a name a
-request would be refused for never triggers a real DNS query.
+That order is an invariant, not an optimisation. Reversed, resolution would become the exfiltration
+channel the resolver below exists to prevent, so a name a request would be refused for never
+triggers a real DNS query.
 
 Where the proxy resolves is the proxy container's own `/etc/resolv.conf`. On a runner that is
 Docker's embedded DNS forwarding to the runner's own resolvers, so a name only an internal resolver
@@ -273,14 +273,14 @@ endpoint directly, the way any AWS or GCP SDK does, is not what this is meant to
 Everything that is not TCP is dropped before it reaches the proxy, so ICMP, raw UDP and QUIC have no
 exit path at all; port 53 to the gateway, which is the resolver, is the one exception. IPv6 is
 dropped by equivalent `ip6tables` rules, lookups are answered with the unspecified address (`::`),
-and the proxy reaches allowed names over IPv4 only. What that last part costs is in
+and the proxy reaches allowed names over IPv4 only. The cost of that last part is in
 [Known Limitations](#known-limitations) below.
 
 ## Engines
 
-What separates the engines is how much of a connection a rule gets to see: `universal` reads the
-name at the front of it, `inspect` terminates TLS and reads the request. For choosing between them,
-see [Engines](../README.md#engines); what follows is what each one can and cannot enforce.
+The engines differ in how much of a connection a rule gets to see. `universal` reads the name at the
+front of it; `inspect` terminates TLS and reads the request. For choosing between them, see
+[Engines](../README.md#engines).
 
 ### Universal proxy engine
 
@@ -319,7 +319,7 @@ run records everything without being configured for it first.
 | `allowed_tls_rules`   | TLS to the named host and port             | SNI and port         | **no**    |
 | `allowed_ip_rules`    | TCP to the address and port, any protocol  | address and port     | **no**    |
 
-Three things hold that together:
+Three mechanisms make that enforceable:
 
 - **The certificate the command sees is generated from the SNI alone**, so a refused destination is
   never contacted. The only path that reaches an origin is the backend, after a request has already
@@ -383,10 +383,10 @@ infrastructure. Closing the gap needs the proxy to terminate TLS and read that h
 [`inspect`](#inspect-proxy-engine) does: `allowed_url_rules` matches on the real `Host`, so a
 fronted request lands outside any host rule it was written for.
 
-Staying on `universal`, what narrows it is allowing as few domains as possible, preferring a
-service's own domain (`registry.npmjs.org`) over a broad CDN wildcard, checking what your CDN
-provider does about fronting today, and re-running [audit mode](../README.md#operation-modes)
-periodically to notice a connection pattern that has changed.
+Staying on `universal`, allow as few domains as you can, and prefer a service's own domain
+(`registry.npmjs.org`) to a broad CDN wildcard. Check what your CDN provider does about fronting
+today, and re-run [audit mode](../README.md#operation-modes) periodically to notice a connection
+pattern that has changed.
 
 ### Passthrough rules are an uninspected pipe
 
@@ -521,7 +521,7 @@ something an allowlist does not. Buildcage is one layer among them, not a replac
   which in practice has to include `$GITHUB_WORKSPACE`, so that path stays as exposed as it is in
   `persistent` mode.
 
-  What follows is where the step goes in the job. Wrapping every untrusted step is not the way out:
+  That decides where the step goes in the job. Wrapping every untrusted step is not the way out:
   a payload left in `$GITHUB_PATH` or `$HOME` runs in the next step before its sandbox does, and
   this action resolves `sudo` and `docker` through the `$PATH` the runner hands it. Two arrangements
   hold: make the isolated step the last one in the job that runs anything untrusted, or use
@@ -622,17 +622,17 @@ source commit SHA, so a tampered or substituted image fails verification before 
 
 **At release time**, the `docker-publish.yml` workflow builds and signs the image using a short-lived
 OIDC identity issued by GitHub Actions. The signature is stored as a **Sigstore Bundle v0.3**
-attached to the image through the OCI 1.1 Referrers API in GHCR, holding the signature, a Fulcio
-leaf certificate embedding the workflow identity, and a Rekor transparency log entry. Signing waits
-on a run of the image just pushed, so an image that does not enforce is never signed, and an
+attached to the image through the OCI 1.1 Referrers API in GHCR. The bundle holds the signature, a
+Fulcio leaf certificate carrying the workflow identity, and a Rekor transparency log entry. Signing
+waits on a run of the image just pushed, so an image that does not enforce is never signed, and an
 unsigned image is one the action refuses.
 
 **At action startup** (the `main` phase, so `docker/login-action` has already stored registry
 credentials), the action verifies the image entirely in-process using `@sigstore/verify`,
 `@sigstore/tuf` and `@sigstore/bundle`. No external binary such as cosign is downloaded or required.
-It resolves the tag to a manifest digest, fetches the bundle for that digest from the Referrers API,
-and hands it to a single `verifyBundle()` call that enforces every identity check at once: the OIDC
-issuer, the signing workflow and its ref or version, and the source commit SHA carried in Fulcio OID
+It resolves the tag to a manifest digest and fetches the bundle for that digest from the Referrers
+API. A single `verifyBundle()` call then enforces every identity check at once: the OIDC issuer, the
+signing workflow and its ref or version, and the source commit SHA carried in Fulcio OID
 `1.3.6.1.4.1.57264.1.13`. That is the equivalent of cosign's `--certificate-oidc-issuer`,
 `--certificate-identity-regexp` and `--certificate-github-workflow-sha`.
 
