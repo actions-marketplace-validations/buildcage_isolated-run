@@ -19278,7 +19278,7 @@ function describeFailedConnections(report, engineLabel) {
 	if (count !== 0) return {
 		level: "notice",
 		shouldFail: !1,
-		message: `${count} connection(s) failed after buildcage ${engineLabel} allowed them, listed under Failed Connections. The origin could not be reached, broke off, or its name resolved nowhere upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
+		message: `${report.parameters.mode === "audit" ? `${count} connection(s) buildcage ${engineLabel} recorded did not complete` : `${count} connection(s) failed after buildcage ${engineLabel} allowed them`}, listed under Failed Connections. The origin could not be reached, broke off, or its name resolved nowhere upstream: no rule refused them and none can change the outcome, so none of them fails the step.`
 	};
 }
 //#endregion
