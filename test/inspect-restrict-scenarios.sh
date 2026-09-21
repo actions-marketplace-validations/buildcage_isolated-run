@@ -17,7 +17,7 @@
 #     GET ~https://ok\.wildcard\.example\.com/regexpub/        (no anchors)
 #     GET ~^https://ok\.wildcard\.example\.com/regexexact$
 #   allowed_https_rules: sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443 deadend.example.com:443
-#   allowed_http_rules:  allowed.example.com:80
+#   allowed_http_rules:  allowed.example.com:80 deadend.example.com:80
 #   allowed_tls_rules:     tlspass.example.com:443 ~^tlspass\.example\.com:8443$
 #   allowed_ip_rules:    ~^10\.200\.0\.\d+:9080$
 # ---------------------------------------------------------------------------
@@ -158,6 +158,13 @@ check_status "GET blocked.example.com/exfil?pad=<1.2KB>&end=TAIL-MARKER" "$CODE"
 echo "=== [Origin connection never completes] ==="
 CODE=$($C https://deadend.example.com/)
 check_status "GET deadend.example.com" "$CODE" "503"
+
+# The same host over plaintext, where no certificate was ever going to be
+# checked. That one is an outage and nothing more, which is the distinction
+# integration-test-inspect-restrict.sh checks the report keeps.
+echo "=== [Plaintext origin connection never completes] ==="
+CODE=$($C http://deadend.example.com/)
+check_status "GET http://deadend.example.com" "$CODE" "503"
 
 echo "=== [Allowlisted name that does not resolve] ==="
 CODE=$($C https://absent.example.com/)

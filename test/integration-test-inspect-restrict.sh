@@ -48,7 +48,7 @@ BUILDCAGE_TEST_CERT_PATH="$REPO_ROOT/test/test-server-inspect/cert.pem" \
 INPUT_PROXY_ENGINE="inspect" \
 INPUT_PROXY_MODE="restrict" \
 INPUT_ALLOWED_HTTPS_RULES="sub.wildcard.example.com:443 absent.example.com:443 v6only.example.com:443 metadata.example.com:443 runner.example.com:443 deadend.example.com:443" \
-INPUT_ALLOWED_HTTP_RULES="allowed.example.com:80" \
+INPUT_ALLOWED_HTTP_RULES="allowed.example.com:80 deadend.example.com:80" \
 INPUT_ALLOWED_TLS_RULES="tlspass.example.com:443 ~^tlspass\.example\.com:8443$" \
 INPUT_ALLOWED_IP_RULES="~^10\.200\.0\.\d+:9080$" \
 INPUT_ALLOWED_URL_RULES="GET https://allowed.example.com/public/**
@@ -97,6 +97,10 @@ assert_summary_contains "| absent.example.com:443 | HTTPS | dns-failed |" "absen
 # anyway.
 assert_summary_contains "| deadend.example.com:443 | HTTPS | origin-connect-failed |" \
   "a connection that never completed is in the blocked table, not the failed one"
+# The same host over plaintext, where no certificate was ever going to be
+# checked, so nothing was hidden by the connection failing.
+assert_summary_contains "| deadend.example.com:80 | HTTP | origin-unreachable |" \
+  "a plaintext connection that failed is a failure, not a refusal"
 assert_summary_contains "POST https://allowed.example.com/public/pkg.tgz -> not-allowed" "out-of-rule POST recorded with its reason"
 assert_summary_contains "https://absent.example.com/ -> dns-failed" "unresolvable allowlisted name recorded as dns-failed"
 assert_summary_contains "https://v6only.example.com/ -> dns-failed" "allowlisted name with AAAA records only recorded as dns-failed"
